@@ -50,7 +50,7 @@ import com.google.common.collect.ImmutableList;
 public abstract class AMRMClient<T extends AMRMClient.ContainerRequest> extends
     AbstractService {
   private static final Log LOG = LogFactory.getLog(AMRMClient.class);
-  
+
   private TimelineClient timelineClient;
 
   /**
@@ -441,7 +441,7 @@ public abstract class AMRMClient<T extends AMRMClient.ContainerRequest> extends
   public void registerTimelineClient(TimelineClient timelineClient) {
     this.timelineClient = timelineClient;
   }
-  
+
   /**
    * Get registered timeline client.
    * @return
@@ -449,7 +449,7 @@ public abstract class AMRMClient<T extends AMRMClient.ContainerRequest> extends
   public TimelineClient getRegisteredTimeineClient() {
     return this.timelineClient;
   }
-  
+
   /**
    * Wait for <code>check</code> to return true for each 1000 ms.
    * See also {@link #waitFor(com.google.common.base.Supplier, int)}
