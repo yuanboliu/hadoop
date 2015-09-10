@@ -21,78 +21,130 @@ package org.apache.hadoop.yarn.util.resource;
 import org.apache.hadoop.classification.InterfaceAudience;
 import org.apache.hadoop.classification.InterfaceStability.Unstable;
 import org.apache.hadoop.yarn.api.records.Resource;
+import org.apache.hadoop.yarn.api.records.ResourceInformation;
+import org.apache.hadoop.yarn.exceptions.ResourceNotFoundException;
+import org.apache.hadoop.yarn.exceptions.YarnException;
 import org.apache.hadoop.yarn.util.Records;
 
-@InterfaceAudience.LimitedPrivate({"YARN", "MapReduce"})
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.Map;
+
+@InterfaceAudience.LimitedPrivate({ "YARN", "MapReduce" })
 @Unstable
 public class Resources {
-  
-  // Java doesn't have const :(
-  private static final Resource NONE = new Resource() {
+
+  /**
+   * Helper class to create a resource with a fixed value for all resource
+   * types. For example, a NONE resource which returns 0 for any resource type.
+   */
+  static class FixedValueResource extends Resource {
+
+    private Map<String, ResourceInformation> resources;
+    private Long resourceValue;
+    private String name;
+
+    /**
+     * Constructor for a fixed value resource
+     * @param rName the name of the resource
+     * @param value the fixed value to be returned for all resource types
+     */
+    FixedValueResource(String rName, Long value) {
+      this.resourceValue = value;
+      this.name = rName;
+      resources = initResourceMap();
+    }
+
+    private int resourceValueToInt() {
+      if(this.resourceValue > Integer.MAX_VALUE) {
+        return Integer.MAX_VALUE;
+      }
+      return this.resourceValue.intValue();
+    }
 
     @Override
     public int getMemory() {
-      return 0;
+      return resourceValueToInt();
     }
 
     @Override
     public void setMemory(int memory) {
-      throw new RuntimeException("NONE cannot be modified!");
+      throw new RuntimeException(name + " cannot be modified!");
     }
 
     @Override
     public int getVirtualCores() {
-      return 0;
+      return resourceValueToInt();
+    }
+
+    @Override
+    public Map<String, ResourceInformation> getResources() {
+      return Collections.unmodifiableMap(this.resources);
+    }
+
+    @Override
+    public ResourceInformation getResourceInformation(String resource)
+        throws YarnException {
+      if (resources.containsKey(resource)) {
+        ResourceInformation value = this.resources.get(resource);
+        ResourceInformation ret = ResourceInformation.newInstance(value);
+        ret.setValue(resourceValue);
+        return ret;
+      }
+      throw new YarnException("" + resource + " not found");
+    }
+
+    @Override
+    public Long getResourceValue(String resource) throws YarnException {
+      if (resources.containsKey(resource)) {
+        return resourceValue;
+      }
+      throw new YarnException("" + resource + " not found");
     }
 
     @Override
     public void setVirtualCores(int cores) {
-      throw new RuntimeException("NONE cannot be modified!");
+      throw new RuntimeException(name + " cannot be modified!");
     }
 
     @Override
-    public int compareTo(Resource o) {
-      int diff = 0 - o.getMemory();
-      if (diff == 0) {
-        diff = 0 - o.getVirtualCores();
-      }
-      return diff;
-    }
-    
-  };
-  
-  private static final Resource UNBOUNDED = new Resource() {
-
-    @Override
-    public int getMemory() {
-      return Integer.MAX_VALUE;
+    public void setResources(Map<String, ResourceInformation> resources) {
+      throw new RuntimeException(name + " cannot be modified!");
     }
 
     @Override
-    public void setMemory(int memory) {
-      throw new RuntimeException("UNBOUNDED cannot be modified!");
+    public void setResourceInformation(String resource,
+        ResourceInformation resourceInformation)
+        throws ResourceNotFoundException {
+      throw new RuntimeException(name + " cannot be modified!");
     }
 
     @Override
-    public int getVirtualCores() {
-      return Integer.MAX_VALUE;
+    public void setResourceValue(String resource, Long value)
+        throws ResourceNotFoundException {
+      throw new RuntimeException(name + " cannot be modified!");
     }
 
-    @Override
-    public void setVirtualCores(int cores) {
-      throw new RuntimeException("UNBOUNDED cannot be modified!");
+    private Map<String, ResourceInformation> initResourceMap() {
+      Map<String, ResourceInformation> tmp = new HashMap<>();
+      // Due to backwards compat, the max value for memory and vcores
+      // needs to be Integer.MAX_VALUE
+      int max = resourceValue > Integer.MAX_VALUE ? Integer.MAX_VALUE :
+          resourceValue.intValue();
+      tmp.put(ResourceInformation.MEMORY.getName(), ResourceInformation
+          .newInstance(ResourceInformation.MEMORY.getName(),
+              ResourceInformation.MEMORY_MB.getUnits(), (long) max));
+      tmp.put(ResourceInformation.VCORES.getName(), ResourceInformation
+          .newInstance(ResourceInformation.VCORES.getName(), (long) max));
+      return tmp;
     }
 
-    @Override
-    public int compareTo(Resource o) {
-      int diff = Integer.MAX_VALUE - o.getMemory();
-      if (diff == 0) {
-        diff = Integer.MAX_VALUE - o.getVirtualCores();
-      }
-      return diff;
-    }
-    
-  };
+  }
+
+  private static final Resource UNBOUNDED =
+      new FixedValueResource("UNBOUNDED", Long.MAX_VALUE);
+
+  private static final Resource NONE = new FixedValueResource("NONE", 0L);
 
   public static Resource createResource(int memory) {
     return createResource(memory, (memory > 0) ? 1 : 0);
