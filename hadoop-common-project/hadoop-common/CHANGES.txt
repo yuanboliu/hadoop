@@ -264,6 +264,9 @@ Trunk (Unreleased)
 
   BUG FIXES
 
+    HADOOP-12617. SPNEGO authentication request to non-default realm gets
+    default realm name inserted in target server principal. (mattf)
+
     HADOOP-11473. test-patch says "-1 overall" even when all checks are +1
     (Jason Lowe via raviprak)
 
@@ -537,6 +540,14 @@ Trunk (Unreleased)
 
     HADOOP-12553. [JDK8] Fix javadoc error caused by illegal tag. (aajisaka)
 
+    HADOOP-12638. UnsatisfiedLinkError while checking ISA-L in checknative
+    command. (Kai Sasaki via Colin P. McCabe)
+
+    HADOOP-12615. Fix NPE in MiniKMS.start(). (Wei-Chiu Chuang via zhz)
+
+    HADOOP-12647. Add /usr/lib default for ISAL library and fix missing .c file
+    in CMakeLists (Kai Zheng via cmccabe)
+
   OPTIMIZATIONS
 
     HADOOP-7761. Improve the performance of raw comparisons. (todd)
@@ -627,6 +638,9 @@ Trunk (Unreleased)
       HADOOP-12544. Erasure Coding: create dummy raw coder to isolate performance
       issues in testing. (Rui Li via zhz)
 
+      HADOOP-12685. Input buffer position after encode/decode not consistent
+      between different kinds of buffers. (Rui Li via zhz)
+
 Release 2.9.0 - UNRELEASED
 
   INCOMPATIBLE CHANGES
@@ -635,9 +649,31 @@ Release 2.9.0 - UNRELEASED
 
   IMPROVEMENTS
 
-  OPTIMIZATIONS
+    HADOOP-12321. Make JvmPauseMonitor an AbstractService.
+    (Sunil G via Stevel)
+
+    HADOOP-12625. Add a config to disable the /logs endpoints (rkanter)
+
+    HADOOP-12566. Add NullGroupMapping. (Daniel Templeton via kasha)
+
+    HADOOP-12663. Remove Hard-Coded Values From FileSystem.java.
+    (BELUGA BEHR via stevel)
 
   BUG FIXES
+
+    HADOOP-12687. SecureUtil#QualifiedHostResolver#getByName should also try to
+    resolve direct hostname, incase multiple loopback addresses are present in
+    /etc/hosts (Sunil G via rohithsharmaks)
+
+    HADOOP-12655. TestHttpServer.testBindAddress bind port range is wider
+    than expected. (Wei-Chiu Chuang via stevel)
+
+    HADOOP-12613. TestFind.processArguments occasionally fails.
+   (Wei-Chiu Chuang via stevel)
+
+   HADOOP-12597. In kms-site.xml configuration
+   "hadoop.security.keystore.JavaKeyStoreProvider.password"
+   should be updated with new name. (Surendra Singh Lilhore via stevel)
 
 Release 2.8.0 - UNRELEASED
 
@@ -674,6 +710,9 @@ Release 2.8.0 - UNRELEASED
 
     HADOOP-10300. Allowed deferred sending of call responses. (Daryn Sharp via
     yliu)
+
+    HADOOP-12657. Add a option to skip newline on empty files with getMerge -nl.
+    (Kanaka Kumar Avvaru via aajisaka)
 
   IMPROVEMENTS
 
@@ -993,6 +1032,22 @@ Release 2.8.0 - UNRELEASED
 
     HADOOP-12600. FileContext and AbstractFileSystem should be annotated as a
     Stable interface. (cnauroth)
+
+    HADOOP-12618. Fix NPE in TestSequenceFile. (Brahma Reddy Battula via umamahesh)
+
+    HADOOP-12639. Improve JavaDoc for getTrimmedStrings. (BELUGA BEHR via umamahesh)
+
+    HADOOP-12570. HDFS Secure Mode Documentation updates.
+    (Arpit Agarwal via cnauroth)
+
+    HADOOP-12686. Update FileSystemShell documentation to mention the meaning
+    of each columns of fs -du. (Daisuke Kobayashi via aajisaka)
+
+    HADOOP-12658. Clear javadoc and check style issues around DomainSocket
+    (Kai Zheng via umamahesh)
+
+    HADOOP-12604. Exception may be swallowed in KMSClientProvider.
+    (Yongjun Zhang)
 
   OPTIMIZATIONS
 
@@ -1383,7 +1438,8 @@ Release 2.8.0 - UNRELEASED
     HADOOP-12468. Partial group resolution failure should not result in user
     lockout. (Wei-Chiu Chuang via Yongjun Zhang)
 
-  OPTIMIZATIONS
+    HADOOP-12656. MiniKdc throws "address in use" BindException.
+    (Wei-Chiu Chuang via Arpit Agarwal)
 
     HADOOP-12051. ProtobufRpcEngine.invoke() should use Exception.toString()
     over getMessage() in logging/span events. (Varun Saxena via stevel)
@@ -1491,6 +1547,34 @@ Release 2.8.0 - UNRELEASED
     HADOOP-12313. NPE in JvmPauseMonitor when calling stop() before start().
     (Gabor Liptak via wheat9)
 
+    HADOOP-12609. Fix intermittent failure of TestDecayRpcScheduler.
+    (Masatake Iwasaki via Arpit Agarwal)
+
+    HADOOP-10729. Add tests for PB RPC in case version mismatch of client and
+    server. (Junping Du via wheat9)
+
+    HADOOP-12636. Prevent ServiceLoader failure init for unused FileSystems.
+    (Inigo Goiri via cdouglas)
+
+    HADOOP-12681. start-build-env.sh fails in branch-2.
+    (Kengo Seki via aajisaka)
+
+    HADOOP-12559. KMS connection failures should trigger TGT renewal.
+    (Zhe Zhang via xyao)
+
+    HADOOP-12682. Fix TestKMS#testKMSRestart* failure.
+    (Wei-Chiu Chuang via xyao)
+
+    HADOOP-12689. S3 filesystem operations stopped working correctly
+    (Matt Paduano via raviprak)
+
+    HADOOP-12634. Change Lazy Rename Pending Operation Completion of WASB to
+    address case of potential data loss due to partial copy
+    (Gaurav Kanade via cnauroth)
+
+    HADOOP-12675. Fix description about retention period in usage of expunge
+    command. (Masatake Iwasaki via stevel)
+
 Release 2.7.3 - UNRELEASED
 
   INCOMPATIBLE CHANGES
@@ -1520,6 +1604,15 @@ Release 2.7.3 - UNRELEASED
     time unit parameter. (zxu via rkanter)
 
     HADOOP-12482. Race condition in JMX cache update. (Tony Wu via lei)
+
+    HADOOP-12565. Replace DSA with RSA for SSH key type in SingleCluster.md.
+    (Mingliang Liu via aajisaka)
+
+    HADOOP-12602. TestMetricsSystemImpl#testQSize occasionally fails.
+    (Masatake Iwasaki via aajisaka)
+
+    HADOOP-12588. Fix intermittent test failure of TestGangliaMetrics.
+    (Masatake Iwasaki via aajisaka)
 
 Release 2.7.2 - UNRELEASED
 
@@ -1563,6 +1656,9 @@ Release 2.7.2 - UNRELEASED
     (Jagadesh Kiran N via aajisaka)
 
     HADOOP-12464. Interrupted client may try to fail-over and retry (kihwal)
+
+    HADOOP-12415. Fixed pom files to correctly include compile-time dependency on
+    netty. (Tom Zeng via cos)
 
 Release 2.7.1 - 2015-07-06 
 
@@ -2294,7 +2390,22 @@ Release 2.7.0 - 2015-04-20
     HADOOP-11837. AuthenticationFilter should destroy SignerSecretProvider in
     Tomcat deployments. (Bowen Zhang via wheat9)
 
-Release 2.6.3 - UNRELEASED
+Release 2.6.4 - UNRELEASED
+
+  INCOMPATIBLE CHANGES
+
+  NEW FEATURES
+
+  IMPROVEMENTS
+
+  OPTIMIZATIONS
+
+  BUG FIXES
+
+    HADOOP-11252. RPC client does not time out by default.
+    (Wilfred Spiegelenburg and Masatake Iwasaki via aajisaka)
+
+Release 2.6.3 - 2015-12-17
 
   INCOMPATIBLE CHANGES
 

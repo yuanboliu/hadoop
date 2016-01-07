@@ -647,10 +647,10 @@ public class CapacityScheduler extends
       parentQueue.setChildQueues(childQueues);
     }
 
-    if(queue instanceof LeafQueue == true && queues.containsKey(queueName)
-      && queues.get(queueName) instanceof LeafQueue == true) {
+    if (queue instanceof LeafQueue && queues.containsKey(queueName)
+        && queues.get(queueName) instanceof LeafQueue) {
       throw new IOException("Two leaf queues were named " + queueName
-        + ". Leaf queue names must be distinct");
+          + ". Leaf queue names must be distinct");
     }
     queues.put(queueName, queue);
 
@@ -960,7 +960,7 @@ public class CapacityScheduler extends
         updateDemandForQueue = (LeafQueue) application.getQueue();
       }
 
-      if (application.isWaitingForAMContainer(application.getApplicationId())) {
+      if (application.isWaitingForAMContainer()) {
         // Allocate is for AM and update AM blacklist for this
         application.updateAMBlacklist(
             blacklistAdditions, blacklistRemovals);

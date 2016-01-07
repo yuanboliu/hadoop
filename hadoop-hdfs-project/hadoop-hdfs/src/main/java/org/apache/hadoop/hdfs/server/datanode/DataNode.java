@@ -42,11 +42,14 @@ import static org.apache.hadoop.hdfs.DFSConfigKeys.DFS_DATANODE_OOB_TIMEOUT_DEFA
 import static org.apache.hadoop.hdfs.DFSConfigKeys.DFS_DATANODE_OOB_TIMEOUT_KEY;
 import static org.apache.hadoop.hdfs.DFSConfigKeys.DFS_DATANODE_PLUGINS_KEY;
 import static org.apache.hadoop.hdfs.DFSConfigKeys.DFS_DATANODE_STARTUP_KEY;
+import static org.apache.hadoop.hdfs.DFSConfigKeys.DFS_DATANODE_BALANCE_MAX_NUM_CONCURRENT_MOVES_KEY;
+import static org.apache.hadoop.hdfs.DFSConfigKeys.DFS_DATANODE_BALANCE_MAX_NUM_CONCURRENT_MOVES_DEFAULT;
 import static org.apache.hadoop.hdfs.DFSConfigKeys.DFS_MAX_NUM_BLOCKS_TO_LOG_DEFAULT;
 import static org.apache.hadoop.hdfs.DFSConfigKeys.DFS_MAX_NUM_BLOCKS_TO_LOG_KEY;
 import static org.apache.hadoop.hdfs.DFSConfigKeys.DFS_DATANODE_METRICS_LOGGER_PERIOD_SECONDS_DEFAULT;
 import static org.apache.hadoop.hdfs.DFSConfigKeys.DFS_DATANODE_METRICS_LOGGER_PERIOD_SECONDS_KEY;
 import static org.apache.hadoop.util.ExitUtil.terminate;
+import org.apache.hadoop.hdfs.protocol.proto.ReconfigurationProtocolProtos.ReconfigurationProtocolService;
 
 import java.io.BufferedOutputStream;
 import java.io.ByteArrayInputStream;
@@ -92,7 +95,6 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import javax.management.ObjectName;
 
-
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.classification.InterfaceAudience;
@@ -123,6 +125,7 @@ import org.apache.hadoop.hdfs.protocol.DatanodeInfo;
 import org.apache.hadoop.hdfs.protocol.DatanodeLocalInfo;
 import org.apache.hadoop.hdfs.protocol.ExtendedBlock;
 import org.apache.hadoop.hdfs.protocol.HdfsConstants;
+import org.apache.hadoop.hdfs.protocol.ReconfigurationProtocol;
 import org.apache.hadoop.hdfs.protocol.datatransfer.BlockConstructionStage;
 import org.apache.hadoop.hdfs.protocol.datatransfer.DataTransferProtocol;
 import org.apache.hadoop.hdfs.protocol.datatransfer.IOStreamPair;
@@ -142,6 +145,8 @@ import org.apache.hadoop.hdfs.protocolPB.InterDatanodeProtocolPB;
 import org.apache.hadoop.hdfs.protocolPB.InterDatanodeProtocolServerSideTranslatorPB;
 import org.apache.hadoop.hdfs.protocolPB.InterDatanodeProtocolTranslatorPB;
 import org.apache.hadoop.hdfs.protocolPB.PBHelperClient;
+import org.apache.hadoop.hdfs.protocolPB.ReconfigurationProtocolPB;
+import org.apache.hadoop.hdfs.protocolPB.ReconfigurationProtocolServerSideTranslatorPB;
 import org.apache.hadoop.hdfs.security.token.block.BlockPoolTokenSecretManager;
 import org.apache.hadoop.hdfs.security.token.block.BlockTokenIdentifier;
 import org.apache.hadoop.hdfs.security.token.block.BlockTokenIdentifier.AccessMode;
@@ -212,6 +217,7 @@ import com.google.common.cache.CacheLoader;
 import com.google.common.cache.LoadingCache;
 import com.google.common.collect.Lists;
 import com.google.protobuf.BlockingService;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -249,7 +255,7 @@ import org.slf4j.LoggerFactory;
 @InterfaceAudience.Private
 public class DataNode extends ReconfigurableBase
     implements InterDatanodeProtocol, ClientDatanodeProtocol,
-        TraceAdminProtocol, DataNodeMXBean {
+        TraceAdminProtocol, DataNodeMXBean, ReconfigurationProtocol {
   public static final Logger LOG = LoggerFactory.getLogger(DataNode.class);
   
   static{
@@ -284,7 +290,9 @@ public class DataNode extends ReconfigurableBase
   /** A list of property that are reconfigurable at runtime. */
   private static final List<String> RECONFIGURABLE_PROPERTIES =
       Collections.unmodifiableList(
-          Arrays.asList(DFS_DATANODE_DATA_DIR_KEY));
+          Arrays.asList(
+              DFS_DATANODE_DATA_DIR_KEY,
+              DFS_DATANODE_BALANCE_MAX_NUM_CONCURRENT_MOVES_KEY));
 
   public static final Log METRICS_LOG = LogFactory.getLog("DataNodeMetricsLog");
 
@@ -520,6 +528,38 @@ public class DataNode extends ReconfigurableBase
             throw new ReconfigurationException(property, newVal,
                 getConf().get(property), rootException);
           }
+        }
+      }
+    } else if (property.equals(
+        DFS_DATANODE_BALANCE_MAX_NUM_CONCURRENT_MOVES_KEY)) {
+      ReconfigurationException rootException = null;
+      try {
+        LOG.info("Reconfiguring " + property + " to " + newVal);
+        int movers;
+        if (newVal == null) {
+          // set to default
+          movers = DFS_DATANODE_BALANCE_MAX_NUM_CONCURRENT_MOVES_DEFAULT;
+        } else {
+          movers = Integer.parseInt(newVal);
+          if (movers <= 0) {
+            rootException = new ReconfigurationException(
+                property,
+                newVal,
+                getConf().get(property),
+                new IllegalArgumentException(
+                    "balancer max concurrent movers must be larger than 0"));
+          }
+        }
+        xserver.updateBalancerMaxConcurrentMovers(movers);
+      } catch(NumberFormatException nfe) {
+        rootException = new ReconfigurationException(
+            property, newVal, getConf().get(property), nfe);
+      } finally {
+        if (rootException != null) {
+          LOG.warn(String.format(
+              "Exception in updating balancer max concurrent movers %s to %s",
+              property, newVal), rootException);
+          throw rootException;
         }
       }
     } else {
@@ -878,7 +918,14 @@ public class DataNode extends ReconfigurableBase
             conf.getInt(DFS_DATANODE_HANDLER_COUNT_KEY,
                 DFS_DATANODE_HANDLER_COUNT_DEFAULT)).setVerbose(false)
         .setSecretManager(blockPoolTokenSecretManager).build();
-    
+
+    ReconfigurationProtocolServerSideTranslatorPB reconfigurationProtocolXlator
+        = new ReconfigurationProtocolServerSideTranslatorPB(this);
+    service = ReconfigurationProtocolService
+        .newReflectiveBlockingService(reconfigurationProtocolXlator);
+    DFSUtil.addPBProtocol(conf, ReconfigurationProtocolPB.class, service,
+        ipcServer);
+
     InterDatanodeProtocolServerSideTranslatorPB interDatanodeProtocolXlator = 
         new InterDatanodeProtocolServerSideTranslatorPB(this);
     service = InterDatanodeProtocolService
@@ -1197,7 +1244,8 @@ public class DataNode extends ReconfigurableBase
     registerMXBean();
     initDataXceiver(conf);
     startInfoServer(conf);
-    pauseMonitor = new JvmPauseMonitor(conf);
+    pauseMonitor = new JvmPauseMonitor();
+    pauseMonitor.init(conf);
     pauseMonitor.start();
   
     // BlockPoolTokenSecretManager is required to create ipc server.
@@ -2882,19 +2930,19 @@ public class DataNode extends ReconfigurableBase
         confVersion, uptime);
   }
 
-  @Override // ClientDatanodeProtocol
+  @Override // ClientDatanodeProtocol & ReconfigurationProtocol
   public void startReconfiguration() throws IOException {
     checkSuperuserPrivilege();
     startReconfigurationTask();
   }
 
-  @Override // ClientDatanodeProtocol
+  @Override // ClientDatanodeProtocol & ReconfigurationProtocol
   public ReconfigurationTaskStatus getReconfigurationStatus() throws IOException {
     checkSuperuserPrivilege();
     return getReconfigurationTaskStatus();
   }
 
-  @Override // ClientDatanodeProtocol
+  @Override // ClientDatanodeProtocol & ReconfigurationProtocol
   public List<String> listReconfigurableProperties()
       throws IOException {
     return RECONFIGURABLE_PROPERTIES;

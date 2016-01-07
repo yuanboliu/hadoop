@@ -60,6 +60,7 @@ import org.apache.hadoop.yarn.server.resourcemanager.scheduler.ResourceLimits;
 import org.apache.hadoop.yarn.server.resourcemanager.scheduler.ResourceUsage;
 import org.apache.hadoop.yarn.server.resourcemanager.scheduler.SchedContainerChangeRequest;
 import org.apache.hadoop.yarn.server.resourcemanager.scheduler.SchedulerApplicationAttempt;
+import org.apache.hadoop.yarn.server.resourcemanager.scheduler.SchedulerApplicationAttempt.AMState;
 import org.apache.hadoop.yarn.server.resourcemanager.scheduler.SchedulerUtils;
 import org.apache.hadoop.yarn.server.resourcemanager.scheduler.common.fica.FiCaSchedulerApp;
 import org.apache.hadoop.yarn.server.resourcemanager.scheduler.common.fica.FiCaSchedulerNode;
@@ -108,9 +109,6 @@ public class LeafQueue extends AbstractCSQueue {
   // cache last cluster resource to compute actual capacity
   private Resource lastClusterResource = Resources.none();
   
-  // absolute capacity as a resource (based on cluster resource)
-  private Resource absoluteCapacityResource = Resources.none();
-  
   private final QueueResourceLimitsInfo queueResourceLimitsInfo =
       new QueueResourceLimitsInfo();
 
@@ -143,7 +141,6 @@ public class LeafQueue extends AbstractCSQueue {
     super.setupQueueConfigs(clusterResource);
     
     this.lastClusterResource = clusterResource;
-    updateAbsoluteCapacityResource(clusterResource);
     
     this.cachedResourceLimitsForHeadroom = new ResourceLimits(clusterResource);
     
@@ -256,7 +253,6 @@ public class LeafQueue extends AbstractCSQueue {
         " [= configuredAcls ]" + "\n" + 
         "nodeLocalityDelay = " + nodeLocalityDelay + "\n" +
         "labels=" + labelStrBuilder.toString() + "\n" +
-        "nodeLocalityDelay = " +  nodeLocalityDelay + "\n" +
         "reservationsContinueLooking = " +
         reservationsContinueLooking + "\n" +
         "preemptionDisabled = " + getPreemptionDisabled() + "\n" +
@@ -344,10 +340,6 @@ public class LeafQueue extends AbstractCSQueue {
   @Private
   public synchronized int getNumActiveApplications(String user) {
     return getUser(user).getActiveApplications();
-  }
-  
-  public synchronized int getNumContainers() {
-    return numContainers;
   }
 
   @Override
@@ -487,14 +479,6 @@ public class LeafQueue extends AbstractCSQueue {
       String queue)  throws AccessControlException {
     // Careful! Locking order is important!
 
-    // Check queue ACLs
-    UserGroupInformation userUgi = UserGroupInformation.createRemoteUser(userName);
-    if (!hasAccess(QueueACL.SUBMIT_APPLICATIONS, userUgi)
-        && !hasAccess(QueueACL.ADMINISTER_QUEUE, userUgi)) {
-      throw new AccessControlException("User " + userName + " cannot submit" +
-          " applications to queue " + getQueuePath());
-    }
-
     User user = null;
     synchronized (this) {
 
@@ -605,6 +589,7 @@ public class LeafQueue extends AbstractCSQueue {
         minimumAllocation);
 
     metrics.setAMResouceLimit(amResouceLimit);
+    queueUsage.setAMLimit(nodePartition, amResouceLimit);
     return amResouceLimit;
   }
 
@@ -635,7 +620,7 @@ public class LeafQueue extends AbstractCSQueue {
           queueUsage.getAMUsed(partitionName));
 
       if (LOG.isDebugEnabled()) {
-        LOG.debug("application AMResource "
+        LOG.debug("application "+application.getId() +" AMResource "
             + application.getAMResource(partitionName)
             + " maxAMResourcePerQueuePercent " + maxAMResourcePerQueuePercent
             + " amLimit " + amLimit + " lastClusterResource "
@@ -654,6 +639,8 @@ public class LeafQueue extends AbstractCSQueue {
               + " skipping enforcement to allow at least one application"
               + " to start");
         } else {
+          application.updateAMContainerDiagnostics(AMState.INACTIVATED,
+              CSAMContainerLaunchDiagnosticsConstants.QUEUE_AM_RESOURCE_LIMIT_EXCEED);
           LOG.info("Not activating application " + applicationId
               + " as  amIfStarted: " + amIfStarted + " exceeds amLimit: "
               + amLimit);
@@ -686,6 +673,8 @@ public class LeafQueue extends AbstractCSQueue {
               + " low. skipping enforcement to allow at least one application"
               + " to start");
         } else {
+          application.updateAMContainerDiagnostics(AMState.INACTIVATED,
+              CSAMContainerLaunchDiagnosticsConstants.USER_AM_RESOURCE_LIMIT_EXCEED);
           LOG.info("Not activating application " + applicationId
               + " for user: " + user + " as userAmIfStarted: "
               + userAmIfStarted + " exceeds userAmLimit: " + userAMLimit);
@@ -694,6 +683,8 @@ public class LeafQueue extends AbstractCSQueue {
       }
       user.activateApplication();
       orderingPolicy.addSchedulableEntity(application);
+      application.updateAMContainerDiagnostics(AMState.ACTIVATED, null);
+
       queueUsage.incAMUsed(partitionName,
           application.getAMResource(partitionName));
       user.getResourceUsage().incAMUsed(partitionName,
@@ -869,6 +860,8 @@ public class LeafQueue extends AbstractCSQueue {
       // Check user limit
       if (!canAssignToUser(clusterResource, application.getUser(), userLimit,
           application, node.getPartition(), currentResourceLimits)) {
+        application.updateAMContainerDiagnostics(AMState.ACTIVATED,
+            "User capacity has reached its maximum limit.");
         continue;
       }
 
@@ -904,7 +897,9 @@ public class LeafQueue extends AbstractCSQueue {
 
         // Done
         return assignment;
-      } else if (!assignment.getSkipped()) {
+      } else if (assignment.getSkipped()) {
+        application.updateNodeInfoForAMDiagnostics(node);
+      } else {
         // If we don't allocate anything, and it is not skipped by application,
         // we will return to respect FIFO of applications
         return CSAssignment.NULL_ASSIGNMENT;
@@ -1316,13 +1311,6 @@ public class LeafQueue extends AbstractCSQueue {
     }
   }
   
-  private void updateAbsoluteCapacityResource(Resource clusterResource) {
-    absoluteCapacityResource =
-        Resources.multiplyAndNormalizeUp(resourceCalculator, labelManager
-            .getResourceByLabel(RMNodeLabelsManager.NO_LABEL, clusterResource),
-            queueCapacities.getAbsoluteCapacity(), minimumAllocation);
-  }
-  
   private void updateCurrentResourceLimits(
       ResourceLimits currentResourceLimits, Resource clusterResource) {
     // TODO: need consider non-empty node labels when resource limits supports
@@ -1348,7 +1336,6 @@ public class LeafQueue extends AbstractCSQueue {
       ResourceLimits currentResourceLimits) {
     updateCurrentResourceLimits(currentResourceLimits, clusterResource);
     lastClusterResource = clusterResource;
-    updateAbsoluteCapacityResource(clusterResource);
     
     // Update headroom info based on new cluster resource value
     // absoluteMaxCapacity now,  will be replaced with absoluteMaxAvailCapacity

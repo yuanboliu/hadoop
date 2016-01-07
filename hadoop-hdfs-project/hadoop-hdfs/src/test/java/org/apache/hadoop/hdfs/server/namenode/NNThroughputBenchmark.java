@@ -925,7 +925,7 @@ public class NNThroughputBenchmark implements Tool {
     NamespaceInfo nsInfo;
     DatanodeRegistration dnRegistration;
     DatanodeStorage storage; //only one storage 
-    final ArrayList<BlockReportReplica> blocks;
+    final List<BlockReportReplica> blocks;
     int nrBlocks; // actual number of blocks
     BlockListAsLongs blockReportList;
     final int dnIdx;
@@ -938,7 +938,7 @@ public class NNThroughputBenchmark implements Tool {
 
     TinyDatanode(int dnIdx, int blockCapacity) throws IOException {
       this.dnIdx = dnIdx;
-      this.blocks = new ArrayList<BlockReportReplica>(blockCapacity);
+      this.blocks = Arrays.asList(new BlockReportReplica[blockCapacity]);
       this.nrBlocks = 0;
     }
 
@@ -1013,7 +1013,7 @@ public class NNThroughputBenchmark implements Tool {
         Block block = new Block(blocks.size() - idx, 0, 0);
         blocks.set(idx, new BlockReportReplica(block));
       }
-      blockReportList = BlockListAsLongs.EMPTY;
+      blockReportList = BlockListAsLongs.encode(blocks);
     }
 
     BlockListAsLongs getBlockReportList() {
@@ -1098,6 +1098,8 @@ public class NNThroughputBenchmark implements Tool {
 
     BlockReportStats(List<String> args) {
       super();
+      numThreads = 10;
+      numOpsRequired = 30;
       this.blocksPerReport = 100;
       this.blocksPerFile = 10;
       // set heartbeat interval to 3 min, so that expiration were 40 min
@@ -1258,7 +1260,7 @@ public class NNThroughputBenchmark implements Tool {
     ReplicationStats(List<String> args) {
       super();
       numThreads = 1;
-      numDatanodes = 3;
+      numDatanodes = 10;
       nodesToDecommission = 1;
       nodeReplicationLimit = 100;
       totalBlocks = 100;

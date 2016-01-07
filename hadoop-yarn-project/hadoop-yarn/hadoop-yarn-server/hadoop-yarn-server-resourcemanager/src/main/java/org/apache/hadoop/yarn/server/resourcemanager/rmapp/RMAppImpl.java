@@ -149,6 +149,8 @@ public class RMAppImpl implements RMApp, Recoverable {
   private long startTime;
   private long finishTime = 0;
   private long storedFinishTime = 0;
+  private int firstAttemptIdInStateStore = 1;
+  private int nextAttemptId = 1;
   // This field isn't protected by readlock now.
   private volatile RMAppAttempt currentAttempt;
   private String queue;
@@ -444,9 +446,6 @@ public class RMAppImpl implements RMApp, Recoverable {
 
     this.callerContext = CallerContext.getCurrent();
 
-    rmContext.getRMApplicationHistoryWriter().applicationStarted(this);
-    rmContext.getSystemMetricsPublisher().appCreated(this, startTime);
-
     long localLogAggregationStatusTimeout =
         conf.getLong(YarnConfiguration.LOG_AGGREGATION_STATUS_TIME_OUT_MS,
           YarnConfiguration.DEFAULT_LOG_AGGREGATION_STATUS_TIME_OUT_MS);
@@ -493,21 +492,15 @@ public class RMAppImpl implements RMApp, Recoverable {
 
   @Override
   public FinalApplicationStatus getFinalApplicationStatus() {
-    this.readLock.lock();
-    try {
-      // finish state is obtained based on the state machine's current state 
-      // as a fall-back in case the application has not been unregistered 
-      // ( or if the app never unregistered itself )
-      // when the report is requested
-      if (currentAttempt != null 
-          && currentAttempt.getFinalApplicationStatus() != null) {
-        return currentAttempt.getFinalApplicationStatus();   
-      }
-      return 
-          createFinalApplicationStatus(this.stateMachine.getCurrentState());
-    } finally {
-      this.readLock.unlock();
+    // finish state is obtained based on the state machine's current state
+    // as a fall-back in case the application has not been unregistered
+    // ( or if the app never unregistered itself )
+    // when the report is requested
+    if (currentAttempt != null
+        && currentAttempt.getFinalApplicationStatus() != null) {
+      return currentAttempt.getFinalApplicationStatus();
     }
+    return createFinalApplicationStatus(this.stateMachine.getCurrentState());
   }
 
   @Override
@@ -654,7 +647,8 @@ public class RMAppImpl implements RMApp, Recoverable {
           progress = currentAttempt.getProgress();
           logAggregationStatus = this.getLogAggregationStatusForAppReport();
         }
-        diags = this.diagnostics.toString();
+        //if the diagnostics is not already set get it from attempt
+        diags = getDiagnostics().toString();
 
         if (currentAttempt != null && 
             currentAttempt.getAppAttemptState() == RMAppAttemptState.LAUNCHED) {
@@ -759,8 +753,13 @@ public class RMAppImpl implements RMApp, Recoverable {
   @Override
   public StringBuilder getDiagnostics() {
     this.readLock.lock();
-
     try {
+      if (diagnostics.length() == 0 && getCurrentAppAttempt() != null) {
+        String appAttemptDiagnostics = getCurrentAppAttempt().getDiagnostics();
+        if (appAttemptDiagnostics != null) {
+          return new StringBuilder(appAttemptDiagnostics);
+        }
+      }
       return this.diagnostics;
     } finally {
       this.readLock.unlock();
@@ -812,6 +811,14 @@ public class RMAppImpl implements RMApp, Recoverable {
     this.storedFinishTime = appState.getFinishTime();
     this.startTime = appState.getStartTime();
     this.callerContext = appState.getCallerContext();
+    // If interval > 0, some attempts might have been deleted.
+    if (submissionContext.getAttemptFailuresValidityInterval() > 0) {
+      this.firstAttemptIdInStateStore = appState.getFirstAttemptId();
+      this.nextAttemptId = firstAttemptIdInStateStore;
+    }
+
+    // send the ATS create Event
+    sendATSCreateEvent(this, this.startTime);
 
     for(int i=0; i<appState.getAttemptCount(); ++i) {
       // create attempt
@@ -822,7 +829,7 @@ public class RMAppImpl implements RMApp, Recoverable {
 
   private void createNewAttempt() {
     ApplicationAttemptId appAttemptId =
-        ApplicationAttemptId.newInstance(applicationId, attempts.size() + 1);
+        ApplicationAttemptId.newInstance(applicationId, nextAttemptId++);
 
     BlacklistManager currentAMBlacklist;
     if (currentAttempt != null) {
@@ -983,16 +990,6 @@ public class RMAppImpl implements RMApp, Recoverable {
       // recover attempts
       app.recoverAppAttempts();
 
-      // Last attempt is in final state, return ACCEPTED waiting for last
-      // RMAppAttempt to send finished or failed event back.
-      if (app.currentAttempt != null
-          && (app.currentAttempt.getState() == RMAppAttemptState.KILLED
-              || app.currentAttempt.getState() == RMAppAttemptState.FINISHED
-              || (app.currentAttempt.getState() == RMAppAttemptState.FAILED
-                  && app.getNumFailedAppAttempts() == app.maxAppAttempts))) {
-        return RMAppState.ACCEPTED;
-      }
-
       // YARN-1507 is saving the application state after the application is
       // accepted. So after YARN-1507, an app is saved meaning it is accepted.
       // Thus we return ACCECPTED state on recovery.
@@ -1084,6 +1081,9 @@ public class RMAppImpl implements RMApp, Recoverable {
       // communication
       LOG.info("Storing application with id " + app.applicationId);
       app.rmContext.getStateStore().storeNewApplication(app);
+
+      // send the ATS create Event
+      app.sendATSCreateEvent(app, app.startTime);
     }
   }
 
@@ -1311,6 +1311,9 @@ public class RMAppImpl implements RMApp, Recoverable {
               + app.attemptFailuresValidityInterval + " milliseconds " : " ")
           + "is " + numberOfFailure + ". The max attempts is "
           + app.maxAppAttempts);
+
+      removeExcessAttempts(app);
+
       if (!app.submissionContext.getUnmanagedAM()
           && numberOfFailure < app.maxAppAttempts) {
         if (initialState.equals(RMAppState.KILLING)) {
@@ -1345,6 +1348,19 @@ public class RMAppImpl implements RMApp, Recoverable {
           new AttemptFailedFinalStateSavedTransition(), RMAppState.FAILED,
           RMAppState.FAILED);
         return RMAppState.FINAL_SAVING;
+      }
+    }
+
+    private void removeExcessAttempts(RMAppImpl app) {
+      while (app.nextAttemptId - app.firstAttemptIdInStateStore
+          > app.maxAppAttempts) {
+        // attempts' first element is oldest attempt because it is a
+        // LinkedHashMap
+        ApplicationAttemptId attemptId = ApplicationAttemptId.newInstance(
+            app.getApplicationId(), app.firstAttemptIdInStateStore);
+        app.firstAttemptIdInStateStore++;
+        LOG.info("Remove attempt from state store : " + attemptId);
+        app.rmContext.getStateStore().removeApplicationAttempt(attemptId);
       }
     }
   }
@@ -1733,5 +1749,10 @@ public class RMAppImpl implements RMApp, Recoverable {
   @Override
   public CallerContext getCallerContext() {
     return callerContext;
+  }
+
+  private void sendATSCreateEvent(RMApp app, long startTime) {
+    rmContext.getRMApplicationHistoryWriter().applicationStarted(app);
+    rmContext.getSystemMetricsPublisher().appCreated(app, startTime);
   }
 }

@@ -382,6 +382,8 @@ public class TestAMRestart {
   @Test(timeout = 100000)
   public void testAMBlacklistPreventsRestartOnSameNode() throws Exception {
     YarnConfiguration conf = new YarnConfiguration();
+    conf.setClass(YarnConfiguration.RM_SCHEDULER, CapacityScheduler.class,
+        ResourceScheduler.class);
     conf.setBoolean(YarnConfiguration.AM_BLACKLISTING_ENABLED, true);
     testAMBlacklistPreventRestartOnSameNode(false, conf);
   }
@@ -857,6 +859,9 @@ public class TestAMRestart {
     @SuppressWarnings("resource")
     MockRM rm2 = new MockRM(conf, memStore);
     rm2.start();
+    ApplicationStateData app1State =
+        memStore.getState().getApplicationState().get(app1.getApplicationId());
+    Assert.assertEquals(1, app1State.getFirstAttemptId());
 
     // re-register the NM
     nm1.setResourceTrackerService(rm2.getResourceTrackerService());
@@ -869,6 +874,7 @@ public class TestAMRestart {
     nm1.registerNode(Collections.singletonList(status), null);
 
     rm2.waitForState(attempt3.getAppAttemptId(), RMAppAttemptState.FAILED);
+    Assert.assertEquals(2, app1State.getAttemptCount());
 
     rm2.waitForState(app1.getApplicationId(), RMAppState.ACCEPTED);
 
@@ -882,6 +888,7 @@ public class TestAMRestart {
     nm1
       .nodeHeartbeat(am4.getApplicationAttemptId(), 1, ContainerState.COMPLETE);
     am4.waitForState(RMAppAttemptState.FAILED);
+    Assert.assertEquals(2, app1State.getAttemptCount());
 
     // can launch the 5th attempt successfully
     rm2.waitForState(app1.getApplicationId(), RMAppState.ACCEPTED);
@@ -895,6 +902,7 @@ public class TestAMRestart {
     nm1
       .nodeHeartbeat(am5.getApplicationAttemptId(), 1, ContainerState.COMPLETE);
     am5.waitForState(RMAppAttemptState.FAILED);
+    Assert.assertEquals(2, app1State.getAttemptCount());
 
     rm2.waitForState(app1.getApplicationId(), RMAppState.FAILED);
     rm1.stop();

@@ -451,6 +451,15 @@ Release 2.8.0 - UNRELEASED
     MAPREDUCE-5870. Support for passing Job priority through Application
     Submission Context in Mapreduce Side (Sunil G via jlowe)
 
+    MAPREDUCE-6566. Add retry support to mapreduce CLI tool.
+    (Varun Vasudev via xgong)
+
+    MAPREDUCE-6574. MR AM should print host of failed tasks. 
+    (Mohammad Shahid Khan via wangda)
+
+    MAPREDUCE-6584. Remove trailing whitespaces from mapred-default.xml.
+    (aajisaka)
+
   OPTIMIZATIONS
 
     MAPREDUCE-6376. Add avro binary support for jhist files (Ray Chiang via
@@ -668,6 +677,15 @@ Release 2.8.0 - UNRELEASED
     MAPREDUCE-6550. archive-logs tool changes log ownership to the Yarn
     user when using DefaultContainerExecutor (rkanter)
 
+   MAPREDUCE-6419. JobHistoryServer doesn't sort properly based on Job ID when Job id's 
+   exceed 9999. (Mohammad Shahid Khan via rohithsharmaks)
+
+    MAPREDUCE-6589. TestTaskLog outputs a log under directory other than
+    target/test-dir. (aajisaka)
+
+    MAPREDUCE-6593. TestJobHistoryEventHandler.testTimelineEventHandling fails
+    on trunk because of NPE. (Naganarasimha G R via aajisaka)
+
 Release 2.7.3 - UNRELEASED
 
   INCOMPATIBLE CHANGES
@@ -688,6 +706,9 @@ Release 2.7.3 - UNRELEASED
 
     MAPREDUCE-6549. multibyte delimiters with LineRecordReader cause
     duplicate records (wilfreds via rkanter)
+
+    MAPREDUCE-6583. Clarify confusing sentence in MapReduce tutorial document.
+    (Kai Sasaki via aajisaka)
 
 Release 2.7.2 - UNRELEASED
 
@@ -964,7 +985,24 @@ Release 2.7.0 - 2015-04-20
     MAPREDUCE-6285. ClientServiceDelegate should not retry upon
     AuthenticationException. (Jonathan Eagles via ozawa)
 
-Release 2.6.3 - UNRELEASED
+Release 2.6.4 - UNRELEASED
+
+  INCOMPATIBLE CHANGES
+
+  NEW FEATURES
+
+  IMPROVEMENTS
+
+    MAPREDUCE-6436. JobHistory cache issue. (Kai Sasaki via zxu)
+
+  OPTIMIZATIONS
+
+  BUG FIXES
+
+    MAPREDUCE-6577. MR AM unable to load native library without
+    MR_AM_ADMIN_USER_ENV set (sjlee)
+
+Release 2.6.3 - 2015-12-17
 
   INCOMPATIBLE CHANGES
 

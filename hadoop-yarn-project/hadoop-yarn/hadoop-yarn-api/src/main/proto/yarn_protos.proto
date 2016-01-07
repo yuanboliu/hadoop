@@ -58,6 +58,12 @@ message ResourceProto {
   optional int32 virtual_cores = 2;
 }
 
+message ResourceUtilizationProto {
+  optional int32 pmem = 1;
+  optional int32 vmem = 2;
+  optional float cpu = 3;
+}
+
 message ResourceOptionProto {
   optional ResourceProto resource = 1;
   optional int32 over_commit_timeout = 2;
@@ -131,6 +137,7 @@ enum FinalApplicationStatusProto {
   APP_SUCCEEDED = 1;
   APP_FAILED = 2;
   APP_KILLED = 3;
+  APP_ENDED = 4;
 }
 
 message URLProto {
@@ -253,6 +260,8 @@ message NodeReportProto {
   optional string health_report = 8;
   optional int64 last_health_report_time = 9;
   repeated string node_labels = 10;
+  optional ResourceUtilizationProto containers_utilization = 11;
+  optional ResourceUtilizationProto node_utilization = 12;
 }
 
 message NodeIdToLabelsInfoProto {
@@ -273,6 +282,11 @@ message NodeLabelProto {
 enum ContainerTypeProto {
   APPLICATION_MASTER = 1;
   TASK = 2;
+}
+
+enum ExecutionTypeProto {
+  GUARANTEED = 1;
+  OPPORTUNISTIC = 2;
 }
 
 ////////////////////////////////////////////////////////////////////////
@@ -407,6 +421,7 @@ message QueueInfoProto {
   repeated string accessibleNodeLabels = 8;
   optional string defaultNodeLabelExpression = 9;
   optional QueueStatisticsProto queueStatistics = 10;
+  optional bool preemptionDisabled = 11;
 }
 
 enum QueueACLProto {
@@ -480,6 +495,7 @@ message ContainerStatusProto {
   optional string diagnostics = 3 [default = "N/A"];
   optional int32 exit_status = 4 [default = -1000];
   optional ResourceProto capability = 5;
+  optional ExecutionTypeProto executionType = 6 [default = GUARANTEED];
 }
 
 enum ContainerExitStatusProto {

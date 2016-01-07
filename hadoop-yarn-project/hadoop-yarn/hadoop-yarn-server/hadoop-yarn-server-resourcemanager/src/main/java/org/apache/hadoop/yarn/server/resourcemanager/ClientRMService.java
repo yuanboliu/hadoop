@@ -549,7 +549,7 @@ public class ClientRMService extends AbstractService implements
 
   @Override
   public SubmitApplicationResponse submitApplication(
-      SubmitApplicationRequest request) throws YarnException {
+      SubmitApplicationRequest request) throws YarnException, IOException {
     ApplicationSubmissionContext submissionContext = request
         .getApplicationSubmissionContext();
     ApplicationId applicationId = submissionContext.getApplicationId();
@@ -989,13 +989,14 @@ public class ClientRMService extends AbstractService implements
       used = schedulerNodeReport.getUsedResource();
       numContainers = schedulerNodeReport.getNumContainers();
     } 
-    
+
     NodeReport report =
         BuilderUtils.newNodeReport(rmNode.getNodeID(), rmNode.getState(),
             rmNode.getHttpAddress(), rmNode.getRackName(), used,
             rmNode.getTotalCapability(), numContainers,
             rmNode.getHealthReport(), rmNode.getLastHealthReportTime(),
-            rmNode.getNodeLabels());
+            rmNode.getNodeLabels(), rmNode.getAggregatedContainersUtilization(),
+            rmNode.getNodeUtilization());
 
     return report;
   }
@@ -1448,6 +1449,8 @@ public class ClientRMService extends AbstractService implements
         RMAuditLogger.logSuccess(callerUGI.getShortUserName(),
             AuditConstants.UPDATE_APP_PRIORITY, "ClientRMService",
             applicationId);
+        response.setApplicationPriority(application
+            .getApplicationSubmissionContext().getPriority());
         return response;
       }
       String msg = "Application in " + application.getState()
@@ -1471,6 +1474,8 @@ public class ClientRMService extends AbstractService implements
 
     RMAuditLogger.logSuccess(callerUGI.getShortUserName(),
         AuditConstants.UPDATE_APP_PRIORITY, "ClientRMService", applicationId);
+    response.setApplicationPriority(application
+        .getApplicationSubmissionContext().getPriority());
     return response;
   }
 
@@ -1479,6 +1484,7 @@ public class ClientRMService extends AbstractService implements
    * After the request passes some sanity check, it will be delivered
    * to RMNodeImpl so that the next NM heartbeat will pick up the signal request
    */
+  @SuppressWarnings("unchecked")
   @Override
   public SignalContainerResponse signalContainer(
       SignalContainerRequest request) throws YarnException, IOException {

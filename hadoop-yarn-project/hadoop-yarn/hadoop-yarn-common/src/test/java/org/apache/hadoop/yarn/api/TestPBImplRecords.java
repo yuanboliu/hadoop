@@ -142,6 +142,7 @@ import org.apache.hadoop.yarn.api.records.Resource;
 import org.apache.hadoop.yarn.api.records.ResourceBlacklistRequest;
 import org.apache.hadoop.yarn.api.records.ResourceOption;
 import org.apache.hadoop.yarn.api.records.ResourceRequest;
+import org.apache.hadoop.yarn.api.records.ResourceUtilization;
 import org.apache.hadoop.yarn.api.records.SerializedException;
 import org.apache.hadoop.yarn.api.records.StrictPreemptionContract;
 import org.apache.hadoop.yarn.api.records.Token;
@@ -487,7 +488,7 @@ public class TestPBImplRecords {
     // it is recursive(has sub queues)
     typeValueCache.put(QueueInfo.class, QueueInfo.newInstance("root", 1.0f,
         1.0f, 0.1f, null, null, QueueState.RUNNING, ImmutableSet.of("x", "y"),
-        "x && y", null));
+        "x && y", null, false));
     generateByNewInstance(QueueStatistics.class);
     generateByNewInstance(QueueUserACLInfo.class);
     generateByNewInstance(YarnClusterMetrics.class);
@@ -496,6 +497,7 @@ public class TestPBImplRecords {
     generateByNewInstance(ReservationRequest.class);
     generateByNewInstance(ReservationRequests.class);
     generateByNewInstance(ReservationDefinition.class);
+    generateByNewInstance(ResourceUtilization.class);
   }
 
   private class GetSetPair {

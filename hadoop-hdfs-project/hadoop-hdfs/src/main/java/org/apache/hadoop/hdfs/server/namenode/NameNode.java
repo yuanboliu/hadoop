@@ -383,7 +383,7 @@ public class NameNode implements NameNodeStatusMXBean {
     return rpcServer;
   }
   
-  static void initMetrics(Configuration conf, NamenodeRole role) {
+  public static void initMetrics(Configuration conf, NamenodeRole role) {
     metrics = NameNodeMetrics.create(conf, role);
   }
 
@@ -691,7 +691,8 @@ public class NameNode implements NameNodeStatusMXBean {
       httpServer.setFSImage(getFSImage());
     }
     
-    pauseMonitor = new JvmPauseMonitor(conf);
+    pauseMonitor = new JvmPauseMonitor();
+    pauseMonitor.init(conf);
     pauseMonitor.start();
     metrics.getJvmMetrics().setPauseMonitor(pauseMonitor);
     
@@ -1018,6 +1019,22 @@ public class NameNode implements NameNodeStatusMXBean {
    */
   public InetSocketAddress getHttpsAddress() {
     return httpServer.getHttpsAddress();
+  }
+
+  /**
+   * @return NameNodeHttpServer, used by unit tests to ensure a full shutdown,
+   * so that no bind exception is thrown during restart.
+   */
+  @VisibleForTesting
+  public void joinHttpServer() {
+    if (httpServer != null) {
+      try {
+        httpServer.join();
+      } catch (InterruptedException e) {
+        LOG.info("Caught InterruptedException joining NameNodeHttpServer", e);
+        Thread.currentThread().interrupt();
+      }
+    }
   }
 
   /**
@@ -1682,11 +1699,9 @@ public class NameNode implements NameNodeStatusMXBean {
     HAServiceState retState = state.getServiceState();
     HAServiceStatus ret = new HAServiceStatus(retState);
     if (retState == HAServiceState.STANDBY) {
-      String safemodeTip = namesystem.getSafeModeTip();
-      if (!safemodeTip.isEmpty()) {
-        ret.setNotReadyToBecomeActive(
-            "The NameNode is in safemode. " +
-            safemodeTip);
+      if (namesystem.isInSafeMode()) {
+        ret.setNotReadyToBecomeActive("The NameNode is in safemode. " +
+            namesystem.getSafeModeTip());
       } else {
         ret.setReadyToBecomeActive();
       }

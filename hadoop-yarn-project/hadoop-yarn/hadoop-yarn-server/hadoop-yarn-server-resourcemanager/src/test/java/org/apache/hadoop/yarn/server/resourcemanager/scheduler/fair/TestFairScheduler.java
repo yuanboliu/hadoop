@@ -981,6 +981,43 @@ public class TestFairScheduler extends FairSchedulerTestBase {
             scheduler.getSchedulerApp(attId).getNumReservations(null, true));
   }
 
+  @Test (timeout = 5000)
+  public void testReservationThresholdWithAssignMultiple() throws Exception {
+    // set reservable-nodes to 0 which make reservation exceed
+    conf.setFloat(FairSchedulerConfiguration.RESERVABLE_NODES, 0f);
+    conf.setBoolean(FairSchedulerConfiguration.ASSIGN_MULTIPLE, true);
+    scheduler.init(conf);
+    scheduler.start();
+    scheduler.reinitialize(conf, resourceManager.getRMContext());
+
+    // Add two node
+    RMNode node1 =
+        MockNodes
+                .newNodeInfo(1, Resources.createResource(4096, 4), 1, "127.0.0.1");
+    NodeAddedSchedulerEvent nodeEvent1 = new NodeAddedSchedulerEvent(node1);
+    scheduler.handle(nodeEvent1);
+    RMNode node2 =
+        MockNodes
+                .newNodeInfo(2, Resources.createResource(4096, 4), 1, "127.0.0.2");
+    NodeAddedSchedulerEvent nodeEvent2 = new NodeAddedSchedulerEvent(node2);
+    scheduler.handle(nodeEvent2);
+
+    //create one request and assign containers
+    ApplicationAttemptId attId = createSchedulingRequest(1024, "queue1", "user1", 10);
+    scheduler.update();
+    scheduler.handle(new NodeUpdateSchedulerEvent(node1));
+    scheduler.update();
+    scheduler.handle(new NodeUpdateSchedulerEvent(node2));
+
+    // Verify capacity allocation
+    assertEquals(8192, scheduler.getQueueManager().getQueue("queue1").
+            getResourceUsage().getMemory());
+
+    // Verify number of reservations have decremented
+    assertEquals(0,
+            scheduler.getSchedulerApp(attId).getNumReservations(null, true));
+  }
+
   @Test (timeout = 500000)
   public void testContainerReservationAttemptExceedingQueueMax()
       throws Exception {
@@ -4152,6 +4189,7 @@ public class TestFairScheduler extends FairSchedulerTestBase {
   @Test
   public void testQueueMaxAMShareWithContainerReservation() throws Exception {
     conf.set(FairSchedulerConfiguration.ALLOCATION_FILE, ALLOC_FILE);
+    conf.setFloat(FairSchedulerConfiguration.RESERVABLE_NODES, 1f);
     PrintWriter out = new PrintWriter(new FileWriter(ALLOC_FILE));
     out.println("<?xml version=\"1.0\"?>");
     out.println("<allocations>");
@@ -5150,5 +5188,65 @@ public class TestFairScheduler extends FairSchedulerTestBase {
         .getNumRunnableApps());
     assertEquals("root.user1", resourceManager.getRMContext().getRMApps()
         .get(attId3.getApplicationId()).getQueue());
+  }
+
+  @Test
+  public void testFairSchedulerContinuousSchedulingInitTime() throws Exception {
+    int DELAY_THRESHOLD_TIME_MS = 1000;
+    conf.set(FairSchedulerConfiguration.CONTINUOUS_SCHEDULING_ENABLED, "true");
+    conf.set(FairSchedulerConfiguration.LOCALITY_DELAY_NODE_MS,
+        String.valueOf(DELAY_THRESHOLD_TIME_MS));
+    conf.set(FairSchedulerConfiguration.LOCALITY_DELAY_RACK_MS,
+        String.valueOf(DELAY_THRESHOLD_TIME_MS));
+
+    ControlledClock clock = new ControlledClock();
+    scheduler.setClock(clock);
+    scheduler.init(conf);
+    scheduler.start();
+
+    int priorityValue;
+    Priority priority;
+    FSAppAttempt fsAppAttempt;
+    ResourceRequest request1;
+    ResourceRequest request2;
+    ApplicationAttemptId id11;
+
+    priorityValue = 1;
+    id11 = createAppAttemptId(1, 1);
+    createMockRMApp(id11);
+    priority = Priority.newInstance(priorityValue);
+    scheduler.addApplication(id11.getApplicationId(), "root.queue1", "user1",
+        false);
+    scheduler.addApplicationAttempt(id11, false, false);
+    fsAppAttempt = scheduler.getApplicationAttempt(id11);
+
+    String hostName = "127.0.0.1";
+    RMNode node1 =
+        MockNodes.newNodeInfo(1, Resources.createResource(16 * 1024, 16), 1,
+            hostName);
+    List<ResourceRequest> ask1 = new ArrayList<>();
+    request1 =
+        createResourceRequest(1024, 8, node1.getRackName(), priorityValue, 1,
+            true);
+    request2 =
+        createResourceRequest(1024, 8, ResourceRequest.ANY, priorityValue, 1,
+            true);
+    ask1.add(request1);
+    ask1.add(request2);
+    scheduler.allocate(id11, ask1, new ArrayList<ContainerId>(), null, null,
+        null, null);
+
+    NodeAddedSchedulerEvent nodeEvent1 = new NodeAddedSchedulerEvent(node1);
+    scheduler.handle(nodeEvent1);
+    FSSchedulerNode node =
+        (FSSchedulerNode) scheduler.getSchedulerNode(node1.getNodeID());
+    // Tick the time and let the fsApp startTime different from initScheduler
+    // time
+    clock.tickSec(DELAY_THRESHOLD_TIME_MS / 1000);
+    scheduler.attemptScheduling(node);
+    Map<Priority, Long> lastScheduledContainer =
+        fsAppAttempt.getLastScheduledContainer();
+    long initSchedulerTime = lastScheduledContainer.get(priority);
+    assertEquals(DELAY_THRESHOLD_TIME_MS, initSchedulerTime);
   }
 }

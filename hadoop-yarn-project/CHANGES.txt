@@ -6,6 +6,9 @@ Trunk - Unreleased
 
   NEW FEATURES
 
+    YARN-2882. Add an OPPORTUNISTIC ExecutionType. 
+    (Konstantinos Karanasos and Inigo Goiri via kasha)
+
   IMPROVEMENTS
 
     YARN-2438. yarn-env.sh cleanup (aw)
@@ -61,11 +64,54 @@ Release 2.9.0 - UNRELEASED
 
   NEW FEATURES
 
+    YARN-1856. Added cgroups based memory monitoring for containers as another
+    alternative to custom memory-monitoring. (Varun Vasudev via vinodkv)
+
   IMPROVEMENTS
+
+    YARN-4072. ApplicationHistoryServer, WebAppProxyServer, NodeManager and
+    ResourceManager to support JvmPauseMonitor as a service.
+    (Sunil G via Stevel)
+
+    YARN-4341. add doc about timeline performance tool usage (Chang Li via
+    sjlee)
+
+    YARN-4417. Make RM and Timeline-server REST APIs more consistent.
+    (wtan via jianhe)
+
+    YARN-3480. Remove attempts that are beyond max-attempt limit from state
+    store. (Jun Gong via jianhe)
+
+    YARN-4522. Queue acl can be checked at app submission. (Jian He via wangda)
+
+    YARN-4524. Cleanup AppSchedulingInfo. (Karthik Kambatla via wangda)
+
+    YARN-4438. Implement RM leader election with curator. (Jian He via xgong)
 
   OPTIMIZATIONS
 
   BUG FIXES
+
+    YARN-4109. Exception on RM scheduler page loading with labels. 
+    (Mohammad Shahid Khan via rohithsharmaks)
+
+    YARN-4156. TestAMRestart#testAMBlacklistPreventsRestartOnSameNode 
+    assumes CapacityScheduler. (Anubhav Dhoot via kasha)
+
+    YARN-2934. Improve handling of container's stderr.
+    (Naganarasimha G R via gera)
+
+    YARN-4530. LocalizedResource trigger a NPE Cause the NodeManager exit
+    (tangshangwen via rohithsharmaks)
+
+    YARN-4535. Fix checkstyle error in CapacityScheduler.java
+    (Naganarasimha G R via rohithsharmaks)
+
+    YARN-4393. Fix intermittent test failure for TestResourceLocalizationService
+    #testFailedDirsResourceRelease (Varun Saxana via rohithsharmaks)
+
+    YARN-4550. Some tests in TestContainerLanch fails on non-english locale
+    environment. (Takashi Ohnishi via stevel)
 
 Release 2.8.0 - UNRELEASED
 
@@ -266,6 +312,17 @@ Release 2.8.0 - UNRELEASED
     ReservationSystem (Sean Po via asuresh)
 
     YARN-4349. Support CallerContext in YARN. (wtan via jianhe)
+
+    YARN-3623. Add a new config to indicate the Timeline Service version. 
+    (Xuan Gong via junping_du)
+
+    YARN-3226. UI changes for decommissioning node. (Sunil G via
+    junping_du)
+
+    YARN-3458. CPU resource monitoring in Windows. (Inigo Goiri via cnauroth)
+
+    YARN-4234. New put APIs in TimelineClient for ats v1.5. (Xuan Gong via
+    junping_du)
 
   IMPROVEMENTS
 
@@ -585,6 +642,46 @@ Release 2.8.0 - UNRELEASED
 
     YARN-4132. Separate configs for nodemanager to resourcemanager connection
     timeout and retries (Chang Li via jlowe)
+
+    YARN-4292. ResourceUtilization should be a part of NodeInfo REST API.
+    (Sunil G via wangda)
+
+    YARN-4405. Support node label store in non-appendable file system. (Wangda
+    Tan via jianhe)
+
+    YARN-4358. Reservation System: Improve relationship between SharingPolicy
+    and ReservationAgent. (Carlo Curino via asuresh)
+
+    YARN-3456. Improve handling of incomplete TimelineEntities. (Varun Saxena 
+    via rohithsharmaks)
+
+    YARN-4248. REST API for submit/update/delete Reservations. (curino)
+
+    YARN-3946. Update exact reason as to why a submitted app is in ACCEPTED state to 
+    app's diagnostic message. (Naganarasimha G R via wangda)
+
+    YARN-4309. Add container launch related debug information to container logs
+    when a container fails. (Varun Vasudev via wangda)
+
+    YARN-4418. AM Resource Limit per partition can be updated to ResourceUsage as well.
+    (Sunil G via wangda)
+    
+    YARN-4207. Add a non-judgemental YARN app completion status. (Rich Haase via sseth)
+
+    YARN-4293. ResourceUtilization should be a part of yarn node CLI. (Sunil G via wangda)
+
+    YARN-4164. Changed updateApplicationPriority API to return the updated
+    application priority. (Rohith Sharma K S via jianhe)
+
+    YARN-4480. Clean up some inappropriate imports. (Kai Zheng via umamahesh)
+
+    YARN-4290. Add -showDetails option to YARN Nodes CLI to print all nodes reports
+    information. (Sunil G via wangda)
+
+    YARN-4098. Document ApplicationPriority feature. (Rohith Sharma K S via jianhe)
+
+    YARN-4544. All the log messages about rolling monitoring interval are
+    shown with WARN level. (Takashi Ohnishi via aajisaka)
 
   OPTIMIZATIONS
 
@@ -1084,6 +1181,54 @@ Release 2.8.0 - UNRELEASED
     YARN-4384. updateNodeResource CLI should not accept negative values for resource.
     (Junping Du via wangda)
 
+    YARN-4408. Fix issue that NodeManager reports negative running containers. 
+    (Robert Kanter via junping_du)
+
+    YARN-4392. ApplicationCreatedEvent event time resets after RM restart/failover.
+    (Naganarasimha G R and Xuan Gong via xgong)
+
+    YARN-4431. Not necessary to do unRegisterNM() if NM get stop due to failed to connect
+    to RM. (Junping Du via rohithsharmaks)
+
+    YARN-4421. Remove dead code in RmAppImpl.RMAppRecoveredTransition.
+    (Daniel Templeton via rohithsharmaks)
+
+    YARN-4403. (AM/NM/Container)LivelinessMonitor should use monotonic time
+    when calculating period. (Junping Du via jianhe)
+
+    YARN-4402. TestNodeManagerShutdown And TestNodeManagerResync fails with
+    bind exception. (Brahma Reddy Battula via jianhe)
+
+    YARN-4440. FSAppAttempt#getAllowedLocalityLevelByTime should init the
+    lastScheduler time. (Lin Yiqun via zxu)
+
+    YARN-4452. NPE when submit Unmanaged application. (Naganarasimha G R
+    via junping_du)
+
+    YARN-4225. Add preemption status to yarn queue -status for capacity scheduler.
+    (Eric Payne via wangda)
+
+    YARN-4416. Deadlock due to synchronised get Methods in AbstractCSQueue.
+    (Naganarasimha G R via wangda)
+
+    YARN-4461. Redundant nodeLocalityDelay log in LeafQueue (Eric Payne via
+    jlowe)
+
+    YARN-4454. NM to nodelabel mapping going wrong after RM restart. 
+    (Bibin A Chundatt via wangda)
+
+    YARN-4477. FairScheduler: Handle condition which can result in an
+    infinite loop in attemptScheduling. (Tao Jie via asuresh)
+
+    YARN-4400. AsyncDispatcher.waitForDrained should be final. (Daniel Templeton 
+    via junping_du)
+
+    YARN-1382. Remove unusableRMNodesConcurrentSet (never used) in NodeListManager
+    to get rid of memory leak. (Rohith Sharma K S via junping_du)
+
+    YARN-4546. ResourceManager crash due to scheduling opportunity overflow.
+    (Jason Lowe via junping_du)
+
 Release 2.7.3 - UNRELEASED
 
   INCOMPATIBLE CHANGES
@@ -1120,6 +1265,27 @@ Release 2.7.3 - UNRELEASED
 
     YARN-4380. TestResourceLocalizationService.testDownloadingResourcesOnContainerKill
     fails intermittently. (Varun Saxena via ozawa)
+
+    YARN-4398. Remove unnecessary synchronization in RMStateStore. (Ning Ding via jianhe)
+
+    YARN-3840. Resource Manager web ui issue when sorting application by id
+    (with application having id > 9999) （Mohammad Shahid Khan & Varun Saxena
+    via jianhe)
+
+    YARN-4422. Generic AHS sometimes doesn't show started, node, or logs on App page
+    (Eric Payne via jeagles)
+
+    YARN-4439. Clarify NMContainerStatus#toString method. (Jian He via xgong)
+
+    YARN-4452. NPE when submit Unmanaged application. (Naganarasimha G R via
+    junping_du)
+
+    YARN-4315. NaN in Queue percentage for cluster apps page. (Bibin A Chundatt via wangda)
+
+    YARN-4510. Fix SLS startup failure caused by NPE. (Bibin A Chundatt via wangda)
+
+    YARN-4546. ResourceManager crash due to scheduling opportunity overflow.
+    (Jason Lowe via junping_du)
 
 Release 2.7.2 - UNRELEASED
 
@@ -1957,7 +2123,45 @@ Release 2.7.0 - 2015-04-20
     YARN-3466. Fix RM nodes web page to sort by node HTTP-address, #containers 
     and node-label column (Jason Lowe via wangda)
 
-Release 2.6.3 - UNRELEASED
+Release 2.6.4 - UNRELEASED
+
+  INCOMPATIBLE CHANGES
+
+  NEW FEATURES
+
+  IMPROVEMENTS
+
+  OPTIMIZATIONS
+
+  BUG FIXES
+
+  YARN-2975. FSLeafQueue app lists are accessed without required locks. (kasha)
+
+  YARN-3857: Memory leak in ResourceManager with SIMPLE mode.
+  (mujunchao via zxu)
+
+  YARN-3535. Scheduler must re-request container resources when RMContainer transitions
+  from ALLOCATED to KILLED (rohithsharma and peng.zhang via asuresh)
+
+  YARN-4452. NPE when submit Unmanaged application. (Naganarasimha G R
+  via junping_du)
+
+  YARN-3893. Both RM in active state when Admin#transitionToActive failure
+  from refeshAll() (Bibin A Chundatt via rohithsharmaks)
+
+  YARN-3697. FairScheduler: ContinuousSchedulingThread can fail to shutdown.
+  (Zhihai Xu via kasha)
+
+  YARN-4546. ResourceManager crash due to scheduling opportunity overflow.
+  (Jason Lowe via junping_du)
+
+  YARN-2902. Killing a container that is localizing can orphan resources in
+  the DOWNLOADING state (Varun Saxena via jlowe)
+
+  YARN-4354. Public resource localization fails with NPE. (Jason Lowe via
+  junping_du)
+
+Release 2.6.3 - 2015-12-17
 
   INCOMPATIBLE CHANGES
 
@@ -1983,6 +2187,14 @@ Release 2.6.3 - UNRELEASED
 
     YARN-4365. FileSystemNodeLabelStore should check for root dir existence on
     startup (Kuhu Shukla via jlowe)
+
+    YARN-4348. ZKRMStateStore.syncInternal shouldn't wait for sync completion for
+    avoiding blocking ZK's event thread. (ozawa)
+
+    YARN-4424. Fix deadlock in RMAppImpl. (Jian he via wangda)
+
+    YARN-4434. NodeManager Disk Checker parameter documentation is not correct.
+    (Weiwei Yang via aajisaka)
 
 Release 2.6.2 - 2015-10-28
 

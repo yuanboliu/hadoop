@@ -286,6 +286,13 @@ public class FSAppAttempt extends SchedulerApplicationAttempt
 
     // default level is NODE_LOCAL
     if (! allowedLocalityLevel.containsKey(priority)) {
+      // add the initial time of priority to prevent comparing with FsApp
+      // startTime and allowedLocalityLevel degrade
+      lastScheduledContainer.put(priority, currentTimeMs);
+      if (LOG.isDebugEnabled()) {
+        LOG.debug("Init the lastScheduledContainer time, priority: " + priority
+            + ", time: " + currentTimeMs);
+      }
       allowedLocalityLevel.put(priority, NodeType.NODE_LOCAL);
       return NodeType.NODE_LOCAL;
     }
@@ -451,8 +458,9 @@ public class FSAppAttempt extends SchedulerApplicationAttempt
    * the container is {@code alreadyReserved} on the node, simply
    * update relevant bookeeping. This dispatches ro relevant handlers
    * in {@link FSSchedulerNode}..
+   * return whether reservation was possible with the current threshold limits
    */
-  private void reserve(Priority priority, FSSchedulerNode node,
+  private boolean reserve(Priority priority, FSSchedulerNode node,
       Container container, NodeType type, boolean alreadyReserved) {
 
     if (!reservationExceedsThreshold(node, type)) {
@@ -470,7 +478,9 @@ public class FSAppAttempt extends SchedulerApplicationAttempt
         node.reserveResource(this, priority, rmContainer);
         setReservation(node);
       }
+      return true;
     }
+    return false;
   }
 
   private boolean reservationExceedsThreshold(FSSchedulerNode node,
@@ -620,10 +630,9 @@ public class FSAppAttempt extends SchedulerApplicationAttempt
       return container.getResource();
     }
 
-    if (isReservable(container)) {
-      // The desired container won't fit here, so reserve
-      reserve(request.getPriority(), node, container, type, reserved);
-
+    // The desired container won't fit here, so reserve
+    if (isReservable(container) &&
+        reserve(request.getPriority(), node, container, type, reserved)) {
       return FairScheduler.CONTAINER_RESERVED;
     } else {
       if (LOG.isDebugEnabled()) {

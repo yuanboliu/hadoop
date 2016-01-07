@@ -672,7 +672,7 @@
                       <arg value="-c"/>
                       <arg value="[ ! -f ${project.build.directory}/native/erasure_code_test ] || ${project.build.directory}/native/erasure_code_test"/>
                       <env key="SKIPTESTS" value="${skipTests}"/>
-                      <env key="LD_LIBRARY_PATH" value="${LD_LIBRARY_PATH}:${isal.lib}:${isal.prefix}"/>
+                      <env key="LD_LIBRARY_PATH" value="${LD_LIBRARY_PATH}:${isal.lib}:${isal.prefix}:/usr/lib"/>
                     </exec>
                 </target>
                 </configuration>
@@ -976,10 +976,21 @@
                         <requiresOnline>true</requiresOnline>
                         <arguments>
                             <argument>${basedir}/../../dev-support/releasedocmaker.py</argument>
+                            <argument>--index</argument>
+                            <argument>--license</argument>
+                            <argument>--project</argument>
+                            <argument>HADOOP</argument>
+                            <argument>--project</argument>
+                            <argument>HDFS</argument>
+                            <argument>--project</argument>
+                            <argument>MAPREDUCE</argument>
+                            <argument>--project</argument>
+                            <argument>YARN</argument>
+                            <argument>--projecttitle</argument>
+                            <argument>"Apache Hadoop"</argument>
+                            <argument>--usetoday</argument>
                             <argument>--version</argument>
                             <argument>${project.version}</argument>
-                            <argument>--index</argument>
-                            <argument>--usetoday</argument>
                         </arguments>
                     </configuration>
                 </execution>

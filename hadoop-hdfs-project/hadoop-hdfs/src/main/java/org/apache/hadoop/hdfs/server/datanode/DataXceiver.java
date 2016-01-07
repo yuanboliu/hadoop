@@ -233,18 +233,15 @@ class DataXceiver extends Receiver implements Runnable {
         } catch (InterruptedIOException ignored) {
           // Time out while we wait for client rpc
           break;
-        } catch (IOException err) {
-          // Since we optimistically expect the next op, it's quite normal to get EOF here.
-          if (opsProcessed > 0 &&
-              (err instanceof EOFException || err instanceof ClosedChannelException)) {
-            if (LOG.isDebugEnabled()) {
-              LOG.debug("Cached " + peer + " closing after " + opsProcessed + " ops");
-            }
-          } else {
-            incrDatanodeNetworkErrors();
-            throw err;
-          }
+        } catch (EOFException | ClosedChannelException e) {
+          // Since we optimistically expect the next op, it's quite normal to
+          // get EOF here.
+          LOG.debug("Cached {} closing after {} ops.  " +
+              "This message is usually benign.", peer, opsProcessed);
           break;
+        } catch (IOException err) {
+          incrDatanodeNetworkErrors();
+          throw err;
         }
 
         // restore normal timeout
@@ -428,12 +425,12 @@ class DataXceiver extends Receiver implements Runnable {
       throws IOException {
     DataNodeFaultInjector.get().sendShortCircuitShmResponse();
     ShortCircuitShmResponseProto.newBuilder().setStatus(SUCCESS).
-        setId(PBHelperClient.convert(shmInfo.shmId)).build().
+        setId(PBHelperClient.convert(shmInfo.getShmId())).build().
         writeDelimitedTo(socketOut);
     // Send the file descriptor for the shared memory segment.
     byte buf[] = new byte[] { (byte)0 };
     FileDescriptor shmFdArray[] =
-        new FileDescriptor[] { shmInfo.stream.getFD() };
+        new FileDescriptor[] {shmInfo.getFileStream().getFD()};
     sock.sendFileDescriptors(shmFdArray, buf, 0, buf.length);
   }
 
@@ -474,7 +471,8 @@ class DataXceiver extends Receiver implements Runnable {
               "cliID: %s, src: 127.0.0.1, dest: 127.0.0.1, " +
               "op: REQUEST_SHORT_CIRCUIT_SHM," +
               " shmId: %016x%016x, srvID: %s, success: true",
-              clientName, shmInfo.shmId.getHi(), shmInfo.shmId.getLo(),
+              clientName, shmInfo.getShmId().getHi(),
+              shmInfo.getShmId().getLo(),
               datanode.getDatanodeUuid()));
         } else {
           BlockSender.ClientTraceLog.info(String.format(
@@ -493,7 +491,7 @@ class DataXceiver extends Receiver implements Runnable {
         // bad behavior inside the poll() call.  See HADOOP-11802 for details.
         try {
           LOG.warn("Failed to send success response back to the client.  " +
-              "Shutting down socket for " + shmInfo.shmId + ".");
+              "Shutting down socket for " + shmInfo.getShmId() + ".");
           sock.shutdown();
         } catch (IOException e) {
           LOG.warn("Failed to shut down socket in error handler", e);
@@ -710,6 +708,7 @@ class DataXceiver extends Receiver implements Runnable {
               (HdfsConstants.WRITE_TIMEOUT_EXTENSION * targets.length);
           NetUtils.connect(mirrorSock, mirrorTarget, timeoutValue);
           mirrorSock.setSoTimeout(timeoutValue);
+          mirrorSock.setKeepAlive(true);
           if (dnConf.getTransferSocketSendBufferSize() > 0) {
             mirrorSock.setSendBufferSize(
                 dnConf.getTransferSocketSendBufferSize());
@@ -1127,7 +1126,8 @@ class DataXceiver extends Receiver implements Runnable {
         proxySock = datanode.newSocket();
         NetUtils.connect(proxySock, proxyAddr, dnConf.socketTimeout);
         proxySock.setSoTimeout(dnConf.socketTimeout);
-        
+        proxySock.setKeepAlive(true);
+
         OutputStream unbufProxyOut = NetUtils.getOutputStream(proxySock,
             dnConf.socketWriteTimeout);
         InputStream unbufProxyIn = NetUtils.getInputStream(proxySock);
