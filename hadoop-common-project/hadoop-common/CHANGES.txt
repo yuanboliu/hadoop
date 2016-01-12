@@ -661,10 +661,6 @@ Release 2.9.0 - UNRELEASED
 
   BUG FIXES
 
-    HADOOP-12687. SecureUtil#QualifiedHostResolver#getByName should also try to
-    resolve direct hostname, incase multiple loopback addresses are present in
-    /etc/hosts (Sunil G via rohithsharmaks)
-
     HADOOP-12655. TestHttpServer.testBindAddress bind port range is wider
     than expected. (Wei-Chiu Chuang via stevel)
 
@@ -674,6 +670,12 @@ Release 2.9.0 - UNRELEASED
    HADOOP-12597. In kms-site.xml configuration
    "hadoop.security.keystore.JavaKeyStoreProvider.password"
    should be updated with new name. (Surendra Singh Lilhore via stevel)
+
+   HADOOP-12573. TestRPC.testClientBackOff failing.
+   (Xiao Chen via stevel)
+
+   HADOOP-12590. TestCompressorDecompressor failing without stack traces
+   (John Zhuge via stevel)
 
 Release 2.8.0 - UNRELEASED
 
@@ -1574,6 +1576,12 @@ Release 2.8.0 - UNRELEASED
 
     HADOOP-12675. Fix description about retention period in usage of expunge
     command. (Masatake Iwasaki via stevel)
+
+    HADOOP-12678. Handle empty rename pending metadata file during atomic rename
+    in redo path. (Madhumita Chakraborty via cnauroth)
+
+    HADOOP-12551. Introduce FileNotFoundException for WASB FileSystem API
+    (Dushyanth via cnauroth)
 
 Release 2.7.3 - UNRELEASED
 

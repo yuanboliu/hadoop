@@ -18,18 +18,26 @@
 
 package org.apache.hadoop.yarn.server.resourcemanager.scheduler.policy;
 
-import java.util.*;
+import java.util.Comparator;
+
+import org.apache.hadoop.yarn.api.records.Priority;
 
 /**
- * A Comparator which orders SchedulableEntities by input order
+ * A Comparator which orders SchedulableEntities by priority.
  */
-public class FifoComparator 
-    implements Comparator<SchedulableEntity> {
-      
-    @Override
-  public int compare(SchedulableEntity r1, SchedulableEntity r2) {
-    int res = r1.compareInputOrderTo(r2);
-    return res;
+public class PriorityComparator implements Comparator<SchedulableEntity> {
+
+  @Override
+  public int compare(SchedulableEntity se1, SchedulableEntity se2) {
+    Priority p1 = se1.getPriority();
+    Priority p2 = se2.getPriority();
+    if (p1 == null && p2 == null) {
+      return 0;
+    } else if (p1 == null) {
+      return -1;
+    } else if (p2 == null) {
+      return 1;
+    }
+    return p1.compareTo(p2);
   }
 }
-

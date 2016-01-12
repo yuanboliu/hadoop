@@ -406,6 +406,9 @@ Trunk (Unreleased)
     HDFS-9615. Fix variable name typo in DFSConfigKeys. (Ray Chiang via
     Arpit Agarwal)
 
+    HDFS-9621. getListing wrongly associates Erasure Coding policy to pre-existing
+    replicated files under an EC directory. (jing9)
+
     BREAKDOWN OF HDFS-7285 SUBTASKS AND RELATED JIRAS
 
       HDFS-7347. Configurable erasure coding policy for individual files and
@@ -1805,6 +1808,11 @@ Release 2.8.0 - UNRELEASED
     HDFS-9498. Move code that tracks blocks with future generation stamps
     to BlockManagerSafeMode. (Mingliang Liu via Arpit Agarwal)
 
+    HDFS-9626. TestBlockReplacement#testBlockReplacement fails occasionally.
+    (Xiao Chen via zhz)
+
+    HDFS-9630. DistCp minor refactoring and clean up. (Kai Zheng via zhz)
+
   OPTIMIZATIONS
 
     HDFS-8026. Trace FSOutputSummer#writeChecksumChunks rather than
@@ -2570,6 +2578,15 @@ Release 2.8.0 - UNRELEASED
     HDFS-9619. SimulatedFSDataset sometimes can not find blockpool for the
     correct namenode (Wei-Chiu Chuang via vinayakumarb)
 
+    HDFS-9493. Test o.a.h.hdfs.server.namenode.TestMetaSave fails in trunk.
+    (Tony Wu via lei)
+
+    HDFS-9639. Inconsistent Logging in BootstrapStandby. (Xiaobing Zhou via
+    Arpit Agarwal)
+
+    HDFS-9584. NPE in distcp when ssl configuration file does not exist in
+    class path. (Surendra Singh Lilhore via Xiaoyu Yao)
+
 Release 2.7.3 - UNRELEASED
 
   INCOMPATIBLE CHANGES
@@ -2580,6 +2597,8 @@ Release 2.7.3 - UNRELEASED
 
     HDFS-7163. WebHdfsFileSystem should retry reads according to the configured
     retry policy. (Eric Payne via kihwal)
+
+    HDFS-9574. Reduce client failures during datanode restart (kihwal)
 
   OPTIMIZATIONS
 
