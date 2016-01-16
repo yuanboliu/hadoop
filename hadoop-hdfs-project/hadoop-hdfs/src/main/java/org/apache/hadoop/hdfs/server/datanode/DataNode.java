@@ -3238,4 +3238,11 @@ public class DataNode extends ReconfigurableBase
     throw new DiskbalancerException("Not Implemented", 0);
   }
 
+  @Override
+  public void cancelDiskBalancePlan(String planID) throws
+      IOException {
+    checkSuperuserPrivilege();
+    throw new DiskbalancerException("Not Implemented", 0);
+  }
+
 }
