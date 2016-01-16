@@ -659,6 +659,21 @@ Release 2.9.0 - UNRELEASED
     HADOOP-12663. Remove Hard-Coded Values From FileSystem.java.
     (BELUGA BEHR via stevel)
 
+    HADOOP-12653. Use SO_REUSEADDR to avoid getting "Address already in use"
+    when using kerberos and attempting to bind to any port on the local IP
+    address (cmccabe)
+
+    HADOOP-12683. Add number of samples in last interval in snapshot of 
+    MutableStat. (Vikram Srivastava via kasha)
+
+    HADOOP-8887. Use a Maven plugin to build the native code using CMake
+    (cmccabe)
+
+    HADOOP-12713. Disable spurious checkstyle checks. (wang)
+
+    HADOOP-12662. The build should fail if a -Dbundle option fails (Kai Zheng
+    via cmccabe)
+
   BUG FIXES
 
     HADOOP-12655. TestHttpServer.testBindAddress bind port range is wider
@@ -674,8 +689,13 @@ Release 2.9.0 - UNRELEASED
    HADOOP-12573. TestRPC.testClientBackOff failing.
    (Xiao Chen via stevel)
 
-   HADOOP-12590. TestCompressorDecompressor failing without stack traces
-   (John Zhuge via stevel)
+   HDFS-9517. Fix missing @Test annotation on
+   TestDistCpUtils.testUnpackAttributes (Wei-Chiu Chuang via cmccabe)
+
+   HADOOP-12712. Fix some cmake plugin and native build warnings (cmccabe)
+
+   HADOOP-12714. Fix hadoop-mapreduce-client-nativetask unit test which fails
+   because it is not able to open the "glibc bug spill" file. (cmccabe)
 
 Release 2.8.0 - UNRELEASED
 
@@ -715,6 +735,11 @@ Release 2.8.0 - UNRELEASED
 
     HADOOP-12657. Add a option to skip newline on empty files with getMerge -nl.
     (Kanaka Kumar Avvaru via aajisaka)
+
+    HADOOP-11262. Enable YARN to use S3A. (Pieter Reuse via lei)
+
+    HADOOP-12691. Add CSRF Filter for REST APIs to Hadoop Common.
+    (Larry McCay via cnauroth)
 
   IMPROVEMENTS
 
@@ -1583,6 +1608,18 @@ Release 2.8.0 - UNRELEASED
     HADOOP-12551. Introduce FileNotFoundException for WASB FileSystem API
     (Dushyanth via cnauroth)
 
+    HADOOP-12584. Disable browsing the static directory in HttpServer2.
+    (Robert Kanter via aajisaka)
+
+    HADOOP-12603. TestSymlinkLocalFSFileContext#testSetTimesSymlinkToDir
+    occasionally fail. (Wei-Chiu Chuang via cnauroth)
+
+    HADOOP-12590. TestCompressorDecompressor failing without stack traces
+    (John Zhuge via stevel)
+
+    HADOOP-12700. Remove unused import in TestCompressorDecompressor.java.
+    (John Zhuge via aajisaka)
+
 Release 2.7.3 - UNRELEASED
 
   INCOMPATIBLE CHANGES
@@ -1622,6 +1659,12 @@ Release 2.7.3 - UNRELEASED
     HADOOP-12588. Fix intermittent test failure of TestGangliaMetrics.
     (Masatake Iwasaki via aajisaka)
 
+    HADOOP-12107. long running apps may have a huge number of StatisticsData
+    instances under FileSystem (Sangjin Lee via Ming Ma)
+
+    HADOOP-12706. TestLocalFsFCStatistics#testStatisticsThreadLocalDataCleanUp
+    times out occasionally (Sangjin Lee and Colin Patrick McCabe via jlowe)
+
 Release 2.7.2 - UNRELEASED
 
   INCOMPATIBLE CHANGES
@@ -1631,6 +1674,9 @@ Release 2.7.2 - UNRELEASED
   IMPROVEMENTS
 
     HADOOP-12232. Upgrade Tomcat dependency to 6.0.44. (cnauroth)
+
+    HADOOP-5323. Trash documentation should describe its directory structure and
+    configurations. (Weiwei Yang via ozawa)
 
   OPTIMIZATIONS
 
@@ -2412,6 +2458,12 @@ Release 2.6.4 - UNRELEASED
 
     HADOOP-11252. RPC client does not time out by default.
     (Wilfred Spiegelenburg and Masatake Iwasaki via aajisaka)
+
+    HADOOP-12107. long running apps may have a huge number of StatisticsData
+    instances under FileSystem (Sangjin Lee via Ming Ma)
+
+    HADOOP-12706. TestLocalFsFCStatistics#testStatisticsThreadLocalDataCleanUp
+    times out occasionally (Sangjin Lee and Colin Patrick McCabe via jlowe)
 
 Release 2.6.3 - 2015-12-17
 

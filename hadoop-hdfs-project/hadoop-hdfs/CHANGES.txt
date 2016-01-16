@@ -406,9 +406,6 @@ Trunk (Unreleased)
     HDFS-9615. Fix variable name typo in DFSConfigKeys. (Ray Chiang via
     Arpit Agarwal)
 
-    HDFS-9621. getListing wrongly associates Erasure Coding policy to pre-existing
-    replicated files under an EC directory. (jing9)
-
     BREAKDOWN OF HDFS-7285 SUBTASKS AND RELATED JIRAS
 
       HDFS-7347. Configurable erasure coding policy for individual files and
@@ -936,9 +933,15 @@ Release 2.9.0 - UNRELEASED
     HDFS-9350. Avoid creating temprorary strings in Block.toString() and
     getBlockName() (Staffan Friberg via cmccabe)
 
+    HDFS-9624. DataNode start slowly due to the initial DU command operations.
+    (Lin Yiqun via wang)
+
   OPTIMIZATIONS
 
   BUG FIXES
+
+    HDFS-9621. getListing wrongly associates Erasure Coding policy to pre-existing
+    replicated files under an EC directory. (jing9)
 
 Release 2.8.0 - UNRELEASED
 
@@ -1813,6 +1816,9 @@ Release 2.8.0 - UNRELEASED
 
     HDFS-9630. DistCp minor refactoring and clean up. (Kai Zheng via zhz)
 
+    HDFS-9415. Document dfs.cluster.administrators and
+    dfs.permissions.superusergroup. (Xiaobing Zhou via Arpit Agarwal)
+
   OPTIMIZATIONS
 
     HDFS-8026. Trace FSOutputSummer#writeChecksumChunks rather than
@@ -2587,6 +2593,9 @@ Release 2.8.0 - UNRELEASED
     HDFS-9584. NPE in distcp when ssl configuration file does not exist in
     class path. (Surendra Singh Lilhore via Xiaoyu Yao)
 
+    HDFS-9612. DistCp worker threads are not terminated after jobs are done.
+    (Wei-Chiu Chuang via Yongjun Zhang)
+
 Release 2.7.3 - UNRELEASED
 
   INCOMPATIBLE CHANGES
@@ -2599,6 +2608,9 @@ Release 2.7.3 - UNRELEASED
     retry policy. (Eric Payne via kihwal)
 
     HDFS-9574. Reduce client failures during datanode restart (kihwal)
+
+    HDFS-9569. Log the name of the fsimage being loaded for better
+    supportability. (Yongjun Zhang)
 
   OPTIMIZATIONS
 
@@ -2625,6 +2637,9 @@ Release 2.7.3 - UNRELEASED
     HDFS-8914. Document HA support in the HDFS HdfsDesign.md.
     (Lars Francke via wheat9)
 
+    HDFS-9648. TestStartup.testImageChecksum is broken by HDFS-9569's message
+    change. (Wei-Chiu Chuang via Yongjun Zhang)
+
 Release 2.7.2 - UNRELEASED
 
   INCOMPATIBLE CHANGES
@@ -2634,9 +2649,6 @@ Release 2.7.2 - UNRELEASED
   IMPROVEMENTS
 
     HDFS-8659. Block scanner INFO message is spamming logs. (Yongjun Zhang)
-
-    HADOOP-5323. Trash documentation should describe its directory structure and
-    configurations. (Weiwei Yang via ozawa)
 
     HDFS-8099. Change "DFSInputStream has been closed already" message to
     debug log level (Charles Lamb via Colin P. McCabe)
@@ -2711,6 +2723,9 @@ Release 2.7.2 - UNRELEASED
 
     HDFS-9445. Datanode may deadlock while handling a bad volume.
     (Wlater Su via Kihwal)
+
+    HDFS-8767. RawLocalFileSystem.listStatus() returns null for UNIX pipefile.
+    (Kanaka Kumar Avvaru via wheat9)
 
 Release 2.7.1 - 2015-07-06
 

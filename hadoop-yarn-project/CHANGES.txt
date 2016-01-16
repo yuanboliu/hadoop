@@ -88,6 +88,15 @@ Release 2.9.0 - UNRELEASED
 
     YARN-4438. Implement RM leader election with curator. (Jian He via xgong)
 
+    YARN-4571. Make app id/name available to the yarn authorizer provider for 
+    better auditing. (Jian He via wangda)
+
+    YARN-4551. Address the duplication between StatusUpdateWhenHealthy and
+    StatusUpdateWhenUnhealthy transitions. (Sunil G via kasha)
+
+    YARN-4553. Add cgroups support for docker containers.
+    (Sidharta Seethana via vvasudev)
+
   OPTIMIZATIONS
 
   BUG FIXES
@@ -112,6 +121,11 @@ Release 2.9.0 - UNRELEASED
 
     YARN-4550. Some tests in TestContainerLanch fails on non-english locale
     environment. (Takashi Ohnishi via stevel)
+
+    YARN-4567. javadoc failing on java 8. (Steve Loughran via aajisaka)
+
+    YARN-3446. FairScheduler headroom calculation should exclude nodes in the 
+    blacklist. (Zhihai Xu via kasha)
 
 Release 2.8.0 - UNRELEASED
 
@@ -686,6 +700,9 @@ Release 2.8.0 - UNRELEASED
     YARN-4537. Pull out priority comparison from fifocomparator and use compound
     comparator for FifoOrdering policy. (Rohith Sharma K S via jianhe)
 
+    YARN-4582. Label-related invalid resource request exception should be able to 
+    properly handled by application. (Bibin A Chundatt via wangda)
+
   OPTIMIZATIONS
 
     YARN-3339. TestDockerContainerExecutor should pull a single image and not
@@ -1235,6 +1252,16 @@ Release 2.8.0 - UNRELEASED
     YARN-4479. Change CS LeafQueue pendingOrderingPolicy to hornor recovered apps.
     (Rohith Sharma K S via jianhe)
 
+    YARN-4534. Remove the redundant symbol in yarn rmadmin help msg.
+    (Lin Yiqun via aajisaka)
+
+    YARN-4389. "yarn.am.blacklisting.enabled" and "yarn.am.blacklisting.disable-
+    failure-threshold" should be app specific rather than a setting for whole 
+    YARN cluster. (Sunil G via rohithsharmaks)
+
+    YARN-4581. AHS writer thread leak makes RM crash while RM is recovering. 
+    (sandflee via junping_du)
+
 Release 2.7.3 - UNRELEASED
 
   INCOMPATIBLE CHANGES
@@ -1292,6 +1319,15 @@ Release 2.7.3 - UNRELEASED
 
     YARN-4546. ResourceManager crash due to scheduling opportunity overflow.
     (Jason Lowe via junping_du)
+
+    YARN-3695. ServerProxy (NMProxy, etc.) shouldn't retry forever for non
+    network exception. (Raju Bairishetti via jianhe)
+
+    YARN-4414. Nodemanager connection errors are retried at multiple levels
+    (Chang Li via jlowe)
+
+    YARN-4581. AHS writer thread leak makes RM crash while RM is recovering.
+    (sandflee via junping_du)
 
 Release 2.7.2 - UNRELEASED
 
@@ -2169,6 +2205,18 @@ Release 2.6.4 - UNRELEASED
 
     YARN-3849. Too much of preemption activity causing continuos killing of
     containers across queues. (Sunil G via wangda)
+
+    YARN-3842. NMProxy should retry on NMNotYetReadyException. 
+    (Robert Kanter via kasha)
+
+    YARN-3695. ServerProxy (NMProxy, etc.) shouldn't retry forever for non
+    network exception. (Raju Bairishetti via jianhe)
+
+    YARN-4414. Nodemanager connection errors are retried at multiple levels
+    (Chang Li via jlowe)
+
+    YARN-4581. AHS writer thread leak makes RM crash while RM is recovering.
+    (sandflee via junping_du)
 
 Release 2.6.3 - 2015-12-17
 
