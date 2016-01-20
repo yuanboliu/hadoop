@@ -1,4 +1,4 @@
-/**
+/*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -15,21 +15,9 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+@InterfaceAudience.Private
+@InterfaceStability.Unstable
+package org.apache.hadoop.yarn.server.timeline;
 
-package org.apache.hadoop.yarn.server.resourcemanager.scheduler.event;
-
-import org.apache.hadoop.yarn.server.resourcemanager.rmcontainer.RMContainer;
-
-public class ContainerRescheduledEvent extends SchedulerEvent {
-
-  private RMContainer container;
-
-  public ContainerRescheduledEvent(RMContainer container) {
-    super(SchedulerEventType.CONTAINER_RESCHEDULED);
-    this.container = container;
-  }
-
-  public RMContainer getContainer() {
-    return container;
-  }
-}
+import org.apache.hadoop.classification.InterfaceAudience;
+import org.apache.hadoop.classification.InterfaceStability;
