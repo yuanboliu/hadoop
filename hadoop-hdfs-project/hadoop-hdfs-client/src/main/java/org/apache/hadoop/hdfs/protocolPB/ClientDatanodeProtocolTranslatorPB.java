@@ -55,6 +55,8 @@ import org.apache.hadoop.hdfs.protocol.proto.ClientDatanodeProtocolProtos.Submit
 import org.apache.hadoop.hdfs.protocol.proto.ClientDatanodeProtocolProtos.CancelPlanRequestProto;
 import org.apache.hadoop.hdfs.protocol.proto.ClientDatanodeProtocolProtos.QueryPlanStatusRequestProto;
 import org.apache.hadoop.hdfs.protocol.proto.ClientDatanodeProtocolProtos.QueryPlanStatusResponseProto;
+import org.apache.hadoop.hdfs.protocol.proto.ClientDatanodeProtocolProtos.DiskBalancerSettingRequestProto;
+import org.apache.hadoop.hdfs.protocol.proto.ClientDatanodeProtocolProtos.DiskBalancerSettingResponseProto;
 import org.apache.hadoop.hdfs.security.token.block.BlockTokenIdentifier;
 import org.apache.hadoop.hdfs.server.datanode.WorkStatus;
 import org.apache.hadoop.ipc.ProtobufHelper;
@@ -353,8 +355,8 @@ public class ClientDatanodeProtocolTranslatorPB implements
 
   /**
    * Cancels an executing disk balancer plan.
-   * @param planID - A SHA512 hash of the plan string.
    *
+   * @param planID - A SHA512 hash of the plan string.
    * @throws IOException on error
    */
   @Override
@@ -383,6 +385,19 @@ public class ClientDatanodeProtocolTranslatorPB implements
           response.hasPlanID() ? response.getPlanID() : null,
           response.hasStatus() ? response.getStatus() : null,
           response.hasCurrentStatus() ? response.getCurrentStatus() : null);
+    } catch (ServiceException e) {
+      throw ProtobufHelper.getRemoteException(e);
+    }
+  }
+
+  @Override
+  public String getDiskBalancerSetting(String key) throws IOException {
+    try {
+      DiskBalancerSettingRequestProto request =
+          DiskBalancerSettingRequestProto.newBuilder().setKey(key).build();
+      DiskBalancerSettingResponseProto response =
+          rpcProxy.getDiskBalancerSetting(NULL_CONTROLLER, request);
+      return response.hasValue() ? response.getValue() : null;
     } catch (ServiceException e) {
       throw ProtobufHelper.getRemoteException(e);
     }
