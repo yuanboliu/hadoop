@@ -1,5 +1,17 @@
 Hadoop YARN Change Log
 
+YARN-3926 - Unreleased
+
+  NEW FEATURES
+
+    YARN-4081. Add support for multiple resource types in the Resource
+    class. (Varun Vasudev via wangda)
+
+  IMPROVEMENTS
+    
+    YARN-4172. Extend DominantResourceCalculator to account for all 
+    resources. (Varun Vasudev via wangda)
+
 Trunk - Unreleased
 
   INCOMPATIBLE CHANGES
@@ -380,9 +392,6 @@ Release 2.8.0 - UNRELEASED
 
     YARN-4265. Provide new timeline plugin storage to support fine-grained entity
     caching. (Li Lu and Jason Lowe via junping_du)
-
-    YARN-4081. Add support for multiple resource types in the Resource
-    class. (Varun Vasudev via wangda)
 
   IMPROVEMENTS
 

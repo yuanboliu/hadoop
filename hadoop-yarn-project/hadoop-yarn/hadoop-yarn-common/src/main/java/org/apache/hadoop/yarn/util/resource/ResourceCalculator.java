@@ -38,11 +38,26 @@ public abstract class ResourceCalculator {
     return (a + (b - 1)) / b;
   }
 
+  public static long divideAndCeil(long a, long b) {
+    if (b == 0) {
+      return 0;
+    }
+    return (a + (b - 1)) / b;
+  }
+
   public static int roundUp(int a, int b) {
     return divideAndCeil(a, b) * b;
   }
 
+  public static long roundUp(long a, long b) {
+    return divideAndCeil(a, b) * b;
+  }
+
   public static int roundDown(int a, int b) {
+    return (a / b) * b;
+  }
+
+  public static long roundDown(long a, long b) {
     return (a / b) * b;
   }
 
