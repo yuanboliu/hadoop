@@ -938,6 +938,18 @@ public class YarnConfiguration extends Configuration {
       DEFAULT_NM_MEMORY_RESOURCE_CGROUPS_SOFT_LIMIT_PERCENTAGE =
       90.0f;
 
+  @Private
+  public static final String NM_CPU_RESOURCE_PREFIX = NM_PREFIX
+      + "resource.cpu.";
+
+  /** Enable cpu isolation. */
+  @Private
+  public static final String NM_CPU_RESOURCE_ENABLED =
+      NM_CPU_RESOURCE_PREFIX + "enabled";
+
+  @Private
+  public static final boolean DEFAULT_NM_CPU_RESOURCE_ENABLED = false;
+
   /**
    * Prefix for disk configurations. Work in progress: This configuration
    * parameter may be changed/removed in the future.
@@ -1689,6 +1701,13 @@ public class YarnConfiguration extends Configuration {
   public static final String
       DEFAULT_TIMELINE_SERVICE_ENTITYGROUP_FS_STORE_RETRY_POLICY_SPEC =
       "2000, 500";
+
+  public static final String TIMELINE_SERVICE_LEVELDB_CACHE_READ_CACHE_SIZE =
+      TIMELINE_SERVICE_ENTITYGROUP_FS_STORE_PREFIX
+          + "leveldb-cache-read-cache-size";
+
+  public static final long
+      DEFAULT_TIMELINE_SERVICE_LEVELDB_CACHE_READ_CACHE_SIZE = 10 * 1024 * 1024;
 
   public static final String TIMELINE_SERVICE_CLIENT_FD_FLUSH_INTERVAL_SECS =
       TIMELINE_SERVICE_CLIENT_PREFIX + "fd-flush-interval-secs";

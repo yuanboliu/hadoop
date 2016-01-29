@@ -209,6 +209,7 @@ public class TestClientRMService {
 
     // Now make the node unhealthy.
     node.nodeHeartbeat(false);
+    rm.NMwaitForState(node.getNodeId(), NodeState.UNHEALTHY);
 
     // Call again
     nodeReports = client.getClusterNodes(request).getNodeReports();
@@ -1338,10 +1339,10 @@ public class TestClientRMService {
 
     appPriority = 11;
     ClientRMService rmService = rm.getClientRMService();
-    testAplicationPriorityUpdation(rmService, app1, appPriority, maxPriority);
+    testApplicationPriorityUpdation(rmService, app1, appPriority, maxPriority);
 
     appPriority = 9;
-    testAplicationPriorityUpdation(rmService, app1, appPriority, appPriority);
+    testApplicationPriorityUpdation(rmService, app1, appPriority, appPriority);
 
     rm.killApp(app1.getApplicationId());
     rm.waitForState(app1.getApplicationId(), RMAppState.KILLED);
@@ -1370,7 +1371,7 @@ public class TestClientRMService {
     rm.stop();
   }
 
-  private void testAplicationPriorityUpdation(ClientRMService rmService,
+  private void testApplicationPriorityUpdation(ClientRMService rmService,
       RMApp app1, int tobeUpdatedPriority, int expected) throws YarnException,
       IOException {
     UpdateApplicationPriorityRequest updateRequest =

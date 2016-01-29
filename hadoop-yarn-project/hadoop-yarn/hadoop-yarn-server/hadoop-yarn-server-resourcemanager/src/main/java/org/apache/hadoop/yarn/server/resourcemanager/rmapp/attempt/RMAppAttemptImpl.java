@@ -2067,11 +2067,11 @@ public class RMAppAttemptImpl implements RMAppAttempt, Recoverable {
       // am container.
       ContainerId amId =
           masterContainer == null ? null : masterContainer.getId();
-      attemptReport = ApplicationAttemptReport.newInstance(this
-          .getAppAttemptId(), this.getHost(), this.getRpcPort(), this
-          .getTrackingUrl(), this.getOriginalTrackingUrl(), this.getDiagnostics(),
-              YarnApplicationAttemptState.valueOf(this.getState().toString()),
-              amId, this.startTime, this.finishTime);
+      attemptReport = ApplicationAttemptReport.newInstance(
+          this.getAppAttemptId(), this.getHost(), this.getRpcPort(),
+          this.getTrackingUrl(), this.getOriginalTrackingUrl(),
+          this.getDiagnostics(), createApplicationAttemptState(), amId,
+          this.startTime, this.finishTime);
     } finally {
       this.readLock.unlock();
     }
@@ -2112,5 +2112,13 @@ public class RMAppAttemptImpl implements RMAppAttempt, Recoverable {
   @Override
   public void updateAMLaunchDiagnostics(String amLaunchDiagnostics) {
     this.amLaunchDiagnostics = amLaunchDiagnostics;
+  }
+
+  public RMAppAttemptState getRecoveredFinalState() {
+    return recoveredFinalState;
+  }
+
+  public void setRecoveredFinalState(RMAppAttemptState finalState) {
+    this.recoveredFinalState = finalState;
   }
 }

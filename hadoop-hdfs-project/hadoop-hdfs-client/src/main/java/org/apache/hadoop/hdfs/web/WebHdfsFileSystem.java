@@ -24,6 +24,7 @@ import java.io.EOFException;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.InputStream;
+import java.lang.reflect.InvocationTargetException;
 import java.net.HttpURLConnection;
 import java.net.InetSocketAddress;
 import java.net.MalformedURLException;
@@ -237,7 +238,7 @@ public class WebHdfsFileSystem extends FileSystem
   // the first getAuthParams() for a non-token op will either get the
   // internal token from the ugi or lazy fetch one
   protected synchronized Token<?> getDelegationToken() throws IOException {
-    if (canRefreshDelegationToken && delegationToken == null) {
+    if (delegationToken == null) {
       Token<?> token = tokenSelector.selectToken(
           new Text(getCanonicalServiceName()), ugi.getTokens());
       // ugi tokens are usually indicative of a task which can't
@@ -247,11 +248,13 @@ public class WebHdfsFileSystem extends FileSystem
         LOG.debug("Using UGI token: {}", token);
         canRefreshDelegationToken = false;
       } else {
-        token = getDelegationToken(null);
-        if (token != null) {
-          LOG.debug("Fetched new token: {}", token);
-        } else { // security is disabled
-          canRefreshDelegationToken = false;
+        if (canRefreshDelegationToken) {
+          token = getDelegationToken(null);
+          if (token != null) {
+            LOG.debug("Fetched new token: {}", token);
+          } else { // security is disabled
+            canRefreshDelegationToken = false;
+          }
         }
       }
       setDelegationToken(token);
@@ -502,6 +505,7 @@ public class WebHdfsFileSystem extends FileSystem
         new ExcludeDatanodesParam("");
 
     private boolean checkRetry;
+    private String redirectHost;
 
     protected AbstractRunner(final HttpOpParam.Op op, boolean redirected) {
       this.op = op;
@@ -553,7 +557,7 @@ public class WebHdfsFileSystem extends FileSystem
      */
     protected HttpURLConnection connect(URL url) throws IOException {
       //redirect hostname and port
-      String redirectHost = null;
+      redirectHost = null;
 
 
       // resolve redirects for a DN operation unless already resolved
@@ -658,6 +662,19 @@ public class WebHdfsFileSystem extends FileSystem
             throw it;
           }
         } catch (IOException ioe) {
+          // Attempt to include the redirected node in the exception. If the
+          // attempt to recreate the exception fails, just use the original.
+          String node = redirectHost;
+          if (node == null) {
+            node = url.getAuthority();
+          }
+          try {
+              ioe = ioe.getClass().getConstructor(String.class)
+                    .newInstance(node + ": " + ioe.getMessage());
+          } catch (NoSuchMethodException | SecurityException 
+                   | InstantiationException | IllegalAccessException
+                   | IllegalArgumentException | InvocationTargetException e) {
+          }
           shouldRetry(ioe, retry);
         }
       }

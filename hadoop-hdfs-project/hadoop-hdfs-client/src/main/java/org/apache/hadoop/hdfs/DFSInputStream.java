@@ -32,7 +32,6 @@ import java.util.Iterator;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
-import java.util.Map.Entry;
 import java.util.Set;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CancellationException;
@@ -909,7 +908,8 @@ public class DFSInputStream extends FSInputStream
     }
   }
 
-  protected synchronized int readWithStrategy(ReaderStrategy strategy, int off, int len) throws IOException {
+  protected synchronized int readWithStrategy(ReaderStrategy strategy, int off,
+      int len) throws IOException {
     dfsClient.checkOpen();
     if (closed.get()) {
       throw new IOException("Stream closed");
@@ -959,7 +959,7 @@ public class DFSInputStream extends FSInputStream
           // Check if need to report block replicas corruption either read
           // was successful or ChecksumException occured.
           reportCheckSumFailure(corruptedBlockMap,
-              currentLocatedBlock.getLocations().length);
+              currentLocatedBlock.getLocations().length, false);
         }
       }
     }
@@ -973,18 +973,29 @@ public class DFSInputStream extends FSInputStream
   public synchronized int read(@Nonnull final byte buf[], int off, int len)
       throws IOException {
     ReaderStrategy byteArrayReader = new ByteArrayStrategy(buf);
-    try (TraceScope ignored =
-             dfsClient.newPathTraceScope("DFSInputStream#byteArrayRead", src)) {
-      return readWithStrategy(byteArrayReader, off, len);
+    try (TraceScope scope =
+             dfsClient.newReaderTraceScope("DFSInputStream#byteArrayRead",
+                 src, getPos(), len)) {
+      int retLen = readWithStrategy(byteArrayReader, off, len);
+      if (retLen < len) {
+        dfsClient.addRetLenToReaderScope(scope, retLen);
+      }
+      return retLen;
     }
   }
 
   @Override
   public synchronized int read(final ByteBuffer buf) throws IOException {
     ReaderStrategy byteBufferReader = new ByteBufferStrategy(buf);
-    try (TraceScope ignored =
-             dfsClient.newPathTraceScope("DFSInputStream#byteBufferRead", src)){
-      return readWithStrategy(byteBufferReader, 0, buf.remaining());
+    int reqLen = buf.remaining();
+    try (TraceScope scope =
+             dfsClient.newReaderTraceScope("DFSInputStream#byteBufferRead",
+                 src, getPos(), reqLen)){
+      int retLen = readWithStrategy(byteBufferReader, 0, reqLen);
+      if (retLen < reqLen) {
+        dfsClient.addRetLenToReaderScope(scope, retLen);
+      }
+      return retLen;
     }
   }
 
@@ -1433,9 +1444,14 @@ public class DFSInputStream extends FSInputStream
   @Override
   public int read(long position, byte[] buffer, int offset, int length)
       throws IOException {
-    try (TraceScope ignored = dfsClient.
-        newPathTraceScope("DFSInputStream#byteArrayPread", src)) {
-      return pread(position, buffer, offset, length);
+    try (TraceScope scope = dfsClient.
+        newReaderTraceScope("DFSInputStream#byteArrayPread",
+            src, position, length)) {
+      int retLen = pread(position, buffer, offset, length);
+      if (retLen < length) {
+        dfsClient.addRetLenToReaderScope(scope, retLen);
+      }
+      return retLen;
     }
   }
 
@@ -1476,7 +1492,8 @@ public class DFSInputStream extends FSInputStream
         // Check and report if any block replicas are corrupted.
         // BlockMissingException may be caught if all block replicas are
         // corrupted.
-        reportCheckSumFailure(corruptedBlockMap, blk.getLocations().length);
+        reportCheckSumFailure(corruptedBlockMap, blk.getLocations().length,
+            false);
       }
 
       remaining -= bytesToRead;
@@ -1492,6 +1509,7 @@ public class DFSInputStream extends FSInputStream
 
   /**
    * DFSInputStream reports checksum failure.
+   * For replicated blocks, we have the following logic:
    * Case I : client has tried multiple data nodes and at least one of the
    * attempts has succeeded. We report the other failures as corrupted block to
    * namenode.
@@ -1499,29 +1517,39 @@ public class DFSInputStream extends FSInputStream
    * only report if the total number of replica is 1. We do not
    * report otherwise since this maybe due to the client is a handicapped client
    * (who can not read).
+   *
+   * For erasure-coded blocks, each block in corruptedBlockMap is an internal
+   * block in a block group, and there is usually only one DataNode
+   * corresponding to each internal block. For this case we simply report the
+   * corrupted blocks to NameNode and ignore the above logic.
+   *
    * @param corruptedBlockMap map of corrupted blocks
    * @param dataNodeCount number of data nodes who contains the block replicas
    */
   protected void reportCheckSumFailure(
       Map<ExtendedBlock, Set<DatanodeInfo>> corruptedBlockMap,
-      int dataNodeCount) {
+      int dataNodeCount, boolean isStriped) {
     if (corruptedBlockMap.isEmpty()) {
       return;
     }
-    Iterator<Entry<ExtendedBlock, Set<DatanodeInfo>>> it = corruptedBlockMap
-        .entrySet().iterator();
-    Entry<ExtendedBlock, Set<DatanodeInfo>> entry = it.next();
-    ExtendedBlock blk = entry.getKey();
-    Set<DatanodeInfo> dnSet = entry.getValue();
-    if (((dnSet.size() < dataNodeCount) && (dnSet.size() > 0))
-        || ((dataNodeCount == 1) && (dnSet.size() == dataNodeCount))) {
-      DatanodeInfo[] locs = new DatanodeInfo[dnSet.size()];
-      int i = 0;
-      for (DatanodeInfo dn:dnSet) {
-        locs[i++] = dn;
+    List<LocatedBlock> reportList = new ArrayList<>(corruptedBlockMap.size());
+    for (Map.Entry<ExtendedBlock, Set<DatanodeInfo>> entry :
+        corruptedBlockMap.entrySet()) {
+      ExtendedBlock blk = entry.getKey();
+      Set<DatanodeInfo> dnSet = entry.getValue();
+      if (isStriped || ((dnSet.size() < dataNodeCount) && (dnSet.size() > 0))
+          || ((dataNodeCount == 1) && (dnSet.size() == dataNodeCount))) {
+        DatanodeInfo[] locs = new DatanodeInfo[dnSet.size()];
+        int i = 0;
+        for (DatanodeInfo dn:dnSet) {
+          locs[i++] = dn;
+        }
+        reportList.add(new LocatedBlock(blk, locs));
       }
-      LocatedBlock [] lblocks = { new LocatedBlock(blk, locs) };
-      dfsClient.reportChecksumFailure(src, lblocks);
+    }
+    if (reportList.size() > 0) {
+      dfsClient.reportChecksumFailure(src,
+          reportList.toArray(new LocatedBlock[reportList.size()]));
     }
     corruptedBlockMap.clear();
   }

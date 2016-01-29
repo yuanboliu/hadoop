@@ -16,23 +16,17 @@
  * limitations under the License.
  */
 
-package org.apache.hadoop.hdfs.server.blockmanagement;
 
-import java.io.IOException;
+package org.apache.hadoop.yarn.server.nodemanager.containermanager.linux.resources;
+
 import org.apache.hadoop.classification.InterfaceAudience;
 import org.apache.hadoop.classification.InterfaceStability;
 
 /**
- * This exception is thrown when the name node runs out of V1 generation
- * stamps.
- *
+ * Resource handler for cpu resources.
  */
 @InterfaceAudience.Private
-@InterfaceStability.Evolving
-public class OutOfV1GenerationStampsException extends IOException {
-  private static final long serialVersionUID = 1L;
+@InterfaceStability.Unstable
+public interface CpuResourceHandler extends ResourceHandler {
 
-  public OutOfV1GenerationStampsException() {
-    super("Out of V1 (legacy) generation stamps\n");
-  }
 }

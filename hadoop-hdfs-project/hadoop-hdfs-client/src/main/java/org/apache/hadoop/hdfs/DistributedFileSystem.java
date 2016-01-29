@@ -53,6 +53,7 @@ import org.apache.hadoop.fs.XAttrSetFlag;
 import org.apache.hadoop.fs.Options.ChecksumOpt;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.fs.PathFilter;
+import org.apache.hadoop.fs.QuotaUsage;
 import org.apache.hadoop.fs.RemoteIterator;
 import org.apache.hadoop.fs.UnresolvedLinkException;
 import org.apache.hadoop.fs.UnsupportedFileSystemException;
@@ -723,6 +724,24 @@ public class DistributedFileSystem extends FileSystem {
     }.resolve(this, absF);
   }
 
+  @Override
+  public QuotaUsage getQuotaUsage(Path f) throws IOException {
+    statistics.incrementReadOps(1);
+    Path absF = fixRelativePart(f);
+    return new FileSystemLinkResolver<QuotaUsage>() {
+      @Override
+      public QuotaUsage doCall(final Path p)
+              throws IOException, UnresolvedLinkException {
+        return dfs.getQuotaUsage(getPathName(p));
+      }
+      @Override
+      public QuotaUsage next(final FileSystem fs, final Path p)
+              throws IOException {
+        return fs.getQuotaUsage(p);
+      }
+    }.resolve(this, absF);
+  }
+
   /** Set a directory's quotas
    * @see org.apache.hadoop.hdfs.protocol.ClientProtocol#setQuota(String,
    * long, long, StorageType)
@@ -1093,6 +1112,15 @@ public class DistributedFileSystem extends FileSystem {
    */
   public long getMissingBlocksCount() throws IOException {
     return dfs.getMissingBlocksCount();
+  }
+
+  /**
+   * Returns count of blocks pending on deletion.
+   *
+   * @throws IOException
+   */
+  public long getPendingDeletionBlocksCount() throws IOException {
+    return dfs.getPendingDeletionBlocksCount();
   }
 
   /**

@@ -262,6 +262,9 @@ Trunk (Unreleased)
     HADOOP-11887. Introduce Intel ISA-L erasure coding library for native
     erasure encoding support (Kai Zheng via Colin P. McCabe)
 
+    HADOOP-11828. Implement the Hitchhiker erasure coding algorithm.
+    (Jack Liuquan via zhz)
+
   BUG FIXES
 
     HADOOP-12617. SPNEGO authentication request to non-default realm gets
@@ -647,6 +650,8 @@ Release 2.9.0 - UNRELEASED
 
   NEW FEATURES
 
+    HADOOP-12702. Add an HDFS metrics sink. (Daniel Templeton via kasha)
+
   IMPROVEMENTS
 
     HADOOP-12321. Make JvmPauseMonitor an AbstractService.
@@ -675,6 +680,9 @@ Release 2.9.0 - UNRELEASED
     via cmccabe)
 
   BUG FIXES
+
+    HADOOP-12605. Fix intermittent failure of TestIPC.testIpcWithReaderQueuing
+    (iwasakims)
 
     HADOOP-12655. TestHttpServer.testBindAddress bind port range is wider
     than expected. (Wei-Chiu Chuang via stevel)
@@ -1627,6 +1635,27 @@ Release 2.8.0 - UNRELEASED
     HADOOP-12356. Fix computing CPU usage statistics on Windows.
     (Inigo Goiri via wangda)
 
+    HADOOP-12423. Handle failure of registering shutdownhook by
+    ShutdownHookManager in static block (Abhishek Agarwal via vinayakumarb)
+
+    HADOOP-7161. Remove unnecessary oro package from dependency management
+    section. (Sean Busbey via aajisaka)
+
+    HADOOP-12659. Incorrect usage of config parameters in token manager of
+    KMS. (Mingliang Liu via xyao)
+
+    HADOOP-12730. Hadoop streaming -mapper and -reducer options are wrongly
+    documented as required. (Kengo Seki via aajisaka)
+
+    HADOOP-12731. Remove useless boxing/unboxing code.
+    (Kousuke Saruta via aajisaka)
+
+    HADOOP-12718. Incorrect error message by fs -put local dir without
+    permission. (John Zhuge via Yongjun Zhang)
+
+    HADOOP-12735. core-default.xml misspells
+    hadoop.workaround.non.threadsafe.getpwuid (Ray Chiang via cmccabe)
+
 Release 2.7.3 - UNRELEASED
 
   INCOMPATIBLE CHANGES
@@ -1672,7 +1701,7 @@ Release 2.7.3 - UNRELEASED
     HADOOP-12706. TestLocalFsFCStatistics#testStatisticsThreadLocalDataCleanUp
     times out occasionally (Sangjin Lee and Colin Patrick McCabe via jlowe)
 
-Release 2.7.2 - UNRELEASED
+Release 2.7.2 - 2016-01-25
 
   INCOMPATIBLE CHANGES
 
@@ -2471,6 +2500,12 @@ Release 2.6.4 - UNRELEASED
 
     HADOOP-12706. TestLocalFsFCStatistics#testStatisticsThreadLocalDataCleanUp
     times out occasionally (Sangjin Lee and Colin Patrick McCabe via jlowe)
+
+    HADOOP-12736. TestTimedOutTestsListener#testThreadDumpAndDeadlocks
+    sometimes times out. (Xiao Chen via aajisaka)
+
+    HADOOP-12715. TestValueQueue#testgetAtMostPolicyALL fails intermittently.
+    (Xiao Chen via waltersu4549)
 
 Release 2.6.3 - 2015-12-17
 

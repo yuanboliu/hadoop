@@ -311,6 +311,8 @@ Release 2.9.0 - UNRELEASED
 
   IMPROVEMENTS
 
+    MAPREDUCE-6431. JobClient should be an AutoClosable (haibochen via rkanter)
+
   OPTIMIZATIONS
 
   BUG FIXES
@@ -459,6 +461,9 @@ Release 2.8.0 - UNRELEASED
 
     MAPREDUCE-6584. Remove trailing whitespaces from mapred-default.xml.
     (aajisaka)
+
+    MAPREDUCE-6595. Fix findbugs warnings in OutputCommitter and 
+    FileOutputCommitter. (Akira AJISAKA via junping_du)
 
   OPTIMIZATIONS
 
@@ -691,6 +696,22 @@ Release 2.8.0 - UNRELEASED
 
     MAPREDUCE-6601. Fix typo in Job#setUseNewAPI. (Kai Sasaki via aajisaka)
 
+    MAPREDUCE-6605. Fix typos mapreduce.map.skip.proc.count.autoincr and
+    mapreduce.reduce.skip.proc.count.autoincr in mapred-default.xml.
+    (Kai Sasaki via aajisaka)
+
+    MAPREDUCE-6614. Remove unnecessary code in TestMapreduceConfigFields.
+    (Kai Sasaki via aajisaka)
+
+    MAPREDUCE-6610. JobHistoryEventHandler should not swallow timeline response
+    (Li Lu via jianhe)
+
+    MAPREDUCE-6563. Streaming documentation contains a stray '%' character.
+    (cnauroth)
+
+    MAPREDUCE-6616. Fail to create jobhistory file if there are some multibyte
+    characters in the job name. (Kousuke Saruta via aajisaka)
+
 Release 2.7.3 - UNRELEASED
 
   INCOMPATIBLE CHANGES
@@ -715,7 +736,7 @@ Release 2.7.3 - UNRELEASED
     MAPREDUCE-6554. MRAppMaster servicestart failing with NPE in
     MRAppMaster#parsePreviousJobHistory (Bibin A Chundatt via jlowe)
 
-Release 2.7.2 - UNRELEASED
+Release 2.7.2 - 2016-01-25
 
   INCOMPATIBLE CHANGES
 
