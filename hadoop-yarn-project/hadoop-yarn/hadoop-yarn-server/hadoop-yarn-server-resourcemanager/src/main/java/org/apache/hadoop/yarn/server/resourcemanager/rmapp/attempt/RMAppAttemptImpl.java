@@ -28,6 +28,7 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.EnumSet;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
@@ -58,6 +59,7 @@ import org.apache.hadoop.yarn.api.records.NodeId;
 import org.apache.hadoop.yarn.api.records.Priority;
 import org.apache.hadoop.yarn.api.records.ResourceRequest;
 import org.apache.hadoop.yarn.api.records.YarnApplicationAttemptState;
+import org.apache.hadoop.yarn.conf.YarnConfiguration;
 import org.apache.hadoop.yarn.event.EventHandler;
 import org.apache.hadoop.yarn.exceptions.YarnRuntimeException;
 import org.apache.hadoop.yarn.factories.RecordFactory;
@@ -90,7 +92,9 @@ import org.apache.hadoop.yarn.server.resourcemanager.rmapp.attempt.event.RMAppAt
 import org.apache.hadoop.yarn.server.resourcemanager.rmapp.attempt.event.RMAppAttemptUnregistrationEvent;
 import org.apache.hadoop.yarn.server.resourcemanager.rmcontainer.RMContainerImpl;
 import org.apache.hadoop.yarn.server.resourcemanager.rmnode.RMNodeFinishedContainersPulledByAMEvent;
+import org.apache.hadoop.yarn.server.resourcemanager.scheduler.AbstractYarnScheduler;
 import org.apache.hadoop.yarn.server.resourcemanager.scheduler.Allocation;
+import org.apache.hadoop.yarn.server.resourcemanager.scheduler.SchedulerApplicationAttempt;
 import org.apache.hadoop.yarn.server.resourcemanager.scheduler.SchedulerApplicationAttempt.AMState;
 import org.apache.hadoop.yarn.server.resourcemanager.scheduler.SchedulerNode;
 import org.apache.hadoop.yarn.server.resourcemanager.scheduler.YarnScheduler;
@@ -618,6 +622,21 @@ public class RMAppAttemptImpl implements RMAppAttempt, Recoverable {
     originalTrackingUrl = pjoin(
         WebAppUtils.getResolvedRMWebAppURLWithScheme(conf),
         "cluster", "app", getAppAttemptId().getApplicationId());
+    switch (stateToBeStored) {
+    case KILLED:
+    case FAILED:
+      proxiedTrackingUrl = originalTrackingUrl;
+      break;
+    default:
+      break;
+    }
+  }
+
+  private void setTrackingUrlToAHSPage(RMAppAttemptState stateToBeStored) {
+    originalTrackingUrl = pjoin(
+        WebAppUtils.getHttpSchemePrefix(conf) +
+        WebAppUtils.getAHSWebAppURLWithoutScheme(conf),
+        "applicationhistory", "app", getAppAttemptId().getApplicationId());
     switch (stateToBeStored) {
     case KILLED:
     case FAILED:
@@ -1211,7 +1230,12 @@ public class RMAppAttemptImpl implements RMAppAttempt, Recoverable {
     String diags = null;
 
     // don't leave the tracking URL pointing to a non-existent AM
-    setTrackingUrlToRMAppPage(stateToBeStored);
+    if (conf.getBoolean(YarnConfiguration.APPLICATION_HISTORY_ENABLED,
+            YarnConfiguration.DEFAULT_APPLICATION_HISTORY_ENABLED)) {
+      setTrackingUrlToAHSPage(stateToBeStored);
+    } else {
+      setTrackingUrlToRMAppPage(stateToBeStored);
+    }
     String finalTrackingUrl = getOriginalTrackingUrl();
     FinalApplicationStatus finalStatus = null;
     int exitStatus = ContainerExitStatus.INVALID;
@@ -2120,5 +2144,19 @@ public class RMAppAttemptImpl implements RMAppAttempt, Recoverable {
 
   public void setRecoveredFinalState(RMAppAttemptState finalState) {
     this.recoveredFinalState = finalState;
+  }
+
+  @Override
+  public Set<String> getBlacklistedNodes() {
+    if (scheduler instanceof AbstractYarnScheduler) {
+      AbstractYarnScheduler ayScheduler =
+          (AbstractYarnScheduler) scheduler;
+      SchedulerApplicationAttempt attempt =
+          ayScheduler.getApplicationAttempt(applicationAttemptId);
+      if (attempt != null) {
+        return attempt.getBlacklistedNodes();
+      }
+    }
+    return Collections.EMPTY_SET;
   }
 }
