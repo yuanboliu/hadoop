@@ -39,6 +39,8 @@ Trunk - Unreleased
 
   BUG FIXES
 
+    YARN-4680. TimerTasks leak in ATS V1.5 Writer. (Xuan Gong via gtcarrera9)
+
     YARN-524 TestYarnVersionInfo failing if generated properties doesn't
     include an SVN URL. (stevel)
 
@@ -138,6 +140,12 @@ Release 2.9.0 - UNRELEASED
     YARN-4708. Missing default mapper type in TimelineServer performance test tool
     usage. (Kai Sasaki via ozawa)
 
+    YARN-4648. Move preemption related tests from TestFairScheduler to
+    TestFairSchedulerPreemption. (Kai Sasaki via ozawa)
+
+    YARN-4697. NM aggregation thread pool is not bound by
+    limits (haibochen via rkanter)
+
   OPTIMIZATIONS
 
   BUG FIXES
@@ -215,6 +223,9 @@ Release 2.9.0 - UNRELEASED
 
     YARN-4569. Remove incorrect part of maxResources in FairScheduler
     documentation. (Ray Chiang via kasha)
+
+    YARN-4651. Document movetoqueue option in 'YARN Commands'
+    (Takashi Ohnishi via rohithsharmaks)
 
 Release 2.8.0 - UNRELEASED
 
@@ -434,6 +445,9 @@ Release 2.8.0 - UNRELEASED
 
     YARN-4411. RMAppAttemptImpl#createApplicationAttemptReport throws
     IllegalArgumentException. (Bibin A Chundatt, yarntime via devaraj)
+
+    YARN-3223. Resource update during NM graceful decommission. (Brook Zhou
+    via junping_du)
 
   IMPROVEMENTS
 
@@ -1436,6 +1450,9 @@ Release 2.8.0 - UNRELEASED
     YARN-4386. refreshNodesGracefully() should send recommission event to active
     RMNodes only. (Kuhu Shukla via junping_du)
 
+    YARN-4709. NMWebServices produces incorrect JSON for containers.
+    (Varun Saxena via vvasudev)
+
 Release 2.7.3 - UNRELEASED
 
   INCOMPATIBLE CHANGES
@@ -1526,6 +1543,9 @@ Release 2.7.3 - UNRELEASED
 
     YARN-4707. Remove the extra char (>) from SecureContainer.md.
     (Brahma Reddy Battula via aajisaka)
+
+    YARN-2046. Out of band heartbeats are sent only on container kill and
+    possibly too early (Ming Ma via jlowe)
 
 Release 2.7.2 - 2016-01-25
 
@@ -2377,6 +2397,12 @@ Release 2.6.5 - UNRELEASED
     possible (Ming Ma via sjlee)
 
   BUG FIXES
+
+    YARN-2046. Out of band heartbeats are sent only on container kill and
+    possibly too early (Ming Ma via jlowe)
+
+    YARN-4722. AsyncDispatcher logs redundant event queue sizes (Jason Lowe via
+    sjlee)
 
 Release 2.6.4 - 2016-02-11
 

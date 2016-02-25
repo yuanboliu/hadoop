@@ -551,6 +551,9 @@ Trunk (Unreleased)
     HADOOP-12647. Add /usr/lib default for ISAL library and fix missing .c file
     in CMakeLists (Kai Zheng via cmccabe)
 
+    HADOOP-12070. Some of the bin/hadoop subcommands are not available
+    on Windows. (Kengo Seki via Arpit Agarwal)
+
   OPTIMIZATIONS
 
     HADOOP-7761. Improve the performance of raw comparisons. (todd)
@@ -650,6 +653,9 @@ Trunk (Unreleased)
       HADOOP-12041. Implement another Reed-Solomon coder in pure Java.
       (Kai Zheng via zhz)
 
+      HADOOP-12808. Rename the RS coder from HDFS-RAID as legacy.
+      (Rui Li via zhz)
+
 Release 2.9.0 - UNRELEASED
 
   INCOMPATIBLE CHANGES
@@ -718,6 +724,9 @@ Release 2.9.0 - UNRELEASED
 
    HADOOP-12714. Fix hadoop-mapreduce-client-nativetask unit test which fails
    because it is not able to open the "glibc bug spill" file. (cmccabe)
+
+   HADOOP-12829. StatisticsDataReferenceCleaner swallows interrupt exceptions
+   (Gregory Chanan via cmccabe)
 
 Release 2.8.0 - UNRELEASED
 
@@ -1136,6 +1145,18 @@ Release 2.8.0 - UNRELEASED
 
     HADOOP-12828. Print user when services are started.
     (Wei-Chiu Chuang via Yongjun Zhang) 
+
+    HADOOP-11613. Remove commons-httpclient dependency from hadoop-azure.
+    (Masatake Iwasaki via cnauroth) 
+
+    HADOOP-12668. Support excluding weak Ciphers in HttpServer2 through
+    ssl-server.conf. (Vijay Singh via zhz)
+
+    HADOOP-12555. WASB to read credentials from a credential provider.
+    (Larry McCay via cnauroth)
+
+    HADOOP-12535. Run FileSystem contract tests with hadoop-azure.
+    (Madhumita Chakraborty via cnauroth)
 
   OPTIMIZATIONS
 
@@ -1725,6 +1746,9 @@ Release 2.8.0 - UNRELEASED
     renamed but not file under it. (Madhumita Chakraborty via cnauroth)
 
     HADOOP-12878. KMS SPNEGO sequence does not work with WEBHDFS. (xyao)
+
+    HADOOP-12716. KerberosAuthenticator#doSpnegoSequence use incorrect class to
+    determine isKeyTab in JDK8. (Xiaoyu Yao via cnauroth)
 
 Release 2.7.3 - UNRELEASED
 

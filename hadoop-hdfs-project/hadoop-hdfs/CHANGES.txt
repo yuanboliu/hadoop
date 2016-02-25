@@ -435,6 +435,9 @@ Trunk (Unreleased)
     HDFS-9818. Correctly handle EC reconstruction work caused by not enough
     racks. (jing9)
 
+    HDFS-9837. BlockManager#countNodes should be able to detect duplicated
+    internal blocks. (jing9)
+
     BREAKDOWN OF HDFS-7285 SUBTASKS AND RELATED JIRAS
 
       HDFS-7347. Configurable erasure coding policy for individual files and
@@ -946,6 +949,9 @@ Trunk (Unreleased)
 
       HDFS-9830. Remove references to hftp in ViewFs documentation in trunk.
       (Wei-Chiu Chuang via aajisaka)
+
+      HDFS-9816. Erasure Coding: allow to use multiple EC policies in striping
+      related tests [Part 3]. (Rui Li via zhz)
 
 Release 2.9.0 - UNRELEASED
 
@@ -1951,6 +1957,17 @@ Release 2.8.0 - UNRELEASED
     HDFS-9764. DistCp doesn't print value for several arguments including
     -numListstatusThreads. (Wei-Chiu Chuang via Yongjun Zhang) 
 
+    HDFS-9084. Pagination, sorting and filtering of files/directories in the
+    HDFS Web UI. (Ravi Prakash via ozawa)
+
+    HDFS-9844. Correct path creation in getTrashRoot to handle root dir. (zhz)
+
+    HDFS-9854. Log cipher suite negotiation more verbosely
+    (Wei-Chiu Chuang via cnauroth)
+
+    HDFS-9843. Document distcp options required for copying between encrypted
+    locations. (Xiaoyu Yao via cnauroth)
+
   OPTIMIZATIONS
 
     HDFS-8026. Trace FSOutputSummer#writeChecksumChunks rather than
@@ -2813,6 +2830,9 @@ Release 2.8.0 - UNRELEASED
     HDFS-9842. dfs.datanode.balance.bandwidthPerSec should accept friendly
     size units.  (Lin Yiqun via Arpit Agarwal)
 
+    HDFS-9549. TestCacheDirectives#testExceedsCapacity is flaky (Xiao Chen via
+    cmccabe)
+
 Release 2.7.3 - UNRELEASED
 
   INCOMPATIBLE CHANGES
@@ -2839,6 +2859,11 @@ Release 2.7.3 - UNRELEASED
 
     HDFS-4946. Allow preferLocalNode in BlockPlacementPolicyDefault to be
     configurable (James Kinley and Nathan Roberts via kihwal)
+
+    HDFS-8578. On upgrade, Datanode should process all storage/data dirs in
+    parallel.  (vinayakumarb and szetszwo via szetszwo)
+
+    HDFS-9395. Make HDFS audit logging consistant (Kuhu Shukla via kihwal)
 
   OPTIMIZATIONS
 
