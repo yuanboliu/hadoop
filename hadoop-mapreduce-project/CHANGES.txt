@@ -322,12 +322,17 @@ Release 2.9.0 - UNRELEASED
     MAPREDUCE-6640. mapred job -history command should be able to take
     Job ID (rkanter)
 
+    MAPREDUCE-6622. Add capability to set JHS job cache to a
+    task-based limit (rchiang via rkanter)
+
   OPTIMIZATIONS
 
   BUG FIXES
 
     MAPREDUCE-6620. Jobs that did not start are shown as starting in 1969 in
     the JHS web UI (haibochen via rkanter)
+
+    MAPREDUCE-4785. TestMRApp occasionally fails (haibochen via rkanter)
 
 Release 2.8.0 - UNRELEASED
 

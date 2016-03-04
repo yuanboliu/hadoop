@@ -146,6 +146,9 @@ Release 2.9.0 - UNRELEASED
     YARN-4697. NM aggregation thread pool is not bound by
     limits (haibochen via rkanter)
 
+    YARN-4718. Rename variables in SchedulerNode to reduce ambiguity post 
+    YARN-1011. (Inigo Goiri via kasha)
+
   OPTIMIZATIONS
 
   BUG FIXES
@@ -226,6 +229,21 @@ Release 2.9.0 - UNRELEASED
 
     YARN-4651. Document movetoqueue option in 'YARN Commands'
     (Takashi Ohnishi via rohithsharmaks)
+
+    YARN-4729. SchedulerApplicationAttempt#getTotalRequiredResources can throw 
+    an NPE. (kasha)
+
+    YARN-4701. When task logs are not available, port 8041 is referenced
+    instead of port 8042 (haibochen via rkanter)
+
+    YARN-4566. Fix test failure in TestMiniYarnClusterNodeUtilization.
+    (Takashi Ohnishi via rohithsharmaks)
+
+    YARN-4731. container-executor should not follow symlinks in
+    recursive_unlink_children (Colin Patrick McCabe via jlowe)
+
+    YARN-4704. TestResourceManager#testResourceAllocation() fails when using 
+    FairScheduler. (Yufei Gu via kasha)
 
 Release 2.8.0 - UNRELEASED
 
@@ -846,6 +864,9 @@ Release 2.8.0 - UNRELEASED
     YARN-4682. AMRM client to log when AMRM token updated.
     (Prabhu Joseph via stevel)
 
+    YARN-4579. Allow DefaultContainerExecutor container log directory
+    permissions to be configurable (rchiang via rkanter)
+
   OPTIMIZATIONS
 
     YARN-3339. TestDockerContainerExecutor should pull a single image and not
@@ -874,6 +895,9 @@ Release 2.8.0 - UNRELEASED
 
     YARN-4066. Large number of queues choke fair scheduler.
     (Johan Gustavsson via kasha)
+
+    YARN-4720. Skip unnecessary NN operations in log aggregation.
+    (Jun Gong via mingma)
 
   BUG FIXES
 
@@ -1453,6 +1477,12 @@ Release 2.8.0 - UNRELEASED
     YARN-4709. NMWebServices produces incorrect JSON for containers.
     (Varun Saxena via vvasudev)
 
+    YARN-4748. ApplicationHistoryManagerOnTimelineStore should not
+    swallow exceptions on generateApplicationReport. (Li Lu via jianhe)
+
+    YARN-4671. There is no need to acquire CS lock when completing a container.
+    (Meng Ding via jianhe)
+
 Release 2.7.3 - UNRELEASED
 
   INCOMPATIBLE CHANGES
@@ -1546,6 +1576,9 @@ Release 2.7.3 - UNRELEASED
 
     YARN-2046. Out of band heartbeats are sent only on container kill and
     possibly too early (Ming Ma via jlowe)
+
+    YARN-4723. NodesListManager$UnknownNodeId ClassCastException (Kuhu Shukla
+    via jlowe)
 
 Release 2.7.2 - 2016-01-25
 

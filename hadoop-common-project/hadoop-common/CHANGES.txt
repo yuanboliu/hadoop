@@ -363,9 +363,6 @@ Trunk (Unreleased)
     HADOOP-8767. Secondary namenode is started on slave nodes instead of
     master nodes. (Giovanni Delussu via suresh)
 
-    HADOOP-8818. Use equals instead == in MD5MD5CRC32FileChecksum
-    and TFileDumper. (Brandon Li via suresh)
-
     HADOOP-8821. Fix findbugs warning related to concatenating string in a 
     for loop in Configuration#dumpDeprecatedKeys(). (suresh)
 
@@ -389,9 +386,6 @@ Trunk (Unreleased)
 
     HADOOP-9037. Bug in test-patch.sh and precommit build process (Kihwal Lee
     via jlowe)
-
-    HADOOP-9121. InodeTree.java has redundant check for vName while 
-    throwing exception. (Arup Malakar via suresh)
 
     HADOOP-9131. Turn off TestLocalFileSystem#testListStatusWithColons on
     Windows. (Chris Nauroth via suresh)
@@ -699,6 +693,13 @@ Release 2.9.0 - UNRELEASED
 
     HADOOP-12817. Enable TLS v1.1 and 1.2 (rkanter)
 
+    HADOOP-12841. Update s3-related properties in core-default.xml. (Wei-Chiu Chuang via lei)
+
+    HADOOP-10321. TestCompositeService should cover all enumerations of 
+    adding a service to a parent service. (Ray Chiang via kasha)
+
+    HADOOP-12859. Disable hiding field style checks in class setters. (Kai Zheng via wang)
+
   BUG FIXES
 
     HADOOP-12605. Fix intermittent failure of TestIPC.testIpcWithReaderQueuing
@@ -736,6 +737,8 @@ Release 2.8.0 - UNRELEASED
 
     HADOOP-12416. Trash messages should be handled by Logger instead of being
     delivered on System.out. (Mingliang Liu via aajisaka)
+
+    HADOOP-12552. Fix undeclared/unused dependency to httpclient (iwasakims)
 
   NEW FEATURES
 
@@ -781,6 +784,9 @@ Release 2.8.0 - UNRELEASED
     (Larry McCay via cnauroth)
 
   IMPROVEMENTS
+    
+    HADOOP-12831. LocalFS/FSOutputSummer NPEs in constructor if bytes per checksum 
+    set to 0 (Mingliang Liu via gtcarrera9)
 
     HADOOP-12458. Retries is typoed to spell Retires in parts of
     hadoop-yarn and hadoop-common
@@ -1158,6 +1164,18 @@ Release 2.8.0 - UNRELEASED
     HADOOP-12535. Run FileSystem contract tests with hadoop-azure.
     (Madhumita Chakraborty via cnauroth)
 
+    HADOOP-12824. Collect network and disk usage on the node running Windows.
+    (Inigo Goiri via xyao)
+
+    HADOOP-12825. Log slow name resolutions.
+    (Sidharta Seethana via stevel)
+
+    HADOOP-12622. Improve the loggings in RetryPolicies and RetryInvocationHandler.
+    (Junping Du via jianhe)
+
+    HADOOP-12793. Write a new group mapping service guide
+    (Wei-Chiu Chuang via iwasakims)
+
   OPTIMIZATIONS
 
     HADOOP-11785. Reduce the number of listStatus operation in distcp
@@ -1204,6 +1222,9 @@ Release 2.8.0 - UNRELEASED
 
     HADOOP-10865. Add a Crc32 chunked verification benchmark for both directly
     and non-directly buffer cases.  (szetszwo)
+
+    HADOOP-12853. Change WASB documentation regarding page blob support.
+    (Madhumita Chakraborty via cnauroth)
 
   BUG FIXES
 
@@ -1750,6 +1771,21 @@ Release 2.8.0 - UNRELEASED
     HADOOP-12716. KerberosAuthenticator#doSpnegoSequence use incorrect class to
     determine isKeyTab in JDK8. (Xiaoyu Yao via cnauroth)
 
+    HADOOP-12849. TestSymlinkLocalFSFileSystem fails intermittently.
+    (Mingliang Liu via cnauroth)
+
+    HADOOP-12846. Credential Provider Recursive Dependencies.
+    (Larry McCay via cnauroth)
+
+    HADOOP-12813. Migrate TestRPC and related codes to rebase on
+    ProtobufRpcEngine. (Kai Zheng via wheat9)
+
+    HADOOP-12851. S3AFileSystem Uptake of
+    ProviderUtils.excludeIncompatibleCredentialProviders.
+    (Larry McCay via cnauroth)
+
+    HADOOP-12843. Fix findbugs warnings in hadoop-common (branch-2). (aajisaka)
+
 Release 2.7.3 - UNRELEASED
 
   INCOMPATIBLE CHANGES
@@ -1808,6 +1844,21 @@ Release 2.7.3 - UNRELEASED
 
     HADOOP-12792. TestUserGroupInformation#testGetServerSideGroups fails in
     chroot (Eric Badger via jlowe)
+
+    HADOOP-8818. Use equals instead == in MD5MD5CRC32FileChecksum
+    and TFileDumper. (Brandon Li via suresh)
+
+    HADOOP-9121. InodeTree.java has redundant check for vName while
+    throwing exception. (Arup Malakar via suresh)
+
+    HADOOP-12870. Fix typo admininistration in CommandsManual.md.
+    (John Zhuge via aajisaka)
+
+    HADOOP-12871. Fix dead link to NativeLibraries.html in CommandsManual.md.
+    (Brahma Reddy Battula via aajisaka)
+
+    HADOOP-12872. Fix formatting in ServiceLevelAuth.md.
+    (Brahma Reddy Battula via aajisaka)
 
 Release 2.7.2 - 2016-01-25
 

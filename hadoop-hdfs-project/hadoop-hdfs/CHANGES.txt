@@ -58,6 +58,9 @@ Trunk (Unreleased)
     HDFS-9525. hadoop utilities need to support provided delegation
     tokens (HeeSoo Kim via aw)
 
+    HDFS-9804. Allow long-running Balancer to login with keytab.
+    (Xiao Chen via zhz)
+
   IMPROVEMENTS
 
     HDFS-9653.  Added blocks pending deletion report to dfsadmin.  
@@ -227,6 +230,11 @@ Trunk (Unreleased)
 
     HDFS-9829. Erasure Coding: Improve few exception handling logic of
     ErasureCodingWorker. (Rakesh R via jing9)
+
+    HDFS-9838. Refactor the excessReplicateMap to a class.  (szetszwo)
+
+    HDFS-9733. Refactor DFSClient#getFileChecksum and DataXceiver#blockChecksum
+    (Kai Zheng via umamahesh)
 
   OPTIMIZATIONS
 
@@ -437,6 +445,18 @@ Trunk (Unreleased)
 
     HDFS-9837. BlockManager#countNodes should be able to detect duplicated
     internal blocks. (jing9)
+
+    HDFS-9734. Refactoring of checksum failure report related codes.
+    (Kai Zheng via zhz)
+
+    HDFS-9866. BlockManager#chooseExcessReplicasStriped may weaken rack fault
+    tolerance. (jing9)
+
+    HDFS-9867. Missing block exception should carry locatedBlocks information.
+    (Mingliang Liu via jing9)
+
+    HDFS-9876. shouldProcessOverReplicated should not count number of pending
+    replicas. (jing9)
 
     BREAKDOWN OF HDFS-7285 SUBTASKS AND RELATED JIRAS
 
@@ -960,6 +980,8 @@ Release 2.9.0 - UNRELEASED
     HDFS-9047. Retire libwebhdfs. (wheat9)
 
   NEW FEATURES
+    HDFS-9835. OIV: add ReverseXML processor which reconstructs an fsimage from
+    an XML file (cmccabe)
 
   IMPROVEMENTS
 
@@ -1023,6 +1045,11 @@ Release 2.9.0 - UNRELEASED
     HDFS-9754. Avoid unnecessary getBlockCollection calls in BlockManager.
     (jing9)
 
+    HDFS-7964. Add support for async edit logging. (Daryn Sharp)
+
+    HDFS-9534. Add CLI command to clear storage policy from a path.
+    (Xiaobing Zhou via Arpit Agarwal)
+
   OPTIMIZATIONS
 
   BUG FIXES
@@ -1038,6 +1065,9 @@ Release 2.9.0 - UNRELEASED
 
     HDFS-9608. Disk IO imbalance in HDFS with heterogeneous storages.
     (Wei Zhou via wang)
+
+    HDFS-9858. RollingFileSystemSink can throw an NPE on non-secure clusters. 
+    (Daniel Templeton via kasha)
 
 Release 2.8.0 - UNRELEASED
 
@@ -1968,6 +1998,12 @@ Release 2.8.0 - UNRELEASED
     HDFS-9843. Document distcp options required for copying between encrypted
     locations. (Xiaoyu Yao via cnauroth)
 
+    HDFS-9831. Document webhdfs retry configuration keys introduced by
+    HDFS-5219/HDFS-5122. (Xiaobing Zhou via xyao)
+
+    HDFS-9887. WebHdfs socket timeouts should be configurable.
+    (Austin Donnelly and Chris Douglas via xyao)
+
   OPTIMIZATIONS
 
     HDFS-8026. Trace FSOutputSummer#writeChecksumChunks rather than
@@ -2043,6 +2079,9 @@ Release 2.8.0 - UNRELEASED
 
     HDFS-9425. Expose number of blocks per volume as a metric
     (Brahma Reddy Battula via vinayakumarb)
+
+    HDFS-9710. DN can be configured to send block receipt IBRs in batches.
+    (szetszwo)
 
   BUG FIXES
 
@@ -2833,6 +2872,15 @@ Release 2.8.0 - UNRELEASED
     HDFS-9549. TestCacheDirectives#testExceedsCapacity is flaky (Xiao Chen via
     cmccabe)
 
+    HDFS-9870. Remove unused imports from DFSUtil.
+    (Brahma Reddy Battula via cnauroth)
+
+    HDFS-9881. DistributedFileSystem#getTrashRoot returns incorrect path for
+    encryption zones. (wang)
+
+    HDFS-9886. Configuration properties for hedged read is broken. 
+    (Akira AJISAKA via zhz)
+
 Release 2.7.3 - UNRELEASED
 
   INCOMPATIBLE CHANGES
@@ -2864,6 +2912,12 @@ Release 2.7.3 - UNRELEASED
     parallel.  (vinayakumarb and szetszwo via szetszwo)
 
     HDFS-9395. Make HDFS audit logging consistant (Kuhu Shukla via kihwal)
+
+    HDFS-8791. block ID-based DN storage layout can be very slow for datanode
+    on ext4 (Chris Trezzo via kihwal)
+
+    HDFS-9048. DistCp documentation is out-of-dated
+    (Daisuke Kobayashi via iwasakims)
 
   OPTIMIZATIONS
 
@@ -2925,6 +2979,17 @@ Release 2.7.3 - UNRELEASED
 
     HDFS-9765. TestBlockScanner#testVolumeIteratorWithCaching fails
     intermittently. (aajisaka)
+
+    HDFS-9864. Correct reference for RENEWDELEGATIONTOKEN and
+    CANCELDELEGATIONTOKEN in webhdfs doc. (Brahma Reddy Battula via aajisaka)
+
+    HDFS-9880. TestDatanodeRegistration fails occasionally (kihwal)
+
+    HDFS-9766. TestDataNodeMetrics#testDataNodeTimeSpend fails intermittently.
+    (Xiao Chen via aajisaka)
+
+    HDFS-9851. NameNode throws NPE when setPermission is called on a path that
+    does not exist. (Brahma Reddy Battula via aajisaka)
 
 Release 2.7.2 - 2016-01-25
 

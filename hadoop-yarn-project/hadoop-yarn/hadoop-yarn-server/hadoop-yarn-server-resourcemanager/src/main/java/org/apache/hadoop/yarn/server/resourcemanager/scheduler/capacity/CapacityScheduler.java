@@ -228,7 +228,7 @@ public class CapacityScheduler extends
   private AsyncScheduleThread asyncSchedulerThread;
   private RMNodeLabelsManager labelManager;
   private SchedulerHealth schedulerHealth = new SchedulerHealth();
-  long lastNodeUpdateTime;
+  volatile long lastNodeUpdateTime;
 
   /**
    * EXPERT
@@ -928,7 +928,6 @@ public class CapacityScheduler extends
   }
 
   @Override
-  // Note: when AM asks to release container, we will acquire scheduler lock
   @Lock(Lock.NoLock.class)
   public Allocation allocate(ApplicationAttemptId applicationAttemptId,
       List<ResourceRequest> ask, List<ContainerId> release,
@@ -1096,7 +1095,7 @@ public class CapacityScheduler extends
           .handle(
               new RMNodeResourceUpdateEvent(nm.getNodeID(), ResourceOption
                   .newInstance(getSchedulerNode(nm.getNodeID())
-                      .getUsedResource(), 0)));
+                      .getAllocatedResource(), 0)));
     }
     schedulerHealth.updateSchedulerReleaseDetails(lastNodeUpdateTime,
       releaseResources);
@@ -1109,8 +1108,8 @@ public class CapacityScheduler extends
 
     // Now node data structures are upto date and ready for scheduling.
     if(LOG.isDebugEnabled()) {
-      LOG.debug("Node being looked for scheduling " + nm
-        + " availableResource: " + node.getAvailableResource());
+      LOG.debug("Node being looked for scheduling " + nm +
+          " availableResource: " + node.getUnallocatedResource());
     }
   }
   
@@ -1254,11 +1253,11 @@ public class CapacityScheduler extends
 
     // Try to schedule more if there are no reservations to fulfill
     if (node.getReservedContainer() == null) {
-      if (calculator.computeAvailableContainers(node.getAvailableResource(),
+      if (calculator.computeAvailableContainers(node.getUnallocatedResource(),
         minimumAllocation) > 0) {
         if (LOG.isDebugEnabled()) {
           LOG.debug("Trying to schedule on node: " + node.getNodeName() +
-              ", available: " + node.getAvailableResource());
+              ", available: " + node.getUnallocatedResource());
         }
 
         assignment = root.assignContainers(
@@ -1546,9 +1545,8 @@ public class CapacityScheduler extends
     }
   }
 
-  @Lock(CapacityScheduler.class)
   @Override
-  protected synchronized void completedContainerInternal(
+  protected void completedContainerInternal(
       RMContainer rmContainer, ContainerStatus containerStatus,
       RMContainerEventType event) {
     
@@ -1957,7 +1955,7 @@ public class CapacityScheduler extends
     return this.schedulerHealth;
   }
 
-  private synchronized void setLastNodeUpdateTime(long time) {
+  private void setLastNodeUpdateTime(long time) {
     this.lastNodeUpdateTime = time;
   }
 
