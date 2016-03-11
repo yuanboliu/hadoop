@@ -24,10 +24,11 @@ import org.apache.hadoop.yarn.api.protocolrecords.ResourceTypes;
 import org.apache.hadoop.yarn.api.records.Resource;
 import org.apache.hadoop.yarn.api.records.ResourceInformation;
 import org.apache.hadoop.yarn.exceptions.ResourceNotFoundException;
-import org.apache.hadoop.yarn.exceptions.YarnException;
+import org.apache.hadoop.yarn.exceptions.YarnRuntimeException;
 import org.apache.hadoop.yarn.proto.YarnProtos.ResourceProto;
 import org.apache.hadoop.yarn.proto.YarnProtos.ResourceProtoOrBuilder;
 import org.apache.hadoop.yarn.proto.YarnProtos.ResourceInformationProto;
+import org.apache.hadoop.yarn.util.resource.ResourceUtils;
 import org.apache.hadoop.yarn.util.UnitsConversionUtil;
 
 import java.util.*;
@@ -35,6 +36,7 @@ import java.util.*;
 @Private
 @Unstable
 public class ResourcePBImpl extends Resource {
+
   ResourceProto proto = ResourceProto.getDefaultInstance();
   ResourceProto.Builder builder = null;
   boolean viaProto = false;
@@ -68,16 +70,17 @@ public class ResourcePBImpl extends Resource {
 
   @Override
   public int getMemory() {
-    try {
-      ResourceInformation ri =
-          this.getResourceInformation(ResourceInformation.MEMORY.getName());
-      return (int) UnitsConversionUtil
-          .convert(ri.getUnits(), "M", ri.getValue()).longValue();
-    } catch (YarnException ye) {
-      // memory should always be present
-      initResourcesMap();
-      return 0;
+    // memory should always be present
+    initResourcesMap();
+    ResourceInformation ri =
+        this.getResourceInformation(ResourceInformation.MEMORY_MB.getName());
+    if (ri.getValue() > Integer.MAX_VALUE) {
+      throw new YarnRuntimeException(
+          "Illegal value for memory - " + ri.getValue()
+              + ". Value must be less than " + Integer.MAX_VALUE);
     }
+    return (int) UnitsConversionUtil.convert(ri.getUnits(), "M", ri.getValue())
+        .longValue();
   }
 
   @Override
@@ -90,14 +93,15 @@ public class ResourcePBImpl extends Resource {
 
   @Override
   public int getVirtualCores() {
-    try {
-      return (int) this.getResourceValue(ResourceInformation.VCORES.getName())
-          .longValue();
-    } catch (YarnException ye) {
-      // vcores should always be present
-      initResourcesMap();
-      return 0;
+    // vcores should always be present
+    initResourcesMap();
+    Long vcores = this.getResourceValue(ResourceInformation.VCORES.getName());
+    if (vcores > Integer.MAX_VALUE) {
+      throw new YarnRuntimeException(
+          "Illegal value for vcores - " + vcores + ". Value must be less than "
+              + Integer.MAX_VALUE);
     }
+    return (int) vcores.longValue();
   }
 
   @Override
@@ -134,21 +138,6 @@ public class ResourcePBImpl extends Resource {
     if(this.getVirtualCores() != p.getVirtualCores()) {
       setVirtualCores(p.getVirtualCores());
     }
-  }
-
-  @Override
-  public void setResources(Map<String, ResourceInformation> resources) {
-    maybeInitBuilder();
-    if (resources == null || resources.isEmpty()) {
-      builder.clearResourceValueMap();
-    } else {
-      for (Map.Entry<String, ResourceInformation> entry : resources.entrySet()) {
-        if (!entry.getKey().equals(entry.getValue().getName())) {
-          entry.getValue().setName(entry.getKey());
-        }
-      }
-    }
-    this.resources = resources;
   }
 
   @Override
@@ -189,8 +178,7 @@ public class ResourcePBImpl extends Resource {
   }
 
   @Override
-  public ResourceInformation getResourceInformation(String resource)
-      throws YarnException {
+  public ResourceInformation getResourceInformation(String resource) {
     initResources();
     if (this.resources.containsKey(resource)) {
       return this.resources.get(resource);
@@ -199,7 +187,7 @@ public class ResourcePBImpl extends Resource {
   }
 
   @Override
-  public Long getResourceValue(String resource) throws YarnException {
+  public Long getResourceValue(String resource) {
     initResources();
     if (this.resources.containsKey(resource)) {
       return this.resources.get(resource).getValue();
@@ -210,18 +198,15 @@ public class ResourcePBImpl extends Resource {
   private void initResourcesMap() {
     if (resources == null) {
       resources = new HashMap<>();
-    }
-    ResourceInformation ri;
-    if (!resources.containsKey(ResourceInformation.MEMORY.getName())) {
-      ri = ResourceInformation
-          .newInstance(ResourceInformation.MEMORY_MB.getName(),
-              ResourceInformation.MEMORY_MB.getUnits());
-      this.resources.put(ResourceInformation.MEMORY.getName(), ri);
-    }
-    if (!resources.containsKey(ResourceInformation.VCORES.getName())) {
-      ri =
-          ResourceInformation.newInstance(ResourceInformation.VCORES.getName());
-      this.resources.put(ResourceInformation.VCORES.getName(), ri);
+      Map<String, ResourceInformation> types = ResourceUtils.getResourceTypes();
+      if (types == null) {
+        throw new YarnRuntimeException(
+            "Got null return value from ResourceUtils.getResourceTypes()");
+      }
+      for (Map.Entry<String, ResourceInformation> entry : types.entrySet()) {
+        resources.put(entry.getKey(),
+            ResourceInformation.newInstance(entry.getValue()));
+      }
     }
   }
 
