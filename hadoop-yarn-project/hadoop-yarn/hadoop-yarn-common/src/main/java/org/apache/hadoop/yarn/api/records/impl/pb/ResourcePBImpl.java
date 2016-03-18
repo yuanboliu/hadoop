@@ -79,7 +79,7 @@ public class ResourcePBImpl extends Resource {
           "Illegal value for memory - " + ri.getValue()
               + ". Value must be less than " + Integer.MAX_VALUE);
     }
-    return (int) UnitsConversionUtil.convert(ri.getUnits(), "M", ri.getValue())
+    return (int) UnitsConversionUtil.convert(ri.getUnits(), "Mi", ri.getValue())
         .longValue();
   }
 
