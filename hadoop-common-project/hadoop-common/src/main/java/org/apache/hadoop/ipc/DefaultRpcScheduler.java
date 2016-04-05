@@ -15,23 +15,31 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.apache.hadoop.io.erasurecode.rawcoder;
 
-import org.apache.hadoop.classification.InterfaceAudience;
+package org.apache.hadoop.ipc;
+
+import org.apache.hadoop.conf.Configuration;
 
 /**
- * A raw coder factory for raw Reed-Solomon coder in Java.
+ * No op default RPC scheduler.
  */
-@InterfaceAudience.Private
-public class RSRawErasureCoderFactory2 implements RawErasureCoderFactory {
-
+public class DefaultRpcScheduler implements RpcScheduler {
   @Override
-  public RawErasureEncoder createEncoder(int numDataUnits, int numParityUnits) {
-    return new RSRawEncoder2(numDataUnits, numParityUnits);
+  public int getPriorityLevel(Schedulable obj) {
+    return 0;
   }
 
   @Override
-  public RawErasureDecoder createDecoder(int numDataUnits, int numParityUnits) {
-    return new RSRawDecoder2(numDataUnits, numParityUnits);
+  public boolean shouldBackOff(Schedulable obj) {
+    return false;
+  }
+
+  @Override
+  public void addResponseTime(String name, int priorityLevel, int queueTime,
+      int processingTime) {
+  }
+
+  public DefaultRpcScheduler(int priorityLevels, String namespace,
+      Configuration conf) {
   }
 }

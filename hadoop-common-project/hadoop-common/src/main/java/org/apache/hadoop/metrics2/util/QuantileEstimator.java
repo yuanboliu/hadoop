@@ -15,19 +15,18 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.apache.hadoop.io.erasurecode.rawcoder;
 
-import org.junit.Before;
+package org.apache.hadoop.metrics2.util;
 
-/**
- * Test the new raw Reed-solomon coder implemented in Java.
- */
-public class TestRSRawCoder2 extends TestRSRawCoderBase {
+import java.util.Map;
 
-  @Before
-  public void setup() {
-    this.encoderClass = RSRawEncoder2.class;
-    this.decoderClass = RSRawDecoder2.class;
-    setAllowDump(false);
-  }
+public interface QuantileEstimator {
+
+  void insert(long value);
+
+  Map<Quantile, Long> snapshot();
+
+  long getCount();
+
+  void clear();
 }

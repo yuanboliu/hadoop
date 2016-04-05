@@ -648,6 +648,15 @@ public class YarnConfiguration extends Configuration {
       "NONE";
 
   /**
+   * Timeout(msec) for an untracked node to remain in shutdown or decommissioned
+   * state.
+   */
+  public static final String RM_NODEMANAGER_UNTRACKED_REMOVAL_TIMEOUT_MSEC =
+      RM_PREFIX + "node-removal-untracked.timeout-ms";
+  public static final int
+      DEFAULT_RM_NODEMANAGER_UNTRACKED_REMOVAL_TIMEOUT_MSEC = 60000;
+
+  /**
    * RM proxy users' prefix
    */
   public static final String RM_PROXY_USER_PREFIX = RM_PREFIX + "proxyuser.";
@@ -1746,6 +1755,12 @@ public class YarnConfiguration extends Configuration {
       TIMELINE_SERVICE_CLIENT_PREFIX + "internal-timers-ttl-secs";
   public static final long
       TIMELINE_SERVICE_CLIENT_INTERNAL_TIMERS_TTL_SECS_DEFAULT = 7 * 60;
+
+  public static final String
+      TIMELINE_SERVICE_CLIENT_INTERNAL_ATTEMPT_DIR_CACHE_SIZE =
+      TIMELINE_SERVICE_CLIENT_PREFIX + "internal-attempt-dir-cache-size";
+  public static final int
+      DEFAULT_TIMELINE_SERVICE_CLIENT_INTERNAL_ATTEMPT_DIR_CACHE_SIZE = 1000;
 
   // This is temporary solution. The configuration will be deleted once we have
   // the FileSystem API to check whether append operation is supported or not.

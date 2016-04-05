@@ -83,10 +83,6 @@ import org.mockito.Mockito;
 @SuppressWarnings("unchecked")
 public class TestAbstractYarnScheduler extends ParameterizedSchedulerTestBase {
 
-  public TestAbstractYarnScheduler(SchedulerType type) {
-    super(type);
-  }
-
   @Test
   public void testMaximimumAllocationMemory() throws Exception {
     final int node1MaxMemory = 15 * 1024;
@@ -268,7 +264,6 @@ public class TestAbstractYarnScheduler extends ParameterizedSchedulerTestBase {
     Resource configuredMaximumResource = Resource.newInstance
         (configuredMaxMemory, configuredMaxVCores);
 
-    configureScheduler();
     YarnConfiguration conf = getConf();
     conf.setInt(YarnConfiguration.RM_SCHEDULER_MAXIMUM_ALLOCATION_VCORES,
         configuredMaxVCores);
@@ -300,22 +295,16 @@ public class TestAbstractYarnScheduler extends ParameterizedSchedulerTestBase {
 
       verifyMaximumResourceCapability(configuredMaximumResource, scheduler);
 
-      scheduler.nodes = new HashMap<NodeId, SchedulerNode>();
-
-      scheduler.nodes.put(mockNode1.getNodeID(), mockNode1);
-      scheduler.updateMaximumAllocation(mockNode1, true);
+      scheduler.nodeTracker.addNode(mockNode1);
       verifyMaximumResourceCapability(fullResource1, scheduler);
 
-      scheduler.nodes.put(mockNode2.getNodeID(), mockNode2);
-      scheduler.updateMaximumAllocation(mockNode2, true);
+      scheduler.nodeTracker.addNode(mockNode2);
       verifyMaximumResourceCapability(fullResource2, scheduler);
 
-      scheduler.nodes.remove(mockNode2.getNodeID());
-      scheduler.updateMaximumAllocation(mockNode2, false);
+      scheduler.nodeTracker.removeNode(mockNode2.getNodeID());
       verifyMaximumResourceCapability(fullResource1, scheduler);
 
-      scheduler.nodes.remove(mockNode1.getNodeID());
-      scheduler.updateMaximumAllocation(mockNode1, false);
+      scheduler.nodeTracker.removeNode(mockNode1.getNodeID());
       verifyMaximumResourceCapability(configuredMaximumResource, scheduler);
     } finally {
       rm.stop();
@@ -329,7 +318,6 @@ public class TestAbstractYarnScheduler extends ParameterizedSchedulerTestBase {
     Resource configuredMaximumResource = Resource.newInstance
         (configuredMaxMemory, configuredMaxVCores);
 
-    configureScheduler();
     YarnConfiguration conf = getConf();
     conf.setInt(YarnConfiguration.RM_SCHEDULER_MAXIMUM_ALLOCATION_VCORES,
         configuredMaxVCores);
