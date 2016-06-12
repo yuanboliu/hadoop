@@ -19,23 +19,27 @@
 package org.apache.hadoop.hdfs;
 
 import java.io.IOException;
-import java.util.concurrent.Callable;
-import java.util.concurrent.ExecutionException;
+import java.util.List;
 import java.util.concurrent.Future;
-import java.util.concurrent.atomic.AtomicBoolean;
 
 import org.apache.hadoop.classification.InterfaceStability.Unstable;
 import org.apache.hadoop.fs.Options;
 import org.apache.hadoop.fs.Path;
-import org.apache.hadoop.hdfs.protocolPB.ClientNamenodeProtocolTranslatorPB;
+import org.apache.hadoop.fs.permission.AclEntry;
+import org.apache.hadoop.fs.permission.AclStatus;
+import org.apache.hadoop.fs.permission.FsPermission;
+import org.apache.hadoop.hdfs.DFSOpsCountStatistics.OpType;
+import org.apache.hadoop.io.retry.AsyncCallHandler;
+import org.apache.hadoop.util.concurrent.AsyncGetFuture;
 import org.apache.hadoop.ipc.Client;
-
-import com.google.common.util.concurrent.AbstractFuture;
 
 /****************************************************************
  * Implementation of the asynchronous distributed file system.
  * This instance of this class is the way end-user code interacts
  * with a Hadoop DistributedFileSystem in an asynchronous manner.
+ *
+ * This class is unstable, so no guarantee is provided as to reliability,
+ * stability or compatibility across any level of release granularity.
  *
  *****************************************************************/
 @Unstable
@@ -47,23 +51,8 @@ public class AsyncDistributedFileSystem {
     this.dfs = dfs;
   }
 
-  static <T> Future<T> getReturnValue() {
-    final Callable<T> returnValueCallback = ClientNamenodeProtocolTranslatorPB
-        .getReturnValueCallback();
-    Future<T> returnFuture = new AbstractFuture<T>() {
-      private final AtomicBoolean called = new AtomicBoolean(false);
-      public T get() throws InterruptedException, ExecutionException {
-        if (called.compareAndSet(false, true)) {
-          try {
-            set(returnValueCallback.call());
-          } catch (Exception e) {
-            setException(e);
-          }
-        }
-        return super.get();
-      }
-    };
-    return returnFuture;
+  private static <T> Future<T> getReturnValue() {
+    return new AsyncGetFuture<>(AsyncCallHandler.getAsyncReturn());
   }
 
   /**
@@ -97,6 +86,7 @@ public class AsyncDistributedFileSystem {
   public Future<Void> rename(Path src, Path dst,
       final Options.Rename... options) throws IOException {
     dfs.getFsStatistics().incrementWriteOps(1);
+    dfs.getDFSOpsCountStatistics().incrementOpCounter(OpType.RENAME);
 
     final Path absSrc = dfs.fixRelativePart(src);
     final Path absDst = dfs.fixRelativePart(dst);
@@ -106,6 +96,115 @@ public class AsyncDistributedFileSystem {
     try {
       dfs.getClient().rename(dfs.getPathName(absSrc), dfs.getPathName(absDst),
           options);
+      return getReturnValue();
+    } finally {
+      Client.setAsynchronousMode(isAsync);
+    }
+  }
+
+  /**
+   * Set permission of a path.
+   *
+   * @param p
+   *          the path the permission is set to
+   * @param permission
+   *          the permission that is set to a path.
+   * @return an instance of Future, #get of which is invoked to wait for
+   *         asynchronous call being finished.
+   */
+  public Future<Void> setPermission(Path p, final FsPermission permission)
+      throws IOException {
+    dfs.getFsStatistics().incrementWriteOps(1);
+    dfs.getDFSOpsCountStatistics().incrementOpCounter(OpType.SET_PERMISSION);
+    final Path absPath = dfs.fixRelativePart(p);
+    final boolean isAsync = Client.isAsynchronousMode();
+    Client.setAsynchronousMode(true);
+    try {
+      dfs.getClient().setPermission(dfs.getPathName(absPath), permission);
+      return getReturnValue();
+    } finally {
+      Client.setAsynchronousMode(isAsync);
+    }
+  }
+
+  /**
+   * Set owner of a path (i.e. a file or a directory). The parameters username
+   * and groupname cannot both be null.
+   *
+   * @param p
+   *          The path
+   * @param username
+   *          If it is null, the original username remains unchanged.
+   * @param groupname
+   *          If it is null, the original groupname remains unchanged.
+   * @return an instance of Future, #get of which is invoked to wait for
+   *         asynchronous call being finished.
+   */
+  public Future<Void> setOwner(Path p, String username, String groupname)
+      throws IOException {
+    if (username == null && groupname == null) {
+      throw new IOException("username == null && groupname == null");
+    }
+
+    dfs.getFsStatistics().incrementWriteOps(1);
+    dfs.getDFSOpsCountStatistics().incrementOpCounter(OpType.SET_OWNER);
+    final Path absPath = dfs.fixRelativePart(p);
+    final boolean isAsync = Client.isAsynchronousMode();
+    Client.setAsynchronousMode(true);
+    try {
+      dfs.getClient().setOwner(dfs.getPathName(absPath), username, groupname);
+      return getReturnValue();
+    } finally {
+      Client.setAsynchronousMode(isAsync);
+    }
+  }
+
+  /**
+   * Fully replaces ACL of files and directories, discarding all existing
+   * entries.
+   *
+   * @param p
+   *          Path to modify
+   * @param aclSpec
+   *          List<AclEntry> describing modifications, must include entries for
+   *          user, group, and others for compatibility with permission bits.
+   * @throws IOException
+   *           if an ACL could not be modified
+   * @return an instance of Future, #get of which is invoked to wait for
+   *         asynchronous call being finished.
+   */
+  public Future<Void> setAcl(Path p, final List<AclEntry> aclSpec)
+      throws IOException {
+    dfs.getFsStatistics().incrementWriteOps(1);
+    dfs.getDFSOpsCountStatistics().incrementOpCounter(OpType.SET_ACL);
+    final Path absPath = dfs.fixRelativePart(p);
+    final boolean isAsync = Client.isAsynchronousMode();
+    Client.setAsynchronousMode(true);
+    try {
+      dfs.getClient().setAcl(dfs.getPathName(absPath), aclSpec);
+      return getReturnValue();
+    } finally {
+      Client.setAsynchronousMode(isAsync);
+    }
+  }
+
+  /**
+   * Gets the ACL of a file or directory.
+   *
+   * @param p
+   *          Path to get
+   * @return AclStatus describing the ACL of the file or directory
+   * @throws IOException
+   *           if an ACL could not be read
+   * @return an instance of Future, #get of which is invoked to wait for
+   *         asynchronous call being finished.
+   */
+  public Future<AclStatus> getAclStatus(Path p) throws IOException {
+    final Path absPath = dfs.fixRelativePart(p);
+    final boolean isAsync = Client.isAsynchronousMode();
+    Client.setAsynchronousMode(true);
+    try {
+      dfs.getClient().getAclStatus(dfs.getPathName(absPath));
       return getReturnValue();
     } finally {
       Client.setAsynchronousMode(isAsync);

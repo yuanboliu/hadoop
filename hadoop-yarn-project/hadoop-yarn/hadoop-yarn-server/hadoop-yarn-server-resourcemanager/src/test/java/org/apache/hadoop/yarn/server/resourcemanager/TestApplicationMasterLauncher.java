@@ -37,6 +37,8 @@ import org.apache.hadoop.yarn.api.protocolrecords.IncreaseContainersResourceRequ
 import org.apache.hadoop.yarn.api.protocolrecords.IncreaseContainersResourceResponse;
 import org.apache.hadoop.yarn.api.protocolrecords.GetContainerStatusesRequest;
 import org.apache.hadoop.yarn.api.protocolrecords.GetContainerStatusesResponse;
+import org.apache.hadoop.yarn.api.protocolrecords.SignalContainerRequest;
+import org.apache.hadoop.yarn.api.protocolrecords.SignalContainerResponse;
 import org.apache.hadoop.yarn.api.protocolrecords.StartContainerRequest;
 import org.apache.hadoop.yarn.api.protocolrecords.StartContainersRequest;
 import org.apache.hadoop.yarn.api.protocolrecords.StartContainersResponse;
@@ -92,6 +94,7 @@ public class TestApplicationMasterLauncher {
     String nmHostAtContainerManager = null;
     long submitTimeAtContainerManager;
     int maxAppAttempts;
+    private String queueName;
 
     @Override
     public StartContainersResponse
@@ -120,6 +123,8 @@ public class TestApplicationMasterLauncher {
       submitTimeAtContainerManager =
           Long.parseLong(env.get(ApplicationConstants.APP_SUBMIT_TIME_ENV));
       maxAppAttempts = YarnConfiguration.DEFAULT_RM_AM_MAX_ATTEMPTS;
+      queueName = env.get(ApplicationConstants.Environment
+              .YARN_RESOURCEMANAGER_APPLICATION_QUEUE.key());
       return StartContainersResponse.newInstance(
         new HashMap<String, ByteBuffer>(), new ArrayList<ContainerId>(),
         new HashMap<ContainerId, SerializedException>());
@@ -143,6 +148,12 @@ public class TestApplicationMasterLauncher {
     public IncreaseContainersResourceResponse increaseContainersResource(
         IncreaseContainersResourceRequest request)
             throws YarnException {
+      return null;
+    }
+
+    @Override
+    public SignalContainerResponse signalToContainer(
+        SignalContainerRequest request) throws YarnException, IOException {
       return null;
     }
   }
@@ -182,6 +193,8 @@ public class TestApplicationMasterLauncher {
       containerManager.nmHostAtContainerManager);
     Assert.assertEquals(YarnConfiguration.DEFAULT_RM_AM_MAX_ATTEMPTS,
         containerManager.maxAppAttempts);
+    Assert.assertEquals(YarnConfiguration.DEFAULT_QUEUE_NAME,
+        containerManager.queueName);
 
     MockAM am = new MockAM(rm.getRMContext(), rm
         .getApplicationMasterService(), appAttemptId);

@@ -19,9 +19,9 @@ package org.apache.hadoop.hdfs;
 
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.assertEquals;
 
 import java.io.IOException;
-import java.security.PrivilegedExceptionAction;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.ExecutionException;
@@ -34,307 +34,154 @@ import org.apache.hadoop.fs.CommonConfigurationKeys;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.fs.Options.Rename;
-import org.apache.hadoop.hdfs.protocol.LocatedBlocks;
-import org.apache.hadoop.hdfs.server.blockmanagement.BlockManager;
-import org.apache.hadoop.hdfs.server.namenode.NameNodeAdapter;
 import org.apache.hadoop.ipc.AsyncCallLimitExceededException;
-import org.apache.hadoop.security.UserGroupInformation;
+import org.junit.After;
+import org.junit.Before;
 import org.junit.Test;
 
 public class TestAsyncDFSRename {
   public static final Log LOG = LogFactory.getLog(TestAsyncDFSRename.class);
+  private final short replFactor = 1;
+  private final long blockSize = 512;
+  private long fileLen = blockSize * 3;
+  private static final int NUM_TESTS = 50;
+  private static final int NUM_NN_HANDLER = 10;
+  private static final int ASYNC_CALL_LIMIT = 1000;
 
-  /**
-   * Check the blocks of dst file are cleaned after rename with overwrite
-   * Restart NN to check the rename successfully
-   */
-  @Test(timeout = 60000)
-  public void testAsyncRenameWithOverwrite() throws Exception {
-    final short replFactor = 2;
-    final long blockSize = 512;
-    Configuration conf = new Configuration();
-    MiniDFSCluster cluster = new MiniDFSCluster.Builder(conf).numDataNodes(
-        replFactor).build();
+  private Configuration conf;
+  private MiniDFSCluster cluster;
+  private FileSystem fs;
+  private AsyncDistributedFileSystem adfs;
+
+  @Before
+  public void setup() throws IOException {
+    conf = new HdfsConfiguration();
+    // set the limit of max async calls
+    conf.setInt(CommonConfigurationKeys.IPC_CLIENT_ASYNC_CALLS_MAX_KEY,
+        ASYNC_CALL_LIMIT);
+    // set server handlers
+    conf.setInt(DFSConfigKeys.DFS_NAMENODE_HANDLER_COUNT_KEY, NUM_NN_HANDLER);
+    cluster = new MiniDFSCluster.Builder(conf).numDataNodes(1).build();
     cluster.waitActive();
-    DistributedFileSystem dfs = cluster.getFileSystem();
-    AsyncDistributedFileSystem adfs = dfs.getAsyncDistributedFileSystem();
+    fs = FileSystem.get(conf);
+    adfs = cluster.getFileSystem().getAsyncDistributedFileSystem();
+  }
 
-    try {
-
-      long fileLen = blockSize * 3;
-      String src = "/foo/src";
-      String dst = "/foo/dst";
-      String src2 = "/foo/src2";
-      String dst2 = "/foo/dst2";
-      Path srcPath = new Path(src);
-      Path dstPath = new Path(dst);
-      Path srcPath2 = new Path(src2);
-      Path dstPath2 = new Path(dst2);
-
-      DFSTestUtil.createFile(dfs, srcPath, fileLen, replFactor, 1);
-      DFSTestUtil.createFile(dfs, dstPath, fileLen, replFactor, 1);
-      DFSTestUtil.createFile(dfs, srcPath2, fileLen, replFactor, 1);
-      DFSTestUtil.createFile(dfs, dstPath2, fileLen, replFactor, 1);
-
-      LocatedBlocks lbs = NameNodeAdapter.getBlockLocations(
-          cluster.getNameNode(), dst, 0, fileLen);
-      LocatedBlocks lbs2 = NameNodeAdapter.getBlockLocations(
-          cluster.getNameNode(), dst2, 0, fileLen);
-      BlockManager bm = NameNodeAdapter.getNamesystem(cluster.getNameNode())
-          .getBlockManager();
-      assertTrue(bm.getStoredBlock(lbs.getLocatedBlocks().get(0).getBlock()
-          .getLocalBlock()) != null);
-      assertTrue(bm.getStoredBlock(lbs2.getLocatedBlocks().get(0).getBlock()
-          .getLocalBlock()) != null);
-
-      Future<Void> retVal1 = adfs.rename(srcPath, dstPath, Rename.OVERWRITE);
-      Future<Void> retVal2 = adfs.rename(srcPath2, dstPath2, Rename.OVERWRITE);
-      retVal1.get();
-      retVal2.get();
-
-      assertTrue(bm.getStoredBlock(lbs.getLocatedBlocks().get(0).getBlock()
-          .getLocalBlock()) == null);
-      assertTrue(bm.getStoredBlock(lbs2.getLocatedBlocks().get(0).getBlock()
-          .getLocalBlock()) == null);
-
-      // Restart NN and check the rename successfully
-      cluster.restartNameNodes();
-      assertFalse(dfs.exists(srcPath));
-      assertTrue(dfs.exists(dstPath));
-      assertFalse(dfs.exists(srcPath2));
-      assertTrue(dfs.exists(dstPath2));
-    } finally {
-      if (dfs != null) {
-        dfs.close();
-      }
-      if (cluster != null) {
-        cluster.shutdown();
-      }
+  @After
+  public void tearDown() throws IOException {
+    if (fs != null) {
+      fs.close();
+      fs = null;
+    }
+    if (cluster != null) {
+      cluster.shutdown();
+      cluster = null;
     }
   }
 
   @Test(timeout = 60000)
   public void testCallGetReturnValueMultipleTimes() throws Exception {
-    final short replFactor = 2;
-    final long blockSize = 512;
-    final Path renameDir = new Path(
-        "/test/testCallGetReturnValueMultipleTimes/");
-    final Configuration conf = new HdfsConfiguration();
-    conf.setInt(CommonConfigurationKeys.IPC_CLIENT_ASYNC_CALLS_MAX_KEY, 200);
-    final MiniDFSCluster cluster = new MiniDFSCluster.Builder(conf)
-        .numDataNodes(2).build();
-    cluster.waitActive();
-    final DistributedFileSystem dfs = cluster.getFileSystem();
-    final AsyncDistributedFileSystem adfs = dfs.getAsyncDistributedFileSystem();
-    final int count = 100;
-    long fileLen = blockSize * 3;
-    final Map<Integer, Future<Void>> returnFutures = new HashMap<Integer, Future<Void>>();
+    final Path parent = new Path("/test/testCallGetReturnValueMultipleTimes/");
+    assertTrue(fs.mkdirs(parent));
 
-    assertTrue(dfs.mkdirs(renameDir));
+    // prepare test
+    final Path[] srcs = new Path[NUM_TESTS];
+    final Path[] dsts = new Path[NUM_TESTS];
+    for (int i = 0; i < NUM_TESTS; i++) {
+      srcs[i] = new Path(parent, "src" + i);
+      dsts[i] = new Path(parent, "dst" + i);
+      DFSTestUtil.createFile(fs, srcs[i], fileLen, replFactor, 1);
+      DFSTestUtil.createFile(fs, dsts[i], fileLen, replFactor, 1);
+    }
 
-    try {
-      // concurrently invoking many rename
-      for (int i = 0; i < count; i++) {
-        Path src = new Path(renameDir, "src" + i);
-        Path dst = new Path(renameDir, "dst" + i);
-        DFSTestUtil.createFile(dfs, src, fileLen, replFactor, 1);
-        DFSTestUtil.createFile(dfs, dst, fileLen, replFactor, 1);
-        Future<Void> returnFuture = adfs.rename(src, dst, Rename.OVERWRITE);
-        returnFutures.put(i, returnFuture);
-      }
+    // concurrently invoking many rename
+    final Map<Integer, Future<Void>> reFutures =
+        new HashMap<Integer, Future<Void>>();
+    for (int i = 0; i < NUM_TESTS; i++) {
+      Future<Void> retFuture = adfs.rename(srcs[i], dsts[i],
+          Rename.OVERWRITE);
+      reFutures.put(i, retFuture);
+    }
 
-      for (int i = 0; i < 5; i++) {
-        verifyCallGetReturnValueMultipleTimes(returnFutures, count, cluster,
-            renameDir, dfs);
-      }
-    } finally {
-      if (dfs != null) {
-        dfs.close();
-      }
-      if (cluster != null) {
-        cluster.shutdown();
-      }
+    assertEquals(NUM_TESTS, reFutures.size());
+
+    for (int i = 0; i < 5; i++) {
+      verifyCallGetReturnValueMultipleTimes(reFutures, srcs, dsts);
     }
   }
 
   private void verifyCallGetReturnValueMultipleTimes(
-      Map<Integer, Future<Void>> returnFutures, int count,
-      MiniDFSCluster cluster, Path renameDir, DistributedFileSystem dfs)
+      final Map<Integer, Future<Void>> reFutures, final Path[] srcs,
+      final Path[] dsts)
       throws InterruptedException, ExecutionException, IOException {
+
     // wait for completing the calls
-    for (int i = 0; i < count; i++) {
-      returnFutures.get(i).get();
-    }
+    waitForReturnValues(reFutures, 0, NUM_TESTS);
 
-    // Restart NN and check the rename successfully
-    cluster.restartNameNodes();
-
-    // very the src dir should not exist, dst should
-    for (int i = 0; i < count; i++) {
-      Path src = new Path(renameDir, "src" + i);
-      Path dst = new Path(renameDir, "dst" + i);
-      assertFalse(dfs.exists(src));
-      assertTrue(dfs.exists(dst));
-    }
-  }
-
-  @Test(timeout = 120000)
-  public void testAggressiveConcurrentAsyncRenameWithOverwrite()
-      throws Exception {
-    internalTestConcurrentAsyncRenameWithOverwrite(100,
-        "testAggressiveConcurrentAsyncRenameWithOverwrite");
+    // verify the src dir should not exist, dst should
+    verifyRenames(srcs, dsts);
   }
 
   @Test(timeout = 60000)
-  public void testConservativeConcurrentAsyncRenameWithOverwrite()
-      throws Exception {
-    internalTestConcurrentAsyncRenameWithOverwrite(10000,
-        "testConservativeConcurrentAsyncRenameWithOverwrite");
-  }
+  public void testConcurrentAsyncRename() throws Exception {
+    final Path parent = new Path(
+        String.format("/test/%s/", "testConcurrentAsyncRename"));
+    assertTrue(fs.mkdirs(parent));
 
-  private void internalTestConcurrentAsyncRenameWithOverwrite(
-      final int asyncCallLimit, final String basePath) throws Exception {
-    final short replFactor = 2;
-    final long blockSize = 512;
-    final Path renameDir = new Path(String.format("/test/%s/", basePath));
-    Configuration conf = new HdfsConfiguration();
-    conf.setInt(CommonConfigurationKeys.IPC_CLIENT_ASYNC_CALLS_MAX_KEY,
-        asyncCallLimit);
-    MiniDFSCluster cluster = new MiniDFSCluster.Builder(conf).numDataNodes(2)
-        .build();
-    cluster.waitActive();
-    DistributedFileSystem dfs = cluster.getFileSystem();
-    AsyncDistributedFileSystem adfs = dfs.getAsyncDistributedFileSystem();
-    int count = 1000;
-    long fileLen = blockSize * 3;
+    // prepare test
+    final Path[] srcs = new Path[NUM_TESTS];
+    final Path[] dsts = new Path[NUM_TESTS];
+    for (int i = 0; i < NUM_TESTS; i++) {
+      srcs[i] = new Path(parent, "src" + i);
+      dsts[i] = new Path(parent, "dst" + i);
+      DFSTestUtil.createFile(fs, srcs[i], fileLen, replFactor, 1);
+      DFSTestUtil.createFile(fs, dsts[i], fileLen, replFactor, 1);
+    }
+
+    // concurrently invoking many rename
     int start = 0, end = 0;
-    Map<Integer, Future<Void>> returnFutures = new HashMap<Integer, Future<Void>>();
-
-    assertTrue(dfs.mkdirs(renameDir));
-
-    try {
-      // concurrently invoking many rename
-      for (int i = 0; i < count; i++) {
-        Path src = new Path(renameDir, "src" + i);
-        Path dst = new Path(renameDir, "dst" + i);
-        DFSTestUtil.createFile(dfs, src, fileLen, replFactor, 1);
-        DFSTestUtil.createFile(dfs, dst, fileLen, replFactor, 1);
-        for (;;) {
-          try {
-            LOG.info("rename #" + i);
-            Future<Void> returnFuture = adfs.rename(src, dst, Rename.OVERWRITE);
-            returnFutures.put(i, returnFuture);
-            break;
-          } catch (AsyncCallLimitExceededException e) {
-            /**
-             * reached limit of async calls, fetch results of finished async
-             * calls to let follow-on calls go
-             */
-            LOG.error(e);
-            start = end;
-            end = i;
-            LOG.info(String.format("start=%d, end=%d, i=%d", start, end, i));
-            waitForReturnValues(returnFutures, start, end);
-          }
+    Map<Integer, Future<Void>> retFutures =
+        new HashMap<Integer, Future<Void>>();
+    for (int i = 0; i < NUM_TESTS; i++) {
+      for (;;) {
+        try {
+          LOG.info("rename #" + i);
+          Future<Void> retFuture = adfs.rename(srcs[i], dsts[i],
+              Rename.OVERWRITE);
+          retFutures.put(i, retFuture);
+          break;
+        } catch (AsyncCallLimitExceededException e) {
+          /**
+           * reached limit of async calls, fetch results of finished async calls
+           * to let follow-on calls go
+           */
+          LOG.error(e);
+          start = end;
+          end = i;
+          LOG.info(String.format("start=%d, end=%d, i=%d", start, end, i));
+          waitForReturnValues(retFutures, start, end);
         }
       }
+    }
 
-      // wait for completing the calls
-      for (int i = start; i < count; i++) {
-        returnFutures.get(i).get();
-      }
+    // wait for completing the calls
+    waitForReturnValues(retFutures, end, NUM_TESTS);
 
-      // Restart NN and check the rename successfully
-      cluster.restartNameNodes();
+    // verify the src dir should not exist, dst should
+    verifyRenames(srcs, dsts);
+  }
 
-      // very the src dir should not exist, dst should
-      for (int i = 0; i < count; i++) {
-        Path src = new Path(renameDir, "src" + i);
-        Path dst = new Path(renameDir, "dst" + i);
-        assertFalse(dfs.exists(src));
-        assertTrue(dfs.exists(dst));
-      }
-    } finally {
-      if (dfs != null) {
-        dfs.close();
-      }
-      if (cluster != null) {
-        cluster.shutdown();
-      }
+  private void verifyRenames(final Path[] srcs, final Path[] dsts)
+      throws IOException {
+    for (int i = 0; i < NUM_TESTS; i++) {
+      assertFalse(fs.exists(srcs[i]));
+      assertTrue(fs.exists(dsts[i]));
     }
   }
 
-  private void waitForReturnValues(
-      final Map<Integer, Future<Void>> returnFutures, final int start,
-      final int end) throws InterruptedException, ExecutionException {
-    LOG.info(String.format("calling waitForReturnValues [%d, %d)", start, end));
-    for (int i = start; i < end; i++) {
-      LOG.info("calling Future#get #" + i);
-      returnFutures.get(i).get();
-    }
-  }
-
-  @Test(timeout = 60000)
-  public void testAsyncRenameWithException() throws Exception {
-    Configuration conf = new HdfsConfiguration();
-    String group1 = "group1";
-    String group2 = "group2";
-    String user1 = "user1";
-    UserGroupInformation ugi1;
-
-    // explicitly turn on permission checking
-    conf.setBoolean(DFSConfigKeys.DFS_PERMISSIONS_ENABLED_KEY, true);
-
-    // create fake mapping for the groups
-    Map<String, String[]> u2g_map = new HashMap<String, String[]>(1);
-    u2g_map.put(user1, new String[] { group1, group2 });
-    DFSTestUtil.updateConfWithFakeGroupMapping(conf, u2g_map);
-
-    // Initiate all four users
-    ugi1 = UserGroupInformation.createUserForTesting(user1, new String[] {
-        group1, group2 });
-
-    final MiniDFSCluster cluster = new MiniDFSCluster.Builder(conf)
-        .numDataNodes(3).build();
-    cluster.waitActive();
-
-    FileSystem rootFs = FileSystem.get(conf);
-    final Path renameDir = new Path("/test/async_rename_exception/");
-    final Path src = new Path(renameDir, "src");
-    final Path dst = new Path(renameDir, "dst");
-    rootFs.mkdirs(src);
-
-    AsyncDistributedFileSystem adfs = ugi1
-        .doAs(new PrivilegedExceptionAction<AsyncDistributedFileSystem>() {
-          @Override
-          public AsyncDistributedFileSystem run() throws Exception {
-            return cluster.getFileSystem().getAsyncDistributedFileSystem();
-          }
-        });
-
-    try {
-      Future<Void> returnFuture = adfs.rename(src, dst, Rename.OVERWRITE);
-      returnFuture.get();
-    } catch (ExecutionException e) {
-      checkPermissionDenied(e, src, user1);
-    } finally {
-      if (rootFs != null) {
-        rootFs.close();
-      }
-      if (cluster != null) {
-        cluster.shutdown();
-      }
-    }
-  }
-
-  private void checkPermissionDenied(final Exception e, final Path dir,
-      final String user) {
-    assertTrue(e.getCause() instanceof ExecutionException);
-    assertTrue("Permission denied messages must carry AccessControlException",
-        e.getMessage().contains("AccessControlException"));
-    assertTrue("Permission denied messages must carry the username", e
-        .getMessage().contains(user));
-    assertTrue("Permission denied messages must carry the path parent", e
-        .getMessage().contains(dir.getParent().toUri().getPath()));
+  void waitForReturnValues(final Map<Integer, Future<Void>> retFutures,
+      final int start, final int end)
+      throws InterruptedException, ExecutionException {
+    TestAsyncDFS.waitForReturnValues(retFutures, start, end);
   }
 }

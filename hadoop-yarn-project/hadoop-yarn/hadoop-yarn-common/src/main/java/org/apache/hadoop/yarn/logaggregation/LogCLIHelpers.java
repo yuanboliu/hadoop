@@ -23,8 +23,14 @@ import java.io.EOFException;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.PrintStream;
+import java.nio.file.AccessDeniedException;
+import java.nio.file.Files;
+import java.nio.file.Paths;
+import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
-
+import java.util.Set;
+import org.apache.commons.io.IOUtils;
 import org.apache.commons.lang.StringUtils;
 import org.apache.hadoop.classification.InterfaceAudience.Private;
 import org.apache.hadoop.conf.Configurable;
@@ -34,6 +40,8 @@ import org.apache.hadoop.fs.FileStatus;
 import org.apache.hadoop.fs.HarFs;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.fs.RemoteIterator;
+import org.apache.hadoop.security.AccessControlException;
+import org.apache.hadoop.security.UserGroupInformation;
 import org.apache.hadoop.yarn.api.records.ApplicationId;
 import org.apache.hadoop.yarn.conf.YarnConfiguration;
 import org.apache.hadoop.yarn.logaggregation.AggregatedLogFormat.LogKey;
@@ -50,25 +58,81 @@ public class LogCLIHelpers implements Configurable {
   @VisibleForTesting
   public int dumpAContainersLogs(String appId, String containerId,
       String nodeId, String jobOwner) throws IOException {
-    return dumpAContainersLogsForALogType(appId, containerId, nodeId, jobOwner,
-      null);
+    ContainerLogsRequest options = new ContainerLogsRequest();
+    options.setAppId(ConverterUtils.toApplicationId(appId));
+    options.setContainerId(containerId);
+    options.setNodeId(nodeId);
+    options.setAppOwner(jobOwner);
+    List<String> logs = new ArrayList<String>();
+    options.setLogTypes(logs);
+    options.setBytes(Long.MAX_VALUE);
+    return dumpAContainersLogsForALogType(options, false);
   }
 
   @Private
   @VisibleForTesting
-  public int dumpAContainersLogsForALogType(String appId, String containerId,
-      String nodeId, String jobOwner, List<String> logType)
+  /**
+   * Return the owner for a given AppId
+   * @param remoteRootLogDir
+   * @param appId
+   * @param bestGuess
+   * @param conf
+   * @return the owner or null
+   * @throws IOException
+   */
+  public static String getOwnerForAppIdOrNull(
+      ApplicationId appId, String bestGuess,
+      Configuration conf) throws IOException {
+    Path remoteRootLogDir = new Path(conf.get(
+        YarnConfiguration.NM_REMOTE_APP_LOG_DIR,
+        YarnConfiguration.DEFAULT_NM_REMOTE_APP_LOG_DIR));
+    String suffix = LogAggregationUtils.getRemoteNodeLogDirSuffix(conf);
+    Path fullPath = LogAggregationUtils.getRemoteAppLogDir(remoteRootLogDir,
+        appId, bestGuess, suffix);
+    FileContext fc =
+        FileContext.getFileContext(remoteRootLogDir.toUri(), conf);
+    String pathAccess = fullPath.toString();
+    try {
+      if (fc.util().exists(fullPath)) {
+        return bestGuess;
+      }
+      Path toMatch = LogAggregationUtils.
+          getRemoteAppLogDir(remoteRootLogDir, appId, "*", suffix);
+      pathAccess = toMatch.toString();
+      FileStatus[] matching  = fc.util().globStatus(toMatch);
+      if (matching == null || matching.length != 1) {
+        return null;
+      }
+      //fetch the user from the full path /app-logs/user[/suffix]/app_id
+      Path parent = matching[0].getPath().getParent();
+      //skip the suffix too
+      if (suffix != null && !StringUtils.isEmpty(suffix)) {
+        parent = parent.getParent();
+      }
+      return parent.getName();
+    } catch (AccessControlException | AccessDeniedException ex) {
+      logDirNoAccessPermission(pathAccess, bestGuess, ex.getMessage());
+      return null;
+    }
+  }
+
+  @Private
+  @VisibleForTesting
+  public int dumpAContainersLogsForALogType(ContainerLogsRequest options)
       throws IOException {
-    return dumpAContainersLogsForALogType(appId, containerId, nodeId, jobOwner,
-        logType, true);
+    return dumpAContainersLogsForALogType(options, true);
   }
 
   @Private
   @VisibleForTesting
-  public int dumpAContainersLogsForALogType(String appId, String containerId,
-      String nodeId, String jobOwner, List<String> logType,
+  public int dumpAContainersLogsForALogType(ContainerLogsRequest options,
       boolean outputFailure) throws IOException {
-    ApplicationId applicationId = ConverterUtils.toApplicationId(appId);
+    ApplicationId applicationId = options.getAppId();
+    String jobOwner = options.getAppOwner();
+    String nodeId = options.getNodeId();
+    String containerId = options.getContainerId();
+    String localDir = options.getOutputLocalDir();
+    List<String> logType = options.getLogTypes();
     RemoteIterator<FileStatus> nodeFiles = getRemoteNodeFileDir(
         applicationId, jobOwner);
     if (nodeFiles == null) {
@@ -87,18 +151,23 @@ public class LogCLIHelpers implements Configurable {
       if (fileName.contains(LogAggregationUtils.getNodeString(nodeId))
           && !fileName.endsWith(LogAggregationUtils.TMP_FILE_SUFFIX)) {
         AggregatedLogFormat.LogReader reader = null;
+        PrintStream out = createPrintStream(localDir, fileName, containerId);
         try {
+          String containerString = "\n\nContainer: " + containerId;
+          out.println(containerString);
+          out.println(StringUtils.repeat("=", containerString.length()));
           reader =
               new AggregatedLogFormat.LogReader(getConf(),
                 thisNodeFile.getPath());
-          if (logType == null) {
-            if (dumpAContainerLogs(containerId, reader, System.out,
-              thisNodeFile.getModificationTime()) > -1) {
+          if (logType == null || logType.isEmpty()) {
+            if (dumpAContainerLogs(containerId, reader, out,
+                thisNodeFile.getModificationTime(), options.getBytes()) > -1) {
               foundContainerLogs = true;
             }
           } else {
-            if (dumpAContainerLogsForALogType(containerId, reader, System.out,
-              thisNodeFile.getModificationTime(), logType) > -1) {
+            if (dumpAContainerLogsForALogType(containerId, reader, out,
+                thisNodeFile.getModificationTime(), logType,
+                options.getBytes()) > -1) {
               foundContainerLogs = true;
             }
           }
@@ -106,21 +175,27 @@ public class LogCLIHelpers implements Configurable {
           if (reader != null) {
             reader.close();
           }
+          closePrintStream(out);
         }
       }
     }
-    if (!foundContainerLogs && outputFailure) {
-      containerLogNotFound(containerId);
+    if (!foundContainerLogs) {
+      if (outputFailure) {
+        containerLogNotFound(containerId);
+      }
       return -1;
     }
     return 0;
   }
 
   @Private
-  public int dumpAContainersLogsForALogTypeWithoutNodeId(String appId,
-      String containerId, String jobOwner, List<String> logType)
-    throws IOException {
-    ApplicationId applicationId = ConverterUtils.toApplicationId(appId);
+  public int dumpAContainersLogsForALogTypeWithoutNodeId(
+      ContainerLogsRequest options) throws IOException {
+    ApplicationId applicationId = options.getAppId();
+    String jobOwner = options.getAppOwner();
+    String containerId = options.getContainerId();
+    String localDir = options.getOutputLocalDir();
+    List<String> logType = options.getLogTypes();
     RemoteIterator<FileStatus> nodeFiles = getRemoteNodeFileDir(
         applicationId, jobOwner);
     if (nodeFiles == null) {
@@ -132,18 +207,30 @@ public class LogCLIHelpers implements Configurable {
       if (!thisNodeFile.getPath().getName().endsWith(
           LogAggregationUtils.TMP_FILE_SUFFIX)) {
         AggregatedLogFormat.LogReader reader = null;
+        PrintStream out = System.out;
         try {
           reader =
               new AggregatedLogFormat.LogReader(getConf(),
               thisNodeFile.getPath());
-          if (logType == null) {
-            if (dumpAContainerLogs(containerId, reader, System.out,
-                thisNodeFile.getModificationTime()) > -1) {
+          if (getContainerLogsStream(containerId, reader) == null) {
+            continue;
+          }
+          reader =
+              new AggregatedLogFormat.LogReader(getConf(),
+              thisNodeFile.getPath());
+          out = createPrintStream(localDir, thisNodeFile.getPath().getName(),
+              containerId);
+          out.println(containerId);
+          out.println(StringUtils.repeat("=", containerId.length()));
+          if (logType == null || logType.isEmpty()) {
+            if (dumpAContainerLogs(containerId, reader, out,
+                thisNodeFile.getModificationTime(), options.getBytes()) > -1) {
               foundContainerLogs = true;
             }
           } else {
-            if (dumpAContainerLogsForALogType(containerId, reader, System.out,
-                thisNodeFile.getModificationTime(), logType) > -1) {
+            if (dumpAContainerLogsForALogType(containerId, reader, out,
+                thisNodeFile.getModificationTime(), logType,
+                options.getBytes()) > -1) {
               foundContainerLogs = true;
             }
           }
@@ -151,6 +238,7 @@ public class LogCLIHelpers implements Configurable {
           if (reader != null) {
             reader.close();
           }
+          closePrintStream(out);
         }
       }
     }
@@ -160,19 +248,13 @@ public class LogCLIHelpers implements Configurable {
     }
     return 0;
   }
+
   @Private
   public int dumpAContainerLogs(String containerIdStr,
       AggregatedLogFormat.LogReader reader, PrintStream out,
-      long logUploadedTime) throws IOException {
-    DataInputStream valueStream;
-    LogKey key = new LogKey();
-    valueStream = reader.next(key);
-
-    while (valueStream != null && !key.toString().equals(containerIdStr)) {
-      // Next container
-      key = new LogKey();
-      valueStream = reader.next(key);
-    }
+      long logUploadedTime, long bytes) throws IOException {
+    DataInputStream valueStream = getContainerLogsStream(
+        containerIdStr, reader);
 
     if (valueStream == null) {
       return -1;
@@ -182,7 +264,7 @@ public class LogCLIHelpers implements Configurable {
     while (true) {
       try {
         LogReader.readAContainerLogsForALogType(valueStream, out,
-          logUploadedTime);
+            logUploadedTime, bytes);
         foundContainerLogs = true;
       } catch (EOFException eof) {
         break;
@@ -194,10 +276,8 @@ public class LogCLIHelpers implements Configurable {
     return -1;
   }
 
-  @Private
-  public int dumpAContainerLogsForALogType(String containerIdStr,
-      AggregatedLogFormat.LogReader reader, PrintStream out,
-      long logUploadedTime, List<String> logType) throws IOException {
+  private DataInputStream getContainerLogsStream(String containerIdStr,
+      AggregatedLogFormat.LogReader reader) throws IOException {
     DataInputStream valueStream;
     LogKey key = new LogKey();
     valueStream = reader.next(key);
@@ -207,7 +287,16 @@ public class LogCLIHelpers implements Configurable {
       key = new LogKey();
       valueStream = reader.next(key);
     }
+    return valueStream;
+  }
 
+  @Private
+  public int dumpAContainerLogsForALogType(String containerIdStr,
+      AggregatedLogFormat.LogReader reader, PrintStream out,
+      long logUploadedTime, List<String> logType, long bytes)
+      throws IOException {
+    DataInputStream valueStream = getContainerLogsStream(
+        containerIdStr, reader);
     if (valueStream == null) {
       return -1;
     }
@@ -216,7 +305,7 @@ public class LogCLIHelpers implements Configurable {
     while (true) {
       try {
         int result = LogReader.readContainerLogsForALogType(
-            valueStream, out, logUploadedTime, logType);
+            valueStream, out, logUploadedTime, logType, bytes);
         if (result == 0) {
           foundContainerLogs = true;
         }
@@ -232,8 +321,12 @@ public class LogCLIHelpers implements Configurable {
   }
 
   @Private
-  public int dumpAllContainersLogs(ApplicationId appId, String appOwner,
-      PrintStream out) throws IOException {
+  public int dumpAllContainersLogs(ContainerLogsRequest options)
+      throws IOException {
+    ApplicationId appId = options.getAppId();
+    String appOwner = options.getAppOwner();
+    String localDir = options.getOutputLocalDir();
+    List<String> logTypes = options.getLogTypes();
     RemoteIterator<FileStatus> nodeFiles = getRemoteNodeFileDir(
         appId, appOwner);
     if (nodeFiles == null) {
@@ -249,9 +342,10 @@ public class LogCLIHelpers implements Configurable {
         continue;
       }
       if (!thisNodeFile.getPath().getName()
-        .endsWith(LogAggregationUtils.TMP_FILE_SUFFIX)) {
+          .endsWith(LogAggregationUtils.TMP_FILE_SUFFIX)) {
         AggregatedLogFormat.LogReader reader =
-            new AggregatedLogFormat.LogReader(getConf(), thisNodeFile.getPath());
+            new AggregatedLogFormat.LogReader(getConf(),
+                thisNodeFile.getPath());
         try {
 
           DataInputStream valueStream;
@@ -259,19 +353,35 @@ public class LogCLIHelpers implements Configurable {
           valueStream = reader.next(key);
 
           while (valueStream != null) {
-
-            String containerString =
-                "\n\nContainer: " + key + " on " + thisNodeFile.getPath().getName();
-            out.println(containerString);
-            out.println(StringUtils.repeat("=", containerString.length()));
-            while (true) {
-              try {
-                LogReader.readAContainerLogsForALogType(valueStream, out,
-                  thisNodeFile.getModificationTime());
-                foundAnyLogs = true;
-              } catch (EOFException eof) {
-                break;
+            PrintStream out = createPrintStream(localDir,
+                thisNodeFile.getPath().getName(), key.toString());
+            try {
+              String containerString =
+                  "\n\nContainer: " + key + " on "
+                  + thisNodeFile.getPath().getName();
+              out.println(containerString);
+              out.println(StringUtils.repeat("=", containerString.length()));
+              while (true) {
+                try {
+                  if (logTypes == null || logTypes.isEmpty()) {
+                    LogReader.readAContainerLogsForALogType(valueStream, out,
+                        thisNodeFile.getModificationTime(),
+                        options.getBytes());
+                    foundAnyLogs = true;
+                  } else {
+                    int result = LogReader.readContainerLogsForALogType(
+                        valueStream, out, thisNodeFile.getModificationTime(),
+                        logTypes, options.getBytes());
+                    if (result == 0) {
+                      foundAnyLogs = true;
+                    }
+                  }
+                } catch (EOFException eof) {
+                  break;
+                }
               }
+            } finally {
+              closePrintStream(out);
             }
 
             // Next container
@@ -283,7 +393,7 @@ public class LogCLIHelpers implements Configurable {
         }
       }
     }
-    if (! foundAnyLogs) {
+    if (!foundAnyLogs) {
       emptyLogDir(getRemoteAppLogDir(appId, appOwner).toString());
       return -1;
     }
@@ -291,10 +401,13 @@ public class LogCLIHelpers implements Configurable {
   }
 
   @Private
-  public void printLogMetadata(ApplicationId appId,
-      String containerIdStr, String nodeId, String appOwner,
+  public void printLogMetadata(ContainerLogsRequest options,
       PrintStream out, PrintStream err)
       throws IOException {
+    ApplicationId appId = options.getAppId();
+    String appOwner = options.getAppOwner();
+    String nodeId = options.getNodeId();
+    String containerIdStr = options.getContainerId();
     boolean getAllContainers = (containerIdStr == null);
     String nodeIdStr = (nodeId == null) ? null
         : LogAggregationUtils.getNodeString(nodeId);
@@ -365,8 +478,10 @@ public class LogCLIHelpers implements Configurable {
   }
 
   @Private
-  public void printNodesList(ApplicationId appId, String appOwner,
+  public void printNodesList(ContainerLogsRequest options,
       PrintStream out, PrintStream err) throws IOException {
+    ApplicationId appId = options.getAppId();
+    String appOwner = options.getAppOwner();
     RemoteIterator<FileStatus> nodeFiles = getRemoteNodeFileDir(
         appId, appOwner);
     if (nodeFiles == null) {
@@ -398,6 +513,9 @@ public class LogCLIHelpers implements Configurable {
           getConf()).listStatus(remoteAppLogDir);
     } catch (FileNotFoundException fnf) {
       logDirNotExist(remoteAppLogDir.toString());
+    } catch (AccessControlException | AccessDeniedException ace) {
+      logDirNoAccessPermission(remoteAppLogDir.toString(), appOwner,
+        ace.getMessage());
     }
     return nodeFiles;
   }
@@ -426,7 +544,7 @@ public class LogCLIHelpers implements Configurable {
 
   private static void containerLogNotFound(String containerId) {
     System.err.println("Logs for container " + containerId
-      + " are not present in this log-file.");
+        + " are not present in this log-file.");
   }
 
   private static void logDirNotExist(String remoteAppLogDir) {
@@ -436,5 +554,93 @@ public class LogCLIHelpers implements Configurable {
 
   private static void emptyLogDir(String remoteAppLogDir) {
     System.err.println(remoteAppLogDir + " does not have any log files.");
+  }
+
+  private static void logDirNoAccessPermission(String remoteAppLogDir,
+      String appOwner, String errorMessage) throws IOException {
+    System.err.println("Guessed logs' owner is " + appOwner
+        + " and current user "
+        + UserGroupInformation.getCurrentUser().getUserName() + " does not "
+        + "have permission to access " + remoteAppLogDir
+        + ". Error message found: " + errorMessage);
+  }
+
+  @Private
+  public PrintStream createPrintStream(String localDir, String nodeId,
+      String containerId) throws IOException {
+    PrintStream out = System.out;
+    if(localDir != null && !localDir.isEmpty()) {
+      Path nodePath = new Path(localDir, LogAggregationUtils
+          .getNodeString(nodeId));
+      Files.createDirectories(Paths.get(nodePath.toString()));
+      Path containerLogPath = new Path(nodePath, containerId);
+      out = new PrintStream(containerLogPath.toString(), "UTF-8");
+    }
+    return out;
+  }
+
+  public void closePrintStream(PrintStream out) {
+    if (out != System.out) {
+      IOUtils.closeQuietly(out);
+    }
+  }
+
+  @Private
+  public Set<String> listContainerLogs(ContainerLogsRequest options)
+      throws IOException {
+    Set<String> logTypes = new HashSet<String>();
+    ApplicationId appId = options.getAppId();
+    String appOwner = options.getAppOwner();
+    String nodeId = options.getNodeId();
+    String containerIdStr = options.getContainerId();
+    boolean getAllContainers = (containerIdStr == null);
+    String nodeIdStr = (nodeId == null) ? null
+        : LogAggregationUtils.getNodeString(nodeId);
+    RemoteIterator<FileStatus> nodeFiles = getRemoteNodeFileDir(
+        appId, appOwner);
+    if (nodeFiles == null) {
+      return logTypes;
+    }
+    while (nodeFiles.hasNext()) {
+      FileStatus thisNodeFile = nodeFiles.next();
+      if (nodeIdStr != null) {
+        if (!thisNodeFile.getPath().getName().contains(nodeIdStr)) {
+          continue;
+        }
+      }
+      if (!thisNodeFile.getPath().getName()
+          .endsWith(LogAggregationUtils.TMP_FILE_SUFFIX)) {
+        AggregatedLogFormat.LogReader reader =
+            new AggregatedLogFormat.LogReader(getConf(),
+            thisNodeFile.getPath());
+        try {
+          DataInputStream valueStream;
+          LogKey key = new LogKey();
+          valueStream = reader.next(key);
+          while (valueStream != null) {
+            if (getAllContainers || (key.toString().equals(containerIdStr))) {
+              while (true) {
+                try {
+                  String logFile = LogReader.readContainerMetaDataAndSkipData(
+                      valueStream, null);
+                  logTypes.add(logFile);
+                } catch (EOFException eof) {
+                  break;
+                }
+              }
+              if (!getAllContainers) {
+                break;
+              }
+            }
+            // Next container
+            key = new LogKey();
+            valueStream = reader.next(key);
+          }
+        } finally {
+          reader.close();
+        }
+      }
+    }
+    return logTypes;
   }
 }

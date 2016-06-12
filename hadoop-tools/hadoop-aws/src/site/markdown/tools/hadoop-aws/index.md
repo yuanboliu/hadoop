@@ -14,6 +14,10 @@
 
 # Hadoop-AWS module: Integration with Amazon Web Services
 
+<!-- MACRO{toc|fromDepth=0|toDepth=5} -->
+
+## Overview
+
 The `hadoop-aws` module provides support for AWS integration. The generated
 JAR file, `hadoop-aws.jar` also declares a transitive dependency on all
 external artifacts which are needed for this support —enabling downstream
@@ -22,18 +26,19 @@ applications to easily use this support.
 To make it part of Apache Hadoop's default classpath, simply make sure that
 HADOOP_OPTIONAL_TOOLS in hadoop-env.sh has 'hadoop-aws' in the list.
 
-Features
+### Features
 
-1. The "classic" `s3:` filesystem for storing objects in Amazon S3 Storage
+1. The "classic" `s3:` filesystem for storing objects in Amazon S3 Storage.
+**NOTE: `s3:` is being phased out. Use `s3n:` or `s3a:` instead.**
 1. The second-generation, `s3n:` filesystem, making it easy to share
-data between hadoop and other applications via the S3 object store
+data between hadoop and other applications via the S3 object store.
 1. The third generation, `s3a:` filesystem. Designed to be a switch in
 replacement for `s3n:`, this filesystem binding supports larger files and promises
 higher performance.
 
 The specifics of using these filesystems are documented below.
 
-## Warning #1: Object Stores are not filesystems.
+### Warning #1: Object Stores are not filesystems.
 
 Amazon S3 is an example of "an object store". In order to achieve scalability
 and especially high availability, S3 has —as many other cloud object stores have
@@ -50,14 +55,14 @@ recursive file-by-file operations. They take time at least proportional to
 the number of files, during which time partial updates may be visible. If
 the operations are interrupted, the filesystem is left in an intermediate state.
 
-## Warning #2: Because Object stores don't track modification times of directories,
+### Warning #2: Because Object stores don't track modification times of directories,
 features of Hadoop relying on this can have unexpected behaviour. E.g. the
 AggregatedLogDeletionService of YARN will not remove the appropriate logfiles.
 
 For further discussion on these topics, please consult
 [The Hadoop FileSystem API Definition](../../../hadoop-project-dist/hadoop-common/filesystem/index.html).
 
-## Warning #3: your AWS credentials are valuable
+### Warning #3: your AWS credentials are valuable
 
 Your AWS credentials not only pay for services, they offer read and write
 access to the data. Anyone with the credentials can not only read your datasets
@@ -101,6 +106,29 @@ If you do any of these: change your credentials immediately!
 
 ### Other properties
 
+    <property>
+      <name>fs.s3.buffer.dir</name>
+      <value>${hadoop.tmp.dir}/s3</value>
+      <description>Determines where on the local filesystem the s3:/s3n: filesystem
+      should store files before sending them to S3
+      (or after retrieving them from S3).
+      </description>
+    </property>
+
+    <property>
+      <name>fs.s3.maxRetries</name>
+      <value>4</value>
+      <description>The maximum number of retries for reading or writing files to
+        S3, before we signal failure to the application.
+      </description>
+    </property>
+
+    <property>
+      <name>fs.s3.sleepTimeSeconds</name>
+      <value>10</value>
+      <description>The number of seconds to sleep between each S3 retry.
+      </description>
+    </property>
 
     <property>
       <name>fs.s3n.block.size</name>
@@ -138,7 +166,7 @@ If you do any of these: change your credentials immediately!
       <name>fs.s3n.server-side-encryption-algorithm</name>
       <value></value>
       <description>Specify a server-side encryption algorithm for S3.
-      The default is NULL, and the only other currently allowable value is AES256.
+      Unset by default, and the only other currently allowable value is AES256.
       </description>
     </property>
 
@@ -149,23 +177,99 @@ If you do any of these: change your credentials immediately!
 
     <property>
       <name>fs.s3a.access.key</name>
-      <description>AWS access key ID. Omit for Role-based authentication.</description>
+      <description>AWS access key ID. Omit for IAM role-based or provider-based authentication.</description>
     </property>
 
     <property>
       <name>fs.s3a.secret.key</name>
-      <description>AWS secret key. Omit for Role-based authentication.</description>
+      <description>AWS secret key. Omit for IAM role-based or provider-based authentication.</description>
+    </property>
+
+    <property>
+      <name>fs.s3a.aws.credentials.provider</name>
+      <description>
+        Class name of a credentials provider that implements
+        com.amazonaws.auth.AWSCredentialsProvider.  Omit if using access/secret keys
+        or another authentication mechanism.  The specified class must provide an
+        accessible constructor accepting java.net.URI and
+        org.apache.hadoop.conf.Configuration, or an accessible default constructor.
+        Specifying org.apache.hadoop.fs.s3a.AnonymousAWSCredentialsProvider allows
+        anonymous access to a publicly accessible S3 bucket without any credentials.
+        Please note that allowing anonymous access to an S3 bucket compromises
+        security and therefore is unsuitable for most use cases.  It can be useful
+        for accessing public data sets without requiring AWS credentials.
+      </description>
+    </property>
+
+    <property>
+      <name>fs.s3a.session.token</name>
+      <description>Session token, when using org.apache.hadoop.fs.s3a.TemporaryAWSCredentialsProvider as the providers.</description>
+    </property>
+
+#### Authentication methods
+
+The standard way to authenticate is with an access key and secret key using the
+properties above. You can also avoid configuring credentials if the EC2
+instances in your cluster are configured with IAM instance profiles that grant
+the appropriate S3 access.
+
+A temporary set of credentials can also be obtained from Amazon STS; these
+consist of an access key, a secret key, and a session token. To use these
+temporary credentials you must include the `aws-java-sdk-sts` JAR in your
+classpath (consult the POM for the current version) and set the
+`TemporaryAWSCredentialsProvider` class as the provider. The session key
+must be set in the property `fs.s3a.session.token` —and the access and secret
+key properties to those of this temporary session.
+
+    <property>
+      <name>fs.s3a.aws.credentials.provider</name>
+      <value>org.apache.hadoop.fs.s3a.TemporaryAWSCredentialsProvider</value>
+    </property>
+
+    <property>
+      <name>fs.s3a.access.key</name>
+      <value>SESSION-ACCESS-KEY</value>
+    </property>
+
+    <property>
+      <name>fs.s3a.secret.key</name>
+      <value>SESSION-SECRET-KEY</value>
+    </property>
+
+    <property>
+      <name>fs.s3a.session.token</name>
+      <value>SECRET-SESSION-TOKEN</value>
     </property>
 
 #### Protecting the AWS Credentials in S3A
 
-To protect these credentials from prying eyes, it is recommended that you use
+To protect the access/secret keys from prying eyes, it is recommended that you
+use either IAM role-based authentication (such as EC2 instance profile) or
 the credential provider framework securely storing them and accessing them
- through configuration. The following describes its use for AWS credentials
-in S3A FileSystem.
+through configuration. The following describes using the latter for AWS
+credentials in S3AFileSystem.
 
 For additional reading on the credential provider API see:
 [Credential Provider API](../../../hadoop-project-dist/hadoop-common/CredentialProviderAPI.html).
+
+#### Authenticating via environment variables
+
+S3A supports configuration via [the standard AWS environment variables](http://docs.aws.amazon.com/cli/latest/userguide/cli-chap-getting-started.html#cli-environment).
+
+The core environment variables are for the access key and associated secret:
+
+```
+export AWS_ACCESS_KEY_ID=my.aws.key
+export AWS_SECRET_ACCESS_KEY=my.secret.key
+```
+
+These environment variables can be used to set the authentication credentials
+instead of properties in the Hadoop configuration. *Important:* these
+environment variables are not propagated from client to server when
+YARN applications are launched. That is: having the AWS environment variables
+set when an application is launched will not permit the launched application
+to access S3 resources. The environment variables must (somehow) be set
+on the hosts/processes where the work is executed.
 
 ##### End to End Steps for Distcp and S3 with Credential Providers
 
@@ -359,10 +463,39 @@ this capability.
     </property>
 
     <property>
+      <name>fs.s3a.server-side-encryption-algorithm</name>
+      <description>Specify a server-side encryption algorithm for s3a: file system.
+        Unset by default, and the only other currently allowable value is AES256.
+      </description>
+    </property>
+
+    <property>
       <name>fs.s3a.buffer.dir</name>
       <value>${hadoop.tmp.dir}/s3a</value>
       <description>Comma separated list of directories that will be used to buffer file
         uploads to. No effect if fs.s3a.fast.upload is true.</description>
+    </property>
+
+    <property>
+      <name>fs.s3a.block.size</name>
+      <value>33554432</value>
+      <description>Block size to use when reading files using s3a: file system.
+      </description>
+    </property>
+
+    <property>
+      <name>fs.s3a.user.agent.prefix</name>
+      <value></value>
+      <description>
+        Sets a custom value that will be prepended to the User-Agent header sent in
+        HTTP requests to the S3 back-end by S3AFileSystem.  The User-Agent header
+        always includes the Hadoop version number followed by a string generated by
+        the AWS SDK.  An example is "User-Agent: Hadoop 2.8.0, aws-sdk-java/1.10.6".
+        If this optional property is set, then its value is prepended to create a
+        customized User-Agent.  For example, if this configuration property was set
+        to "MyApp", then an example of the resulting User-Agent would be
+        "User-Agent: MyApp, Hadoop 2.8.0, aws-sdk-java/1.10.6".
+      </description>
     </property>
 
     <property>
@@ -375,6 +508,14 @@ this capability.
       <name>fs.AbstractFileSystem.s3a.impl</name>
       <value>org.apache.hadoop.fs.s3a.S3A</value>
       <description>The implementation class of the S3A AbstractFileSystem.</description>
+    </property>
+
+    <property>
+      <name>fs.s3a.readahead.range</name>
+      <value>65536</value>
+      <description>Bytes to read ahead during a seek() before closing and
+      re-opening the S3 HTTP connection. This option will be overridden if
+      any call to setReadahead() is made to an open stream.</description>
     </property>
 
 ### S3AFastOutputStream
@@ -406,7 +547,7 @@ settings could cause memory overflow. Up to `fs.s3a.threads.max` parallel
 (part)uploads are active. Furthermore, up to `fs.s3a.max.total.tasks`
 additional part(uploads) can be waiting (and thus memory buffers are created).
 The memory buffer is uploaded as a single upload if it is not larger than
-`fs.s3a.multipart.threshold`. Else, a multi-part upload is initiatated and
+`fs.s3a.multipart.threshold`. Else, a multi-part upload is initiated and
 parts of size `fs.s3a.multipart.size` are used to protect against overflowing
 the available memory. These settings should be tuned to the envisioned
 workflow (some large files, many small ones, ...) and the physical
@@ -495,18 +636,25 @@ Example:
 
       <property>
         <name>fs.s3a.access.key</name>
-        <description>AWS access key ID. Omit for Role-based authentication.</description>
+        <description>AWS access key ID. Omit for IAM role-based authentication.</description>
         <value>DONOTCOMMITTHISKEYTOSCM</value>
       </property>
   
       <property>
         <name>fs.s3a.secret.key</name>
-        <description>AWS secret key. Omit for Role-based authentication.</description>
+        <description>AWS secret key. Omit for IAM role-based authentication.</description>
         <value>DONOTEVERSHARETHISSECRETKEY!</value>
       </property>
+
+      <property>
+        <name>test.sts.endpoint</name>
+        <description>Specific endpoint to use for STS requests.</description>
+        <value>sts.amazonaws.com</value>
+      </property>
+
     </configuration>
 
-## File `contract-test-options.xml`
+### File `contract-test-options.xml`
 
 The file `hadoop-tools/hadoop-aws/src/test/resources/contract-test-options.xml`
 must be created and configured for the test filesystems.
@@ -518,7 +666,7 @@ The standard S3 authentication details must also be provided. This can be
 through copy-and-paste of the `auth-keys.xml` credentials, or it can be
 through direct XInclude inclusion.
 
-#### s3://
+### s3://
 
 The filesystem name must be defined in the property `fs.contract.test.fs.s3`. 
 
@@ -587,7 +735,7 @@ Example:
     <configuration>
     
       <include xmlns="http://www.w3.org/2001/XInclude"
-        href="auth-keys.xml"/>
+        href="/home/testuser/.ssh/auth-keys.xml"/>
     
       <property>
         <name>fs.contract.test.fs.s3</name>
@@ -607,7 +755,146 @@ Example:
 
     </configuration>
 
-This example pulls in the `auth-keys.xml` file for the credentials. 
+This example pulls in the `~/.ssh/auth-keys.xml` file for the credentials.
 This provides one single place to keep the keys up to date —and means
 that the file `contract-test-options.xml` does not contain any
-secret credentials itself.
+secret credentials itself. As the auth keys XML file is kept out of the
+source code tree, it is not going to get accidentally committed.
+
+### Running Tests against non-AWS storage infrastructures
+
+### S3A session tests
+
+The test `TestS3ATemporaryCredentials` requests a set of temporary
+credentials from the STS service, then uses them to authenticate with S3.
+
+If an S3 implementation does not support STS, then the functional test
+cases must be disabled:
+
+        <property>
+          <name>test.fs.s3a.sts.enabled</name>
+          <value>false</value>
+        </property>
+
+These tests reqest a temporary set of credentials from the STS service endpoint.
+An alternate endpoint may be defined in `test.fs.s3a.sts.endpoint`.
+
+        <property>
+          <name>test.fs.s3a.sts.endpoint</name>
+          <value>https://sts.example.org/</value>
+        </property>
+
+The default is ""; meaning "use the amazon default value".
+
+#### CSV Data source
+
+The `TestS3AInputStreamPerformance` tests require read access to a multi-MB
+text file. The default file for these tests is one published by amazon,
+[s3a://landsat-pds.s3.amazonaws.com/scene_list.gz](http://landsat-pds.s3.amazonaws.com/scene_list.gz).
+This is a gzipped CSV index of other files which amazon serves for open use.
+
+The path to this object is set in the option `fs.s3a.scale.test.csvfile`:
+
+    <property>
+      <name>fs.s3a.scale.test.csvfile</name>
+      <value>s3a://landsat-pds/scene_list.gz</value>
+    </property>
+
+1. If the option is not overridden, the default value is used. This
+is hosted in Amazon's US-east datacenter.
+1. If the property is empty, tests which require it will be skipped.
+1. If the data cannot be read for any reason then the test will fail.
+1. If the property is set to a different path, then that data must be readable
+and "sufficiently" large.
+
+To test on different S3 endpoints, or alternate infrastructures supporting
+the same APIs, the option `fs.s3a.scale.test.csvfile` must therefore be
+set to " ", or an object of at least 10MB is uploaded to the object store, and
+the `fs.s3a.scale.test.csvfile` option set to its path.
+
+      <property>
+        <name>fs.s3a.scale.test.csvfile</name>
+        <value> </value>
+      </property>
+
+
+#### Scale test operation count
+
+Some scale tests perform multiple operations (such as creating many directories).
+
+The exact number of operations to perform is configurable in the option
+`scale.test.operation.count`
+
+      <property>
+        <name>scale.test.operation.count</name>
+        <value>10</value>
+      </property>
+
+Larger values generate more load, and are recommended when testing locally,
+or in batch runs.
+
+Smaller values results in faster test runs, especially when the object
+store is a long way away.
+
+Operations which work on directories have a separate option: this controls
+the width and depth of tests creating recursive directories. Larger
+values create exponentially more directories, with consequent performance
+impact.
+
+      <property>
+        <name>scale.test.directory.count</name>
+        <value>2</value>
+      </property>
+
+DistCp tests targeting S3A support a configurable file size.  The default is
+10 MB, but the configuration value is expressed in KB so that it can be tuned
+smaller to achieve faster test runs.
+
+      <property>
+        <name>scale.test.distcp.file.size.kb</name>
+        <value>10240</value>
+      </property>
+
+### Running the Tests
+
+After completing the configuration, execute the test run through Maven.
+
+    mvn clean test
+
+It's also possible to execute multiple test suites in parallel by enabling the
+`parallel-tests` Maven profile.  The tests spend most of their time blocked on
+network I/O with the S3 service, so running in parallel tends to complete full
+test runs faster.
+
+    mvn -Pparallel-tests clean test
+
+Some tests must run with exclusive access to the S3 bucket, so even with the
+`parallel-tests` profile enabled, several test suites will run in serial in a
+separate Maven execution step after the parallel tests.
+
+By default, the `parallel-tests` profile runs 4 test suites concurrently.  This
+can be tuned by passing the `testsThreadCount` argument.
+
+    mvn -Pparallel-tests -DtestsThreadCount=8 clean test
+
+### Testing against non AWS S3 endpoints.
+
+The S3A filesystem is designed to work with storage endpoints which implement
+the S3 protocols to the extent that the amazon S3 SDK is capable of talking
+to it. We encourage testing against other filesystems and submissions of patches
+which address issues. In particular, we encourage testing of Hadoop release
+candidates, as these third-party endpoints get even less testing than the
+S3 endpoint itself.
+
+
+**Disabling the encryption tests**
+
+If the endpoint doesn't support server-side-encryption, these will fail
+
+      <property>
+        <name>test.fs.s3a.encryption.enabled</name>
+        <value>false</value>
+      </property>
+
+Encryption is only used for those specific test suites with `Encryption` in
+their classname.

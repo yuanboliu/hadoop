@@ -37,6 +37,7 @@ import org.apache.hadoop.hdfs.util.StripedBlockUtil;
 import org.apache.hadoop.hdfs.web.WebHdfsFileSystem.WebHdfsInputStream;
 import org.apache.hadoop.io.IOUtils;
 import org.apache.hadoop.io.erasurecode.CodecUtil;
+import org.apache.hadoop.io.erasurecode.ErasureCoderOptions;
 import org.apache.hadoop.io.erasurecode.rawcoder.RawErasureEncoder;
 import org.junit.Assert;
 
@@ -74,7 +75,7 @@ public class StripedFileTestUtil {
   static int numDNs = NUM_DATA_BLOCKS + NUM_PARITY_BLOCKS + 2;
   static int BLOCK_GROUP_SIZE = blockSize * NUM_DATA_BLOCKS;
 
-  static byte[] generateBytes(int cnt) {
+  public static byte[] generateBytes(int cnt) {
     byte[] bytes = new byte[cnt];
     for (int i = 0; i < cnt; i++) {
       bytes[i] = getByte(i);
@@ -491,9 +492,12 @@ public class StripedFileTestUtil {
         System.arraycopy(tmp, 0, dataBytes[i], 0, tmp.length);
       }
     }
+
+    ErasureCoderOptions coderOptions = new ErasureCoderOptions(
+        dataBytes.length, parityBytes.length);
     final RawErasureEncoder encoder =
-        CodecUtil.createRSRawEncoder(conf, dataBytes.length, parityBytes.length,
-            TEST_EC_POLICY.getCodecName());
+        CodecUtil.createRawEncoder(conf, TEST_EC_POLICY.getCodecName(),
+            coderOptions);
     encoder.encode(dataBytes, expectedParityBytes);
     for (int i = 0; i < parityBytes.length; i++) {
       if (checkSet.contains(i + dataBytes.length)){
@@ -501,5 +505,35 @@ public class StripedFileTestUtil {
             parityBytes[i]);
       }
     }
+  }
+
+  /**
+   * Wait for the reconstruction to be finished when the file has
+   * corrupted blocks.
+   */
+  public static LocatedBlocks waitForReconstructionFinished(Path file,
+                                  DistributedFileSystem fs, int groupSize)
+      throws Exception {
+    final int attempts = 60;
+    for (int i = 0; i < attempts; i++) {
+      LocatedBlocks locatedBlocks = getLocatedBlocks(file, fs);
+      LocatedStripedBlock lastBlock =
+          (LocatedStripedBlock)locatedBlocks.getLastLocatedBlock();
+      DatanodeInfo[] storageInfos = lastBlock.getLocations();
+      if (storageInfos.length >= groupSize) {
+        return locatedBlocks;
+      }
+      Thread.sleep(1000);
+    }
+    throw new IOException("Time out waiting for EC block reconstruction.");
+  }
+
+  /**
+   * Get the located blocks of a file.
+   */
+  public static LocatedBlocks getLocatedBlocks(Path file,
+                                               DistributedFileSystem fs)
+      throws IOException {
+    return fs.getClient().getLocatedBlocks(file.toString(), 0, Long.MAX_VALUE);
   }
 }

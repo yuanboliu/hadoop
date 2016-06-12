@@ -122,10 +122,10 @@ public class AMRMClientImpl<T extends ContainerRequest> extends AMRMClient<T> {
   class ResourceReverseMemoryThenCpuComparator implements Comparator<Resource> {
     @Override
     public int compare(Resource arg0, Resource arg1) {
-      int mem0 = arg0.getMemory();
-      int mem1 = arg1.getMemory();
-      int cpu0 = arg0.getVirtualCores();
-      int cpu1 = arg1.getVirtualCores();
+      long mem0 = arg0.getMemorySize();
+      long mem1 = arg1.getMemorySize();
+      long cpu0 = arg0.getVirtualCores();
+      long cpu1 = arg1.getVirtualCores();
       if(mem0 == mem1) {
         if(cpu0 == cpu1) {
           return 0;
@@ -143,10 +143,10 @@ public class AMRMClientImpl<T extends ContainerRequest> extends AMRMClient<T> {
   }
   
   static boolean canFit(Resource arg0, Resource arg1) {
-    int mem0 = arg0.getMemory();
-    int mem1 = arg1.getMemory();
-    int cpu0 = arg0.getVirtualCores();
-    int cpu1 = arg1.getVirtualCores();
+    long mem0 = arg0.getMemorySize();
+    long mem1 = arg1.getMemorySize();
+    long cpu0 = arg0.getVirtualCores();
+    long cpu1 = arg1.getVirtualCores();
     
     return (mem0 <= mem1 && cpu0 <= cpu1);
   }
@@ -711,16 +711,6 @@ public class AMRMClientImpl<T extends ContainerRequest> extends AMRMClient<T> {
       throw new InvalidContainerRequestException(
           "Cannot specify more than two node labels"
               + " in a single node label expression");
-    }
-    
-    // Don't allow specify node label against ANY request
-    if ((containerRequest.getRacks() != null && 
-        (!containerRequest.getRacks().isEmpty()))
-        || 
-        (containerRequest.getNodes() != null && 
-        (!containerRequest.getNodes().isEmpty()))) {
-      throw new InvalidContainerRequestException(
-          "Cannot specify node label with rack and node");
     }
   }
 

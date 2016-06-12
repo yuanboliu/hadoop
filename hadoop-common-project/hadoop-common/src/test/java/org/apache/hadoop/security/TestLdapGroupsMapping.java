@@ -17,48 +17,80 @@
  */
 package org.apache.hadoop.security;
 
+import static org.apache.hadoop.security.LdapGroupsMapping.CONNECTION_TIMEOUT;
+import static org.apache.hadoop.security.LdapGroupsMapping.READ_TIMEOUT;
+import static org.apache.hadoop.test.GenericTestUtils.assertExceptionContains;
 import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
-import static org.mockito.Mockito.*;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.fail;
+import static org.mockito.Matchers.any;
+import static org.mockito.Matchers.anyString;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 import java.io.File;
 import java.io.FileWriter;
 import java.io.IOException;
 import java.io.Writer;
+import java.net.ServerSocket;
+import java.net.Socket;
 import java.util.Arrays;
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
 
 import javax.naming.CommunicationException;
 import javax.naming.NamingException;
 import javax.naming.directory.SearchControls;
-import javax.naming.directory.SearchResult;
 
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.Path;
+import org.apache.hadoop.io.IOUtils;
 import org.apache.hadoop.security.alias.CredentialProvider;
 import org.apache.hadoop.security.alias.CredentialProviderFactory;
 import org.apache.hadoop.security.alias.JavaKeyStoreProvider;
 import org.apache.hadoop.test.GenericTestUtils;
+
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 @SuppressWarnings("unchecked")
 public class TestLdapGroupsMapping extends TestLdapGroupsMappingBase {
+
+  private static final Logger LOG = LoggerFactory.getLogger(
+      TestLdapGroupsMapping.class);
+
+  /**
+   * To construct a LDAP InitialDirContext object, it will firstly initiate a
+   * protocol session to server for authentication. After a session is
+   * established, a method of authentication is negotiated between the server
+   * and the client. When the client is authenticated, the LDAP server will send
+   * a bind response, whose message contents are bytes as the
+   * {@link #AUTHENTICATE_SUCCESS_MSG}. After receiving this bind response
+   * message, the LDAP context is considered connected to the server and thus
+   * can issue query requests for determining group membership.
+   */
+  private static final byte[] AUTHENTICATE_SUCCESS_MSG =
+      {48, 12, 2, 1, 1, 97, 7, 10, 1, 0, 4, 0, 4, 0};
+
   @Before
   public void setupMocks() throws NamingException {
-    SearchResult mockUserResult = mock(SearchResult.class);
-    when(mockUserNamingEnum.nextElement()).thenReturn(mockUserResult);
-    when(mockUserResult.getNameInNamespace()).thenReturn("CN=some_user,DC=test,DC=com");
+    when(getUserSearchResult().getNameInNamespace()).
+        thenReturn("CN=some_user,DC=test,DC=com");
   }
   
   @Test
   public void testGetGroups() throws IOException, NamingException {
     // The search functionality of the mock context is reused, so we will
     // return the user NamingEnumeration first, and then the group
-    when(mockContext.search(anyString(), anyString(), any(Object[].class),
+    when(getContext().search(anyString(), anyString(), any(Object[].class),
         any(SearchControls.class)))
-        .thenReturn(mockUserNamingEnum, mockGroupNamingEnum);
+        .thenReturn(getUserNames(), getGroupNames());
     
     doTestGetGroups(Arrays.asList(testGroups), 2);
   }
@@ -67,10 +99,10 @@ public class TestLdapGroupsMapping extends TestLdapGroupsMappingBase {
   public void testGetGroupsWithConnectionClosed() throws IOException, NamingException {
     // The case mocks connection is closed/gc-ed, so the first search call throws CommunicationException,
     // then after reconnected return the user NamingEnumeration first, and then the group
-    when(mockContext.search(anyString(), anyString(), any(Object[].class),
+    when(getContext().search(anyString(), anyString(), any(Object[].class),
         any(SearchControls.class)))
         .thenThrow(new CommunicationException("Connection is closed"))
-        .thenReturn(mockUserNamingEnum, mockGroupNamingEnum);
+        .thenReturn(getUserNames(), getGroupNames());
     
     // Although connection is down but after reconnected it still should retrieve the result groups
     doTestGetGroups(Arrays.asList(testGroups), 1 + 2); // 1 is the first failure call 
@@ -79,7 +111,7 @@ public class TestLdapGroupsMapping extends TestLdapGroupsMappingBase {
   @Test
   public void testGetGroupsWithLdapDown() throws IOException, NamingException {
     // This mocks the case where Ldap server is down, and always throws CommunicationException 
-    when(mockContext.search(anyString(), anyString(), any(Object[].class),
+    when(getContext().search(anyString(), anyString(), any(Object[].class),
         any(SearchControls.class)))
         .thenThrow(new CommunicationException("Connection is closed"));
     
@@ -92,16 +124,17 @@ public class TestLdapGroupsMapping extends TestLdapGroupsMappingBase {
     Configuration conf = new Configuration();
     // Set this, so we don't throw an exception
     conf.set(LdapGroupsMapping.LDAP_URL_KEY, "ldap://test");
-    
-    mappingSpy.setConf(conf);
+
+    LdapGroupsMapping groupsMapping = getGroupsMapping();
+    groupsMapping.setConf(conf);
     // Username is arbitrary, since the spy is mocked to respond the same,
     // regardless of input
-    List<String> groups = mappingSpy.getGroups("some_user");
+    List<String> groups = groupsMapping.getGroups("some_user");
     
     Assert.assertEquals(expectedGroups, groups);
     
     // We should have searched for a user, and then two groups
-    verify(mockContext, times(searchTimes)).search(anyString(),
+    verify(getContext(), times(searchTimes)).search(anyString(),
                                          anyString(),
                                          any(Object[].class),
                                          any(SearchControls.class));
@@ -173,4 +206,114 @@ public class TestLdapGroupsMapping extends TestLdapGroupsMappingBase {
     // extract password
     Assert.assertEquals("", mapping.getPassword(conf,"invalid-alias", ""));
   }
+
+  /**
+   * Test that if the {@link LdapGroupsMapping#CONNECTION_TIMEOUT} is set in the
+   * configuration, the LdapGroupsMapping connection will timeout by this value
+   * if it does not get a LDAP response from the server.
+   * @throws IOException
+   * @throws InterruptedException
+   */
+  @Test (timeout = 30000)
+  public void testLdapConnectionTimeout()
+      throws IOException, InterruptedException {
+    final int connectionTimeoutMs = 3 * 1000; // 3s
+    try (ServerSocket serverSock = new ServerSocket(0)) {
+      final CountDownLatch finLatch = new CountDownLatch(1);
+
+      // Below we create a LDAP server which will accept a client request;
+      // but it will never reply to the bind (connect) request.
+      // Client of this LDAP server is expected to get a connection timeout.
+      final Thread ldapServer = new Thread(new Runnable() {
+        @Override
+        public void run() {
+          try {
+            try (Socket ignored = serverSock.accept()) {
+              finLatch.await();
+            }
+          } catch (Exception e) {
+            e.printStackTrace();
+          }
+        }
+      });
+      ldapServer.start();
+
+      final LdapGroupsMapping mapping = new LdapGroupsMapping();
+      final Configuration conf = new Configuration();
+      conf.set(LdapGroupsMapping.LDAP_URL_KEY,
+          "ldap://localhost:" + serverSock.getLocalPort());
+      conf.setInt(CONNECTION_TIMEOUT, connectionTimeoutMs);
+      mapping.setConf(conf);
+
+      try {
+        mapping.doGetGroups("hadoop");
+        fail("The LDAP query should have timed out!");
+      } catch (NamingException ne) {
+        LOG.debug("Got the exception while LDAP querying: ", ne);
+        assertExceptionContains("LDAP response read timed out, timeout used:" +
+            connectionTimeoutMs + "ms", ne);
+        assertFalse(ne.getMessage().contains("remaining name"));
+      } finally {
+        finLatch.countDown();
+      }
+      ldapServer.join();
+    }
+  }
+
+  /**
+   * Test that if the {@link LdapGroupsMapping#READ_TIMEOUT} is set in the
+   * configuration, the LdapGroupsMapping query will timeout by this value if
+   * it does not get a LDAP response from the server.
+   *
+   * @throws IOException
+   * @throws InterruptedException
+   */
+  @Test(timeout = 30000)
+  public void testLdapReadTimeout() throws IOException, InterruptedException {
+    final int readTimeoutMs = 4 * 1000; // 4s
+    try (ServerSocket serverSock = new ServerSocket(0)) {
+      final CountDownLatch finLatch = new CountDownLatch(1);
+
+      // Below we create a LDAP server which will accept a client request,
+      // authenticate it successfully; but it will never reply to the following
+      // query request.
+      // Client of this LDAP server is expected to get a read timeout.
+      final Thread ldapServer = new Thread(new Runnable() {
+        @Override
+        public void run() {
+          try {
+            try (Socket clientSock = serverSock.accept()) {
+              IOUtils.skipFully(clientSock.getInputStream(), 1);
+              clientSock.getOutputStream().write(AUTHENTICATE_SUCCESS_MSG);
+              finLatch.await();
+            }
+          } catch (Exception e) {
+            e.printStackTrace();
+          }
+        }
+      });
+      ldapServer.start();
+
+      final LdapGroupsMapping mapping = new LdapGroupsMapping();
+      final Configuration conf = new Configuration();
+      conf.set(LdapGroupsMapping.LDAP_URL_KEY,
+          "ldap://localhost:" + serverSock.getLocalPort());
+      conf.setInt(READ_TIMEOUT, readTimeoutMs);
+      mapping.setConf(conf);
+
+      try {
+        mapping.doGetGroups("hadoop");
+        fail("The LDAP query should have timed out!");
+      } catch (NamingException ne) {
+        LOG.debug("Got the exception while LDAP querying: ", ne);
+        assertExceptionContains("LDAP response read timed out, timeout used:" +
+            readTimeoutMs + "ms", ne);
+        assertExceptionContains("remaining name", ne);
+      } finally {
+        finLatch.countDown();
+      }
+      ldapServer.join();
+    }
+  }
+
 }

@@ -214,7 +214,8 @@ public final class LocalScheduler extends AbstractRequestInterceptor {
     PartitionedResourceRequests partitionedRequests =
         new PartitionedResourceRequests();
     for (ResourceRequest rr : askList) {
-      if (rr.getExecutionType() == ExecutionType.OPPORTUNISTIC) {
+      if (rr.getExecutionTypeRequest().getExecutionType() ==
+          ExecutionType.OPPORTUNISTIC) {
         partitionedRequests.getOpportunistic().add(rr);
       } else {
         partitionedRequests.getGuaranteed().add(rr);
@@ -337,8 +338,10 @@ public final class LocalScheduler extends AbstractRequestInterceptor {
   @Override
   public DistSchedAllocateResponse allocateForDistributedScheduling
       (AllocateRequest request) throws YarnException, IOException {
-    LOG.info("Forwarding allocate request to the" +
-        "Distributed Scheduler Service on YARN RM");
+    if (LOG.isDebugEnabled()) {
+      LOG.debug("Forwarding allocate request to the" +
+          "Distributed Scheduler Service on YARN RM");
+    }
     // Partition requests into GUARANTEED and OPPORTUNISTIC reqs
     PartitionedResourceRequests partitionedAsks = partitionAskList(request
         .getAskList());

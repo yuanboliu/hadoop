@@ -53,7 +53,6 @@ import org.apache.hadoop.security.token.SecretManager.InvalidToken;
 import org.apache.hadoop.security.token.TokenIdentifier;
 import org.apache.hadoop.service.CompositeService;
 import org.apache.hadoop.service.Service;
-import org.apache.hadoop.service.ServiceStateChangeListener;
 import org.apache.hadoop.util.StringUtils;
 import org.apache.hadoop.yarn.api.ContainerManagementProtocol;
 import org.apache.hadoop.yarn.api.protocolrecords.GetContainerStatusesRequest;
@@ -61,11 +60,13 @@ import org.apache.hadoop.yarn.api.protocolrecords.GetContainerStatusesResponse;
 import org.apache.hadoop.yarn.api.protocolrecords.IncreaseContainersResourceRequest;
 import org.apache.hadoop.yarn.api.protocolrecords.IncreaseContainersResourceResponse;
 import org.apache.hadoop.yarn.api.protocolrecords.SignalContainerRequest;
+import org.apache.hadoop.yarn.api.protocolrecords.SignalContainerResponse;
 import org.apache.hadoop.yarn.api.protocolrecords.StartContainerRequest;
 import org.apache.hadoop.yarn.api.protocolrecords.StartContainersRequest;
 import org.apache.hadoop.yarn.api.protocolrecords.StartContainersResponse;
 import org.apache.hadoop.yarn.api.protocolrecords.StopContainersRequest;
 import org.apache.hadoop.yarn.api.protocolrecords.StopContainersResponse;
+import org.apache.hadoop.yarn.api.protocolrecords.impl.pb.SignalContainerResponsePBImpl;
 import org.apache.hadoop.yarn.api.records.ApplicationAccessType;
 import org.apache.hadoop.yarn.api.records.ApplicationId;
 import org.apache.hadoop.yarn.api.records.ContainerExitStatus;
@@ -95,6 +96,7 @@ import org.apache.hadoop.yarn.proto.YarnServerNodemanagerRecoveryProtos.Containe
 import org.apache.hadoop.yarn.security.ContainerTokenIdentifier;
 import org.apache.hadoop.yarn.security.NMTokenIdentifier;
 import org.apache.hadoop.yarn.server.api.ContainerType;
+import org.apache.hadoop.yarn.server.api.records.ContainerQueuingLimit;
 import org.apache.hadoop.yarn.server.nodemanager.CMgrCompletedAppsEvent;
 import org.apache.hadoop.yarn.server.nodemanager.CMgrCompletedContainersEvent;
 import org.apache.hadoop.yarn.server.nodemanager.CMgrDecreaseContainersResourceEvent;
@@ -147,11 +149,11 @@ import org.apache.hadoop.yarn.server.utils.YarnServerSecurityUtils;
 
 import com.google.common.annotations.VisibleForTesting;
 import com.google.protobuf.ByteString;
+
 import org.apache.hadoop.yarn.util.resource.Resources;
 
 public class ContainerManagerImpl extends CompositeService implements
-    ServiceStateChangeListener, ContainerManagementProtocol,
-    EventHandler<ContainerManagerEvent> {
+    ContainerManager {
 
   /**
    * Extra duration to wait for applications to be killed on shutdown.
@@ -330,12 +332,11 @@ public class ContainerManagerImpl extends CompositeService implements
 
     LOG.info("Recovering application " + appId);
     ApplicationImpl app = new ApplicationImpl(dispatcher, p.getUser(), appId,
-        creds, context);
+        creds, context, p.getAppLogAggregationInitedTime());
     context.getApplications().put(appId, app);
     app.handle(new ApplicationInitEvent(appId, acls, logAggregationContext));
   }
 
-  @SuppressWarnings("unchecked")
   private void recoverContainer(RecoveredContainerState rcs)
       throws IOException {
     StartContainerRequest req = rcs.getStartRequest();
@@ -350,14 +351,7 @@ public class ContainerManagerImpl extends CompositeService implements
         + " with exit code " + rcs.getExitCode());
 
     if (context.getApplications().containsKey(appId)) {
-      Credentials credentials =
-          YarnServerSecurityUtils.parseCredentials(launchContext);
-      Container container = new ContainerImpl(getConfig(), dispatcher,
-          req.getContainerLaunchContext(),
-          credentials, metrics, token, context, rcs);
-      context.getContainers().put(containerId, container);
-      dispatcher.getEventHandler().handle(
-          new ApplicationContainerInitEvent(container));
+      recoverActiveContainer(launchContext, token, rcs);
     } else {
       if (rcs.getStatus() != RecoveredContainerStatus.COMPLETED) {
         LOG.warn(containerId + " has no corresponding application!");
@@ -365,6 +359,22 @@ public class ContainerManagerImpl extends CompositeService implements
       LOG.info("Adding " + containerId + " to recently stopped containers");
       nodeStatusUpdater.addCompletedContainer(containerId);
     }
+  }
+
+  /**
+   * Recover a running container.
+   */
+  @SuppressWarnings("unchecked")
+  protected void recoverActiveContainer(
+      ContainerLaunchContext launchContext, ContainerTokenIdentifier token,
+      RecoveredContainerState rcs) throws IOException {
+    Credentials credentials = YarnServerSecurityUtils.parseCredentials(
+        launchContext);
+    Container container = new ContainerImpl(getConfig(), dispatcher,
+        launchContext, credentials, metrics, token, context, rcs);
+    context.getContainers().put(token.getContainerID(), container);
+    dispatcher.getEventHandler().handle(new ApplicationContainerInitEvent(
+        container));
   }
 
   private void waitForRecoveredContainers() throws InterruptedException {
@@ -402,6 +412,7 @@ public class ContainerManagerImpl extends CompositeService implements
     }
   }
 
+  @Override
   public ContainersMonitor getContainersMonitor() {
     return this.containersMonitor;
   }
@@ -811,8 +822,7 @@ public class ContainerManagerImpl extends CompositeService implements
           }
           performContainerPreStartChecks(nmTokenIdentifier, request,
               containerTokenIdentifier);
-          startContainerInternal(nmTokenIdentifier, containerTokenIdentifier,
-              request);
+          startContainerInternal(containerTokenIdentifier, request);
           succeededContainers.add(containerId);
         } catch (YarnException e) {
           failedContainers.put(containerId, SerializedException.newInstance(e));
@@ -908,7 +918,7 @@ public class ContainerManagerImpl extends CompositeService implements
   }
 
   @SuppressWarnings("unchecked")
-  protected void startContainerInternal(NMTokenIdentifier nmTokenIdentifier,
+  protected void startContainerInternal(
       ContainerTokenIdentifier containerTokenIdentifier,
       StartContainerRequest request) throws YarnException, IOException {
 
@@ -1373,16 +1383,7 @@ public class ContainerManagerImpl extends CompositeService implements
           (CMgrSignalContainersEvent) event;
       for (SignalContainerRequest request : containersSignalEvent
           .getContainersToSignal()) {
-        ContainerId containerId = request.getContainerId();
-        Container container = this.context.getContainers().get(containerId);
-        if (container != null) {
-          LOG.info(containerId + " signal request by ResourceManager.");
-          this.dispatcher.getEventHandler().handle(
-              new SignalContainersLauncherEvent(container,
-                  request.getCommand()));
-        } else {
-          LOG.info("Container " + containerId + " no longer exists");
-        }
+        internalSignalToContainer(request, "ResourceManager");
       }
       break;
     default:
@@ -1391,6 +1392,7 @@ public class ContainerManagerImpl extends CompositeService implements
     }
   }
 
+  @Override
   public void setBlockNewContainerRequests(boolean blockNewContainerRequests) {
     this.blockNewContainerRequests.set(blockNewContainerRequests);
   }
@@ -1426,5 +1428,34 @@ public class ContainerManagerImpl extends CompositeService implements
 
   protected boolean isServiceStopped() {
     return serviceStopped;
+  }
+
+  @Override
+  public void updateQueuingLimit(ContainerQueuingLimit queuingLimit) {
+    LOG.trace("Implementation does not support queuing of Containers !!");
+  }
+
+  @SuppressWarnings("unchecked")
+  @Override
+  public SignalContainerResponse signalToContainer(
+      SignalContainerRequest request) throws YarnException, IOException {
+    internalSignalToContainer(request, "Application Master");
+    return new SignalContainerResponsePBImpl();
+  }
+
+  @SuppressWarnings("unchecked")
+  private void internalSignalToContainer(SignalContainerRequest request,
+      String sentBy) {
+    ContainerId containerId = request.getContainerId();
+    Container container = this.context.getContainers().get(containerId);
+    if (container != null) {
+      LOG.info(containerId + " signal request " + request.getCommand()
+            + " by " + sentBy);
+      this.dispatcher.getEventHandler().handle(
+          new SignalContainersLauncherEvent(container,
+              request.getCommand()));
+    } else {
+      LOG.info("Container " + containerId + " no longer exists");
+    }
   }
 }

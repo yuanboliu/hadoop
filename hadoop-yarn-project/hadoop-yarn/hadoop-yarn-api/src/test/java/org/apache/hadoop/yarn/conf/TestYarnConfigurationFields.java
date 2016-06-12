@@ -92,6 +92,13 @@ public class TestYarnConfigurationFields extends TestConfigurationFieldsBase {
         .add(YarnConfiguration.DEFAULT_AMRM_PROXY_INTERCEPTOR_CLASS_PIPELINE);
     configurationPropsToSkipCompare.add(YarnConfiguration.CURATOR_LEADER_ELECTOR);
 
+    // Ignore blacklisting nodes for AM failures feature since it is still a
+    // "work in progress"
+    configurationPropsToSkipCompare.add(YarnConfiguration.
+        AM_SCHEDULING_NODE_BLACKLISTING_ENABLED);
+    configurationPropsToSkipCompare.add(YarnConfiguration.
+        AM_SCHEDULING_NODE_BLACKLISTING_DISABLE_THRESHOLD);
+
     // Ignore all YARN Application Timeline Service (version 1) properties
     configurationPrefixToSkipCompare.add("yarn.timeline-service.");
 
@@ -135,9 +142,19 @@ public class TestYarnConfigurationFields extends TestConfigurationFieldsBase {
     configurationPrefixToSkipCompare
         .add(YarnConfiguration.DIST_SCHEDULING_TOP_K);
     configurationPrefixToSkipCompare
-        .add(YarnConfiguration.DIST_SCHEDULING_TOP_K_COMPUTE_INT_MS);
+        .add(YarnConfiguration.NM_CONTAINER_QUEUING_SORTING_NODES_INTERVAL_MS);
     configurationPrefixToSkipCompare
-        .add(YarnConfiguration.DIST_SCHEDULING_TOP_K_COMPARATOR);
+        .add(YarnConfiguration.NM_CONTAINER_QUEUING_LOAD_COMPARATOR);
+    configurationPrefixToSkipCompare
+        .add(YarnConfiguration.NM_CONTAINER_QUEUING_MAX_QUEUE_LENGTH);
+    configurationPrefixToSkipCompare
+        .add(YarnConfiguration.NM_CONTAINER_QUEUING_MIN_QUEUE_LENGTH);
+    configurationPrefixToSkipCompare
+        .add(YarnConfiguration.NM_CONTAINER_QUEUING_MAX_QUEUE_WAIT_TIME_MS);
+    configurationPrefixToSkipCompare
+        .add(YarnConfiguration.NM_CONTAINER_QUEUING_MIN_QUEUE_WAIT_TIME_MS);
+    configurationPrefixToSkipCompare
+        .add(YarnConfiguration.NM_CONTAINER_QUEUING_LIMIT_STDEV);
 
     // Set by container-executor.cfg
     configurationPrefixToSkipCompare.add(YarnConfiguration.NM_USER_HOME_DIR);

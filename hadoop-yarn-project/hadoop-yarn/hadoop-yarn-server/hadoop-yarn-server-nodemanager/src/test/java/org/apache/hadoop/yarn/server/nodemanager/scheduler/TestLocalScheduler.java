@@ -19,7 +19,8 @@
 package org.apache.hadoop.yarn.server.nodemanager.scheduler;
 
 import org.apache.hadoop.conf.Configuration;
-import org.apache.hadoop.yarn.server.api.DistributedSchedulerProtocol;
+import org.apache.hadoop.yarn.api.records.ExecutionTypeRequest;
+import org.apache.hadoop.yarn.security.ContainerTokenIdentifier;
 import org.apache.hadoop.yarn.api.protocolrecords.AllocateRequest;
 import org.apache.hadoop.yarn.api.protocolrecords.AllocateResponse;
 import org.apache.hadoop.yarn.server.api.protocolrecords.DistSchedAllocateResponse;
@@ -45,6 +46,7 @@ import org.apache.hadoop.yarn.server.nodemanager.security
     .NMContainerTokenSecretManager;
 import org.apache.hadoop.yarn.server.nodemanager.security
     .NMTokenSecretManagerInNM;
+import org.apache.hadoop.yarn.server.utils.BuilderUtils;
 import org.apache.hadoop.yarn.util.Records;
 import org.junit.Assert;
 import org.junit.Test;
@@ -136,13 +138,15 @@ public class TestLocalScheduler {
 
     AllocateRequest allocateRequest = Records.newRecord(AllocateRequest.class);
     ResourceRequest guaranteedReq = Records.newRecord(ResourceRequest.class);
-    guaranteedReq.setExecutionType(ExecutionType.GUARANTEED);
+    guaranteedReq.setExecutionTypeRequest(
+        ExecutionTypeRequest.newInstance(ExecutionType.GUARANTEED, true));
     guaranteedReq.setNumContainers(5);
     guaranteedReq.setCapability(Resource.newInstance(2048, 2));
     guaranteedReq.setRelaxLocality(true);
     guaranteedReq.setResourceName("*");
     ResourceRequest opportunisticReq = Records.newRecord(ResourceRequest.class);
-    opportunisticReq.setExecutionType(ExecutionType.OPPORTUNISTIC);
+    opportunisticReq.setExecutionTypeRequest(
+        ExecutionTypeRequest.newInstance(ExecutionType.OPPORTUNISTIC, true));
     opportunisticReq.setNumContainers(4);
     opportunisticReq.setCapability(Resource.newInstance(1024, 4));
     opportunisticReq.setPriority(Priority.newInstance(100));
@@ -165,7 +169,8 @@ public class TestLocalScheduler {
     // New Allocate request
     allocateRequest = Records.newRecord(AllocateRequest.class);
     opportunisticReq = Records.newRecord(ResourceRequest.class);
-    opportunisticReq.setExecutionType(ExecutionType.OPPORTUNISTIC);
+    opportunisticReq.setExecutionTypeRequest(
+        ExecutionTypeRequest.newInstance(ExecutionType.OPPORTUNISTIC, true));
     opportunisticReq.setNumContainers(6);
     opportunisticReq.setCapability(Resource.newInstance(512, 3));
     opportunisticReq.setPriority(Priority.newInstance(100));
@@ -196,9 +201,14 @@ public class TestLocalScheduler {
   }
 
   private Map<NodeId, List<ContainerId>> mapAllocs(AllocateResponse
-      allocateResponse) {
+      allocateResponse) throws Exception {
     Map<NodeId, List<ContainerId>> allocs = new HashMap<>();
     for (Container c : allocateResponse.getAllocatedContainers()) {
+      ContainerTokenIdentifier cTokId = BuilderUtils
+          .newContainerTokenIdentifier(c.getContainerToken());
+      Assert.assertEquals(
+          c.getNodeId().getHost() + ":" + c.getNodeId().getPort(),
+          cTokId.getNmHostAddress());
       List<ContainerId> cIds = allocs.get(c.getNodeId());
       if (cIds == null) {
         cIds = new ArrayList<>();

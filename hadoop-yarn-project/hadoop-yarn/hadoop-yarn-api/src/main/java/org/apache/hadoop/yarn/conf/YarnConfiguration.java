@@ -339,21 +339,51 @@ public class YarnConfiguration extends Configuration {
       600000;
 
   /** K least loaded nodes to be provided to the LocalScheduler of a
-   * NodeManager for Distributed Scheduling */
+   * NodeManager for Distributed Scheduling. */
   public static final String DIST_SCHEDULING_TOP_K =
       YARN_PREFIX + "distributed-scheduling.top-k";
   public static final int DIST_SCHEDULING_TOP_K_DEFAULT = 10;
 
-  /** Frequency for computing Top K Best Nodes */
-  public static final String DIST_SCHEDULING_TOP_K_COMPUTE_INT_MS =
-      YARN_PREFIX + "distributed-scheduling.top-k-compute-interval-ms";
-  public static final long DIST_SCHEDULING_TOP_K_COMPUTE_INT_MS_DEFAULT = 1000;
+  /** Frequency for computing least loaded NMs. */
+  public static final String NM_CONTAINER_QUEUING_SORTING_NODES_INTERVAL_MS =
+      YARN_PREFIX + "nm-container-queuing.sorting-nodes-interval-ms";
+  public static final long
+      NM_CONTAINER_QUEUING_SORTING_NODES_INTERVAL_MS_DEFAULT = 1000;
 
-  /** Comparator for determining Node Load for Distributed Scheduling */
-  public static final String DIST_SCHEDULING_TOP_K_COMPARATOR =
-      YARN_PREFIX + "distributed-scheduling.top-k-comparator";
-  public static final String DIST_SCHEDULING_TOP_K_COMPARATOR_DEFAULT =
+  /** Comparator for determining Node Load for Distributed Scheduling. */
+  public static final String NM_CONTAINER_QUEUING_LOAD_COMPARATOR =
+      YARN_PREFIX + "nm-container-queuing.load-comparator";
+  public static final String NM_CONTAINER_QUEUING_LOAD_COMPARATOR_DEFAULT =
       "QUEUE_LENGTH";
+
+  /** Value of standard deviation used for calculation of queue limit
+   * thresholds. */
+  public static final String NM_CONTAINER_QUEUING_LIMIT_STDEV =
+      YARN_PREFIX + "nm-container-queuing.queue-limit-stdev";
+  public static final float NM_CONTAINER_QUEUING_LIMIT_STDEV_DEFAULT =
+      1.0f;
+
+  /** Min length of container queue at NodeManager. */
+  public static final String NM_CONTAINER_QUEUING_MIN_QUEUE_LENGTH =
+      YARN_PREFIX + "nm-container-queuing.min-queue-length";
+  public static final int NM_CONTAINER_QUEUING_MIN_QUEUE_LENGTH_DEFAULT = 1;
+
+  /** Max length of container queue at NodeManager. */
+  public static final String NM_CONTAINER_QUEUING_MAX_QUEUE_LENGTH =
+      YARN_PREFIX + "nm-container-queuing.max-queue-length";
+  public static final int NM_CONTAINER_QUEUING_MAX_QUEUE_LENGTH_DEFAULT = 10;
+
+  /** Min wait time of container queue at NodeManager. */
+  public static final String NM_CONTAINER_QUEUING_MIN_QUEUE_WAIT_TIME_MS =
+      YARN_PREFIX + "nm-container-queuing.min-queue-wait-time-ms";
+  public static final int NM_CONTAINER_QUEUING_MIN_QUEUE_WAIT_TIME_MS_DEFAULT =
+      1;
+
+  /** Max wait time of container queue at NodeManager. */
+  public static final String NM_CONTAINER_QUEUING_MAX_QUEUE_WAIT_TIME_MS =
+      YARN_PREFIX + "nm-container-queuing.max-queue-wait-time-ms";
+  public static final int NM_CONTAINER_QUEUING_MAX_QUEUE_WAIT_TIME_MS_DEFAULT =
+      10;
 
   /**
    * Enable/disable intermediate-data encryption at YARN level. For now, this
@@ -863,6 +893,11 @@ public class YarnConfiguration extends Configuration {
       NM_PREFIX + "container-diagnostics-maximum-size";
   public static final int DEFAULT_NM_CONTAINER_DIAGNOSTICS_MAXIMUM_SIZE = 10000;
 
+  /** Minimum container restart interval. */
+  public static final String NM_CONTAINER_RETRY_MINIMUM_INTERVAL_MS =
+      NM_PREFIX + "container-retry-minimum-interval-ms";
+  public static final int DEFAULT_NM_CONTAINER_RETRY_MINIMUM_INTERVAL_MS = 1000;
+
   /** Interval at which the delayed token removal thread runs */
   public static final String RM_DELAYED_DELEGATION_TOKEN_REMOVAL_INTERVAL_MS =
       RM_PREFIX + "delayed.delegation-token.removal-interval-ms";
@@ -1334,6 +1369,30 @@ public class YarnConfiguration extends Configuration {
   /** Default list for users allowed to run privileged containers is empty. */
   public static final String DEFAULT_NM_DOCKER_PRIVILEGED_CONTAINERS_ACL = "";
 
+  /** The set of networks allowed when launching containers using the
+   * DockerContainerRuntime. */
+  public static final String NM_DOCKER_ALLOWED_CONTAINER_NETWORKS =
+      DOCKER_CONTAINER_RUNTIME_PREFIX + "allowed-container-networks";
+
+  /** The set of networks allowed when launching containers using the
+   * DockerContainerRuntime. */
+  public static final String[] DEFAULT_NM_DOCKER_ALLOWED_CONTAINER_NETWORKS =
+      {"host", "none", "bridge"};
+
+  /** The network used when launching containers using the
+   * DockerContainerRuntime when no network is specified in the request. This
+   *  network must be one of the (configurable) set of allowed container
+   *  networks. */
+  public static final String NM_DOCKER_DEFAULT_CONTAINER_NETWORK =
+      DOCKER_CONTAINER_RUNTIME_PREFIX + "default-container-network";
+
+  /** The network used when launching containers using the
+   * DockerContainerRuntime when no network is specified in the request and
+   * no default network is configured.
+   * . */
+  public static final String DEFAULT_NM_DOCKER_DEFAULT_CONTAINER_NETWORK =
+      "host";
+
   /** The path to the Linux container executor.*/
   public static final String NM_LINUX_CONTAINER_EXECUTOR_PATH =
     NM_PREFIX + "linux-container-executor.path";
@@ -1451,10 +1510,16 @@ public class YarnConfiguration extends Configuration {
     NM_PREFIX + "principal";
   
   public static final String NM_AUX_SERVICES = 
-    NM_PREFIX + "aux-services";
+      NM_PREFIX + "aux-services";
   
   public static final String NM_AUX_SERVICE_FMT =
-    NM_PREFIX + "aux-services.%s.class";
+      NM_PREFIX + "aux-services.%s.class";
+
+  public static final String NM_AUX_SERVICES_CLASSPATH =
+      NM_AUX_SERVICES + ".%s.classpath";
+
+  public static final String NM_AUX_SERVICES_SYSTEM_CLASSES =
+      NM_AUX_SERVICES + ".%s.system-classes";
 
   public static final String NM_USER_HOME_DIR =
       NM_PREFIX + "user-home-dir";
@@ -2488,14 +2553,25 @@ public class YarnConfiguration extends Configuration {
   public static final long DEFAULT_RM_NODE_LABELS_PROVIDER_FETCH_INTERVAL_MS =
       30 * 60 * 1000;
 
-  public static final String AM_BLACKLISTING_ENABLED =
-      YARN_PREFIX + "am.blacklisting.enabled";
-  public static final boolean DEFAULT_AM_BLACKLISTING_ENABLED = true;
+  @Private
+  /**
+   * This is a private feature that isn't supposed to be used by end-users.
+   */
+  public static final String AM_SCHEDULING_NODE_BLACKLISTING_ENABLED =
+      RM_PREFIX + "am-scheduling.node-blacklisting-enabled";
+  @Private
+  public static final boolean DEFAULT_AM_SCHEDULING_NODE_BLACKLISTING_ENABLED =
+      true;
 
-  public static final String AM_BLACKLISTING_DISABLE_THRESHOLD =
-      YARN_PREFIX + "am.blacklisting.disable-failure-threshold";
-  public static final float DEFAULT_AM_BLACKLISTING_DISABLE_THRESHOLD = 0.8f;
-
+  @Private
+  /**
+   * This is a private feature that isn't supposed to be used by end-users.
+   */
+  public static final String AM_SCHEDULING_NODE_BLACKLISTING_DISABLE_THRESHOLD =
+      RM_PREFIX + "am-scheduling.node-blacklisting-disable-threshold";
+  @Private
+  public static final float
+      DEFAULT_AM_SCHEDULING_NODE_BLACKLISTING_DISABLE_THRESHOLD = 0.8f;
 
   private static final String NM_SCRIPT_BASED_NODE_LABELS_PROVIDER_PREFIX =
       NM_NODE_LABELS_PROVIDER_PREFIX + "script.";
@@ -2529,6 +2605,19 @@ public class YarnConfiguration extends Configuration {
   public static final String TIMELINE_CSRF_METHODS_TO_IGNORE =
       TIMELINE_CSRF_PREFIX + "methods-to-ignore";
 
+  // RM and NM XFS props
+  public static final String XFS = "webapp.xfs-filter.";
+  public static final String YARN_XFS_ENABLED = "yarn." + XFS + "enabled";
+  public static final String RM_XFS_PREFIX = RM_PREFIX + XFS;
+  public static final String NM_XFS_PREFIX = NM_PREFIX + XFS;
+  public static final String TIMELINE_XFS_PREFIX = TIMELINE_SERVICE_PREFIX +
+      XFS;
+  public static final String RM_XFS_OPTIONS = RM_XFS_PREFIX +
+      "xframe-options";
+  public static final String NM_XFS_OPTIONS = NM_XFS_PREFIX +
+      "xframe-options";
+  public static final String TIMELINE_XFS_OPTIONS =
+      TIMELINE_XFS_PREFIX + "xframe-options";
 
   public YarnConfiguration() {
     super();

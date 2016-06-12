@@ -269,6 +269,10 @@ public class PBHelperClient {
     case DECOMMISSION_INPROGRESS:
       return DatanodeInfoProto.AdminState.DECOMMISSION_INPROGRESS;
     case DECOMMISSIONED: return DatanodeInfoProto.AdminState.DECOMMISSIONED;
+    case ENTERING_MAINTENANCE:
+      return DatanodeInfoProto.AdminState.ENTERING_MAINTENANCE;
+    case IN_MAINTENANCE:
+      return DatanodeInfoProto.AdminState.IN_MAINTENANCE;
     default: return DatanodeInfoProto.AdminState.NORMAL;
     }
   }
@@ -623,6 +627,10 @@ public class PBHelperClient {
       return AdminStates.DECOMMISSION_INPROGRESS;
     case DECOMMISSIONED:
       return AdminStates.DECOMMISSIONED;
+    case ENTERING_MAINTENANCE:
+      return AdminStates.ENTERING_MAINTENANCE;
+    case IN_MAINTENANCE:
+      return AdminStates.IN_MAINTENANCE;
     case NORMAL:
     default:
       return AdminStates.NORMAL;
@@ -843,6 +851,22 @@ public class PBHelperClient {
     }
 
     return results;
+  }
+
+  public static List<Integer> convertBlockIndices(byte[] blockIndices) {
+    List<Integer> results = new ArrayList<>(blockIndices.length);
+    for (byte bt : blockIndices) {
+      results.add(Integer.valueOf(bt));
+    }
+    return results;
+  }
+
+  public static byte[] convertBlockIndices(List<Integer> blockIndices) {
+    byte[] blkIndices = new byte[blockIndices.size()];
+    for (int i = 0; i < blockIndices.size(); i++) {
+      blkIndices[i] = (byte) blockIndices.get(i).intValue();
+    }
+    return blkIndices;
   }
 
   public static BlockStoragePolicy convert(BlockStoragePolicyProto proto) {
