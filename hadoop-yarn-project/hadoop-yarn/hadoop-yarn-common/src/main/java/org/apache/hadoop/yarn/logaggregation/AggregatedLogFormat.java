@@ -49,6 +49,7 @@ import org.apache.commons.io.input.BoundedInputStream;
 import org.apache.commons.io.output.WriterOutputStream;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
+import org.apache.commons.math3.util.Pair;
 import org.apache.hadoop.classification.InterfaceAudience.Private;
 import org.apache.hadoop.classification.InterfaceAudience.Public;
 import org.apache.hadoop.classification.InterfaceStability.Evolving;
@@ -168,6 +169,7 @@ public class AggregatedLogFormat {
     private final Set<String> alreadyUploadedLogFiles;
     private Set<String> allExistingFileMeta = new HashSet<String>();
     private final boolean appFinished;
+    private final boolean containerFinished;
 
     /**
      * The retention context to determine if log files are older than
@@ -186,13 +188,14 @@ public class AggregatedLogFormat {
     public LogValue(List<String> rootLogDirs, ContainerId containerId,
         String user) {
       this(rootLogDirs, containerId, user, null, new HashSet<String>(),
-          null, true);
+          null, true, true);
     }
 
     public LogValue(List<String> rootLogDirs, ContainerId containerId,
         String user, LogAggregationContext logAggregationContext,
         Set<String> alreadyUploadedLogFiles,
-        LogRetentionContext retentionContext, boolean appFinished) {
+        LogRetentionContext retentionContext, boolean appFinished,
+        boolean containerFinished) {
       this.rootLogDirs = new ArrayList<String>(rootLogDirs);
       this.containerId = containerId;
       this.user = user;
@@ -202,6 +205,7 @@ public class AggregatedLogFormat {
       this.logAggregationContext = logAggregationContext;
       this.alreadyUploadedLogFiles = alreadyUploadedLogFiles;
       this.appFinished = appFinished;
+      this.containerFinished = containerFinished;
       this.logRetentionContext = retentionContext;
     }
 
@@ -209,14 +213,11 @@ public class AggregatedLogFormat {
     public Set<File> getPendingLogFilesToUploadForThisContainer() {
       Set<File> pendingUploadFiles = new HashSet<File>();
       for (String rootLogDir : this.rootLogDirs) {
-        File appLogDir =
-            new File(rootLogDir, 
-                ConverterUtils.toString(
-                    this.containerId.getApplicationAttemptId().
-                        getApplicationId())
-                );
+        File appLogDir = new File(rootLogDir,
+            this.containerId.getApplicationAttemptId().
+                getApplicationId().toString());
         File containerLogDir =
-            new File(appLogDir, ConverterUtils.toString(this.containerId));
+            new File(appLogDir, this.containerId.toString());
 
         if (!containerLogDir.isDirectory()) {
           continue; // ContainerDir may have been deleted by the user.
@@ -321,29 +322,40 @@ public class AggregatedLogFormat {
         return candidates;
       }
 
+      Set<File> fileCandidates = new HashSet<File>(candidates);
       if (this.logAggregationContext != null && candidates.size() > 0) {
-        filterFiles(
-          this.appFinished ? this.logAggregationContext.getIncludePattern()
+        fileCandidates = getFileCandidates(fileCandidates, this.appFinished);
+        if (!this.appFinished && this.containerFinished) {
+          Set<File> addition = new HashSet<File>(candidates);
+          addition = getFileCandidates(addition, true);
+          fileCandidates.addAll(addition);
+        }
+      }
+
+      return fileCandidates;
+    }
+
+    private Set<File> getFileCandidates(Set<File> candidates,
+        boolean useRegularPattern) {
+      filterFiles(
+          useRegularPattern ? this.logAggregationContext.getIncludePattern()
               : this.logAggregationContext.getRolledLogsIncludePattern(),
           candidates, false);
 
-        filterFiles(
-          this.appFinished ? this.logAggregationContext.getExcludePattern()
+      filterFiles(
+          useRegularPattern ? this.logAggregationContext.getExcludePattern()
               : this.logAggregationContext.getRolledLogsExcludePattern(),
           candidates, true);
 
-        Iterable<File> mask =
-            Iterables.filter(candidates, new Predicate<File>() {
-              @Override
-              public boolean apply(File next) {
-                return !alreadyUploadedLogFiles
+      Iterable<File> mask =
+          Iterables.filter(candidates, new Predicate<File>() {
+            @Override
+            public boolean apply(File next) {
+              return !alreadyUploadedLogFiles
                   .contains(getLogFileMetaData(next));
-              }
-            });
-        candidates = Sets.newHashSet(mask);
-      }
-
-      return candidates;
+            }
+          });
+      return Sets.newHashSet(mask);
     }
 
     private void filterFiles(String pattern, Set<File> candidates,
@@ -776,20 +788,19 @@ public class AggregatedLogFormat {
 
       long toSkip = 0;
       long totalBytesToRead = fileLength;
+      long skipAfterRead = 0;
       if (bytes < 0) {
         long absBytes = Math.abs(bytes);
         if (absBytes < fileLength) {
           toSkip = fileLength - absBytes;
           totalBytesToRead = absBytes;
         }
-        long skippedBytes = valueStream.skip(toSkip);
-        if (skippedBytes != toSkip) {
-          throw new IOException("The bytes were skipped are "
-              + "different from the caller requested");
-        }
+        org.apache.hadoop.io.IOUtils.skipFully(
+            valueStream, toSkip);
       } else {
         if (bytes < fileLength) {
           totalBytesToRead = bytes;
+          skipAfterRead = fileLength - bytes;
         }
       }
 
@@ -807,7 +818,9 @@ public class AggregatedLogFormat {
                   pendingRead > buf.length ? buf.length : (int) pendingRead;
         len = valueStream.read(buf, 0, toRead);
       }
-      out.println("End of LogType:" + fileType);
+      org.apache.hadoop.io.IOUtils.skipFully(
+          valueStream, skipAfterRead);
+      out.println("\nEnd of LogType:" + fileType);
       out.println("");
     }
 
@@ -902,20 +915,19 @@ public class AggregatedLogFormat {
 
         long toSkip = 0;
         long totalBytesToRead = fileLength;
+        long skipAfterRead = 0;
         if (bytes < 0) {
           long absBytes = Math.abs(bytes);
           if (absBytes < fileLength) {
             toSkip = fileLength - absBytes;
             totalBytesToRead = absBytes;
           }
-          long skippedBytes = valueStream.skip(toSkip);
-          if (skippedBytes != toSkip) {
-            throw new IOException("The bytes were skipped are "
-                + "different from the caller requested");
-          }
+          org.apache.hadoop.io.IOUtils.skipFully(
+              valueStream, toSkip);
         } else {
           if (bytes < fileLength) {
             totalBytesToRead = bytes;
+            skipAfterRead = fileLength - bytes;
           }
         }
 
@@ -931,7 +943,9 @@ public class AggregatedLogFormat {
           toRead = pendingRead > buf.length ? buf.length : (int) pendingRead;
           len = valueStream.read(buf, 0, toRead);
         }
-        out.println("End of LogType:" + fileType);
+        org.apache.hadoop.io.IOUtils.skipFully(
+            valueStream, skipAfterRead);
+        out.println("\nEnd of LogType:" + fileType);
         out.println("");
         return 0;
       } else {
@@ -946,25 +960,21 @@ public class AggregatedLogFormat {
     }
 
     @Private
-    public static String readContainerMetaDataAndSkipData(
+    public static Pair<String, String> readContainerMetaDataAndSkipData(
         DataInputStream valueStream, PrintStream out) throws IOException {
 
       String fileType = valueStream.readUTF();
       String fileLengthStr = valueStream.readUTF();
       long fileLength = Long.parseLong(fileLengthStr);
-      if (out != null) {
-        out.print("LogType:");
-        out.println(fileType);
-        out.print("LogLength:");
-        out.println(fileLengthStr);
-      }
+      Pair<String, String> logMeta = new Pair<String, String>(
+          fileType, fileLengthStr);
       long totalSkipped = 0;
       long currSkipped = 0;
       while (currSkipped != -1 && totalSkipped < fileLength) {
         currSkipped = valueStream.skip(fileLength - totalSkipped);
         totalSkipped += currSkipped;
       }
-      return fileType;
+      return logMeta;
     }
 
     public void close() {

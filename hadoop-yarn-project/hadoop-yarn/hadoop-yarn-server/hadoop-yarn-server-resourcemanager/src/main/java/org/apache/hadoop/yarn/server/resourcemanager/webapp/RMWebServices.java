@@ -25,6 +25,7 @@ import java.security.AccessControlException;
 import java.security.Principal;
 import java.security.PrivilegedExceptionAction;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.EnumSet;
 import java.util.HashMap;
@@ -113,6 +114,7 @@ import org.apache.hadoop.yarn.api.records.ReservationRequest;
 import org.apache.hadoop.yarn.api.records.ReservationRequestInterpreter;
 import org.apache.hadoop.yarn.api.records.ReservationRequests;
 import org.apache.hadoop.yarn.api.records.Resource;
+import org.apache.hadoop.yarn.api.records.URL;
 import org.apache.hadoop.yarn.api.records.YarnApplicationState;
 import org.apache.hadoop.yarn.conf.YarnConfiguration;
 import org.apache.hadoop.yarn.exceptions.YarnException;
@@ -227,12 +229,18 @@ public class RMWebServices extends WebServices {
   protected Boolean hasAccess(RMApp app, HttpServletRequest hsr) {
     // Check for the authorization.
     UserGroupInformation callerUGI = getCallerUserGroupInformation(hsr, true);
+    List<String> forwardedAddresses = null;
+    String forwardedFor = hsr.getHeader("X-Forwarded-For");
+    if (forwardedFor != null) {
+      forwardedAddresses = Arrays.asList(forwardedFor.split(","));
+    }
     if (callerUGI != null
         && !(this.rm.getApplicationACLsManager().checkAccess(callerUGI,
               ApplicationAccessType.VIEW_APP, app.getUser(),
               app.getApplicationId()) ||
             this.rm.getQueueACLsManager().checkAccess(callerUGI,
-                QueueACL.ADMINISTER_QUEUE, app))) {
+                QueueACL.ADMINISTER_QUEUE, app, hsr.getRemoteAddr(),
+                forwardedAddresses))) {
       return false;
     }
     return true;
@@ -373,7 +381,7 @@ public class RMWebServices extends WebServices {
     if (sched == null) {
       throw new NotFoundException("Null ResourceScheduler instance");
     }
-    NodeId nid = ConverterUtils.toNodeId(nodeId);
+    NodeId nid = NodeId.fromString(nodeId);
     RMNode ni = this.rm.getRMContext().getRMNodes().get(nid);
     boolean isInactive = false;
     if (ni == null) {
@@ -1467,9 +1475,7 @@ public class RMWebServices extends WebServices {
     String error =
         "Could not parse application id " + newApp.getApplicationId();
     try {
-      appid =
-          ConverterUtils.toApplicationId(recordFactory,
-            newApp.getApplicationId());
+      appid = ApplicationId.fromString(newApp.getApplicationId());
     } catch (Exception e) {
       throw new BadRequestException(error);
     }
@@ -1553,7 +1559,7 @@ public class RMWebServices extends WebServices {
       LocalResourceInfo l = entry.getValue();
       LocalResource lr =
           LocalResource.newInstance(
-            ConverterUtils.getYarnUrlFromURI(l.getUrl()), l.getType(),
+              URL.fromURI(l.getUrl()), l.getType(),
             l.getVisibility(), l.getSize(), l.getTimestamp());
       hlr.put(entry.getKey(), lr);
     }

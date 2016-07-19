@@ -29,6 +29,9 @@ import org.apache.hadoop.hdfs.MiniDFSCluster;
 import org.apache.hadoop.metrics2.lib.MutableCounterLong;
 import org.apache.hadoop.metrics2.lib.MutableStat;
 import org.apache.hadoop.security.UserGroupInformation;
+import org.apache.hadoop.test.GenericTestUtils;
+import org.apache.hadoop.util.ApplicationClassLoader;
+import org.apache.hadoop.util.JarFinder;
 import org.apache.hadoop.yarn.api.records.ApplicationAttemptId;
 import org.apache.hadoop.yarn.api.records.ApplicationId;
 import org.apache.hadoop.yarn.api.records.timeline.TimelineEntities;
@@ -43,7 +46,10 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TestName;
 
+import java.io.File;
 import java.io.IOException;
+import java.net.URL;
+import java.net.URLClassLoader;
 import java.util.ArrayList;
 import java.util.EnumSet;
 import java.util.HashMap;
@@ -68,7 +74,7 @@ public class TestEntityGroupFSTimelineStore extends TimelineStoreTestUtils {
 
   private static final String SAMPLE_APP_PREFIX_CACHE_TEST = "1234_000";
   private static final int CACHE_TEST_CACHE_SIZE = 5;
-
+  
   private static final String TEST_SUMMARY_LOG_FILE_NAME
       = EntityGroupFSTimelineStore.SUMMARY_LOG_PREFIX + "test";
   private static final String TEST_DOMAIN_LOG_FILE_NAME
@@ -97,6 +103,8 @@ public class TestEntityGroupFSTimelineStore extends TimelineStoreTestUtils {
 
   @Rule
   public TestName currTestName = new TestName();
+  private File rootDir;
+  private File testJar;
 
   @BeforeClass
   public static void setupClass() throws Exception {
@@ -117,7 +125,7 @@ public class TestEntityGroupFSTimelineStore extends TimelineStoreTestUtils {
 
     sampleAppIds = new ArrayList<>(CACHE_TEST_CACHE_SIZE + 1);
     for (int i = 0; i < CACHE_TEST_CACHE_SIZE + 1; i++) {
-      ApplicationId appId = ConverterUtils.toApplicationId(
+      ApplicationId appId = ApplicationId.fromString(
           ConverterUtils.APPLICATION_PREFIX + "_" + SAMPLE_APP_PREFIX_CACHE_TEST
               + i);
       sampleAppIds.add(appId);
@@ -144,6 +152,25 @@ public class TestEntityGroupFSTimelineStore extends TimelineStoreTestUtils {
 
     store = new EntityGroupFSTimelineStoreForTest();
     if (currTestName.getMethodName().contains("Plugin")) {
+      rootDir = GenericTestUtils.getTestDir(getClass()
+          .getSimpleName());
+      if (!rootDir.exists()) {
+        rootDir.mkdirs();
+      }
+      testJar = null;
+      testJar = JarFinder.makeClassLoaderTestJar(this.getClass(), rootDir,
+          "test-runjar.jar", 2048,
+          EntityGroupPlugInForTest.class.getName());
+      config.set(
+          YarnConfiguration.TIMELINE_SERVICE_ENTITY_GROUP_PLUGIN_CLASSPATH,
+          testJar.getAbsolutePath());
+      // add "-org.apache.hadoop." as system classes
+      String systemClasses = "-org.apache.hadoop." + "," +
+          ApplicationClassLoader.SYSTEM_CLASSES_DEFAULT;
+      config.set(
+          YarnConfiguration.TIMELINE_SERVICE_ENTITY_GROUP_PLUGIN_SYSTEM_CLASSES,
+          systemClasses);
+
       config.set(YarnConfiguration.TIMELINE_SERVICE_ENTITY_GROUP_PLUGIN_CLASSES,
           EntityGroupPlugInForTest.class.getName());
     }
@@ -157,6 +184,10 @@ public class TestEntityGroupFSTimelineStore extends TimelineStoreTestUtils {
     store.stop();
     for (ApplicationId appId : sampleAppIds) {
       fs.delete(getTestRootPath(appId.toString()), true);
+    }
+    if (testJar != null) {
+      testJar.delete();
+      rootDir.delete();
     }
   }
 
@@ -302,13 +333,28 @@ public class TestEntityGroupFSTimelineStore extends TimelineStoreTestUtils {
     assertEquals(EntityGroupPlugInForTest.class.getName(),
         store.getConfig().get(
             YarnConfiguration.TIMELINE_SERVICE_ENTITY_GROUP_PLUGIN_CLASSES));
+    List<TimelineEntityGroupPlugin> currPlugins = store.getPlugins();
+    for (TimelineEntityGroupPlugin plugin : currPlugins) {
+      ClassLoader pluginClassLoader = plugin.getClass().getClassLoader();
+      assertTrue("Should set up ApplicationClassLoader",
+          pluginClassLoader instanceof ApplicationClassLoader);
+      URL[] paths = ((URLClassLoader) pluginClassLoader).getURLs();
+      boolean foundJAR = false;
+      for (URL path : paths) {
+        if (path.toString().contains(testJar.getAbsolutePath())) {
+          foundJAR = true;
+        }
+      }
+      assertTrue("Not found path " + testJar.getAbsolutePath()
+          + " for plugin " + plugin.getClass().getName(), foundJAR);
+    }
     // Load data and cache item, prepare timeline store by making a cache item
     EntityGroupFSTimelineStore.AppLogs appLogs =
         store.new AppLogs(mainTestAppId, mainTestAppDirPath,
         AppState.COMPLETED);
     EntityCacheItem cacheItem = new EntityCacheItem(
         EntityGroupPlugInForTest.getStandardTimelineGroupId(mainTestAppId),
-        config, fs);
+        config);
     cacheItem.setAppLogs(appLogs);
     store.setCachedLogs(
         EntityGroupPlugInForTest.getStandardTimelineGroupId(mainTestAppId),
@@ -360,7 +406,7 @@ public class TestEntityGroupFSTimelineStore extends TimelineStoreTestUtils {
             AppState.COMPLETED);
     final EntityCacheItem cacheItem = new EntityCacheItem(
         EntityGroupPlugInForTest.getStandardTimelineGroupId(mainTestAppId),
-        config, fs);
+        config);
 
     cacheItem.setAppLogs(appLogs);
     store.setCachedLogs(
@@ -396,7 +442,7 @@ public class TestEntityGroupFSTimelineStore extends TimelineStoreTestUtils {
               AppState.COMPLETED);
       EntityCacheItem item = new EntityCacheItem(
           EntityGroupPlugInForTest.getStandardTimelineGroupId(appId),
-          config, fs);
+          config);
       item.setAppLogs(currAppLog);
       store.setCachedLogs(
           EntityGroupPlugInForTest.getStandardTimelineGroupId(appId),

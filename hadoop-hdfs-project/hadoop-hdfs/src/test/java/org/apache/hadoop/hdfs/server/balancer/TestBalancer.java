@@ -211,8 +211,7 @@ public class TestBalancer {
   }
 
   static void initSecureConf(Configuration conf) throws Exception {
-    baseDir = new File(System.getProperty("test.build.dir", "target/test-dir"),
-        TestBalancer.class.getSimpleName());
+    baseDir = GenericTestUtils.getTestDir(TestBalancer.class.getSimpleName());
     FileUtil.fullyDelete(baseDir);
     assertTrue(baseDir.mkdirs());
 
@@ -265,7 +264,8 @@ public class TestBalancer {
   }
 
   /* create a file with a length of <code>fileLen</code> */
-  static void createFile(MiniDFSCluster cluster, Path filePath, long fileLen,
+  public static void createFile(MiniDFSCluster cluster, Path filePath, long
+      fileLen,
       short replicationFactor, int nnIndex)
   throws IOException, InterruptedException, TimeoutException {
     FileSystem fs = cluster.getFileSystem(nnIndex);
@@ -1956,6 +1956,7 @@ public class TestBalancer {
       });
     } finally {
       // Reset UGI so that other tests are not affected.
+      UserGroupInformation.reset();
       UserGroupInformation.setConfiguration(new Configuration());
     }
   }
