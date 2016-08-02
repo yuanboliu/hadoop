@@ -18,9 +18,9 @@
 
 package org.apache.hadoop.yarn.server.nodemanager;
 
+import static org.apache.hadoop.test.PlatformAssumptions.assumeNotWindows;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
-import static org.junit.Assume.assumeTrue;
 import static org.mockito.Matchers.any;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
@@ -123,12 +123,12 @@ public class TestLinuxContainerExecutorWithMocks {
 
   @Before
   public void setup() throws IOException, ContainerExecutionException {
-    assumeTrue(!Path.WINDOWS);
+    assumeNotWindows();
 
     tmpMockExecutor = System.getProperty("test.build.data") +
         "/tmp-mock-container-executor";
 
-    Configuration conf = new Configuration();
+    Configuration conf = new YarnConfiguration();
     LinuxContainerRuntime linuxContainerRuntime;
 
     setupMockExecutor(MOCK_EXECUTOR, conf);
@@ -220,7 +220,10 @@ public class TestLinuxContainerExecutorWithMocks {
   public void testLaunchCommandWithoutPriority() throws IOException {
     // make sure the command doesn't contain the nice -n since priority
     // not specified
-   List<String> command = new ArrayList<String>();
+    List<String> command = new ArrayList<String>();
+    Configuration conf = mockExec.getConf();
+    conf.unset(YarnConfiguration.NM_CONTAINER_EXECUTOR_SCHED_PRIORITY);
+    mockExec.setConf(conf);
     mockExec.addSchedPriorityCommand(command);
     assertEquals("addSchedPriority should be empty", 0, command.size());
   }
@@ -243,7 +246,7 @@ public class TestLinuxContainerExecutorWithMocks {
           .build());
 
       List<String> result=readMockParams();
-      Assert.assertEquals(result.size(), 18);
+      Assert.assertEquals(result.size(), 19);
       Assert.assertEquals(result.get(0), YarnConfiguration.DEFAULT_NM_NONSECURE_MODE_LOCAL_USER);
       Assert.assertEquals(result.get(1), "test");
       Assert.assertEquals(result.get(2), "0" );

@@ -163,6 +163,11 @@ public class S3AFileSystem extends FileSystem {
           DEFAULT_ESTABLISH_TIMEOUT, 0));
       awsConf.setSocketTimeout(intOption(conf, SOCKET_TIMEOUT,
           DEFAULT_SOCKET_TIMEOUT, 0));
+      int sockSendBuffer = intOption(conf, SOCKET_SEND_BUFFER,
+          DEFAULT_SOCKET_SEND_BUFFER, 2048);
+      int sockRecvBuffer = intOption(conf, SOCKET_RECV_BUFFER,
+          DEFAULT_SOCKET_RECV_BUFFER, 2048);
+      awsConf.setSocketBufferSizeHints(sockSendBuffer, sockRecvBuffer);
       String signerOverride = conf.getTrimmed(SIGNING_ALGORITHM, "");
       if (!signerOverride.isEmpty()) {
         LOG.debug("Signer override = {}", signerOverride);
@@ -583,9 +588,24 @@ public class S3AFileSystem extends FileSystem {
       boolean overwrite, int bufferSize, short replication, long blockSize,
       Progressable progress) throws IOException {
     String key = pathToKey(f);
+    S3AFileStatus status = null;
+    try {
+      // get the status or throw an FNFE
+      status = getFileStatus(f);
 
-    if (!overwrite && exists(f)) {
-      throw new FileAlreadyExistsException(f + " already exists");
+      // if the thread reaches here, there is something at the path
+      if (status.isDirectory()) {
+        // path references a directory: automatic error
+        throw new FileAlreadyExistsException(f + " is a directory");
+      }
+      if (!overwrite) {
+        // path references a file and overwrite is disabled
+        throw new FileAlreadyExistsException(f + " already exists");
+      }
+      LOG.debug("Overwriting file {}", f);
+    } catch (FileNotFoundException e) {
+      // this means the file is not found
+
     }
     instrumentation.fileCreated();
     if (getConf().getBoolean(FAST_UPLOAD, DEFAULT_FAST_UPLOAD)) {
@@ -734,7 +754,7 @@ public class S3AFileSystem extends FileSystem {
       } else {
         copyFile(srcKey, dstKey, srcStatus.getLen());
       }
-      delete(src, false);
+      innerDelete(srcStatus, false);
     } else {
       LOG.debug("rename: renaming directory {} to {}", src, dst);
 
@@ -1060,16 +1080,20 @@ public class S3AFileSystem extends FileSystem {
    */
   public boolean delete(Path f, boolean recursive) throws IOException {
     try {
-      return innerDelete(f, recursive);
+      return innerDelete(getFileStatus(f), recursive);
+    } catch (FileNotFoundException e) {
+      LOG.debug("Couldn't delete {} - does not exist", f);
+      instrumentation.errorIgnored();
+      return false;
     } catch (AmazonClientException e) {
       throw translateException("delete", f, e);
     }
   }
 
   /**
-   * Delete a path. See {@link #delete(Path, boolean)}.
+   * Delete an object. See {@link #delete(Path, boolean)}.
    *
-   * @param f the path to delete.
+   * @param status fileStatus object
    * @param recursive if path is a directory and set to
    * true, the directory is deleted else throws an exception. In
    * case of a file the recursive can be set to either true or false.
@@ -1077,17 +1101,10 @@ public class S3AFileSystem extends FileSystem {
    * @throws IOException due to inability to delete a directory or file.
    * @throws AmazonClientException on failures inside the AWS SDK
    */
-  private boolean innerDelete(Path f, boolean recursive) throws IOException,
-      AmazonClientException {
+  private boolean innerDelete(S3AFileStatus status, boolean recursive)
+      throws IOException, AmazonClientException {
+    Path f = status.getPath();
     LOG.debug("Delete path {} - recursive {}", f , recursive);
-    S3AFileStatus status;
-    try {
-      status = getFileStatus(f);
-    } catch (FileNotFoundException e) {
-      LOG.debug("Couldn't delete {} - does not exist", f);
-      instrumentation.errorIgnored();
-      return false;
-    }
 
     String key = pathToKey(f);
 
@@ -1313,8 +1330,9 @@ public class S3AFileSystem extends FileSystem {
       throws IOException, FileAlreadyExistsException, AmazonClientException {
     LOG.debug("Making directory: {}", f);
     incrementStatistic(INVOCATION_MKDIRS);
+    FileStatus fileStatus;
     try {
-      FileStatus fileStatus = getFileStatus(f);
+      fileStatus = getFileStatus(f);
 
       if (fileStatus.isDirectory()) {
         return true;
@@ -1322,10 +1340,10 @@ public class S3AFileSystem extends FileSystem {
         throw new FileAlreadyExistsException("Path is a file: " + f);
       }
     } catch (FileNotFoundException e) {
-      Path fPart = f;
+      Path fPart = f.getParent();
       do {
         try {
-          FileStatus fileStatus = getFileStatus(fPart);
+          fileStatus = getFileStatus(fPart);
           if (fileStatus.isDirectory()) {
             break;
           }

@@ -613,12 +613,12 @@ public class MockRM extends ResourceManager {
       sub.setLogAggregationContext(logAggregationContext);
     }
     sub.setCancelTokensWhenComplete(cancelTokensWhenComplete);
+    ResourceRequest amResourceRequest = ResourceRequest.newInstance(
+        Priority.newInstance(0), ResourceRequest.ANY, capability, 1);
     if (amLabel != null && !amLabel.isEmpty()) {
-      ResourceRequest amResourceRequest = ResourceRequest.newInstance(
-          Priority.newInstance(0), ResourceRequest.ANY, capability, 1);
       amResourceRequest.setNodeLabelExpression(amLabel.trim());
-      sub.setAMContainerResourceRequest(amResourceRequest);
     }
+    sub.setAMContainerResourceRequest(amResourceRequest);
     req.setApplicationSubmissionContext(sub);
     UserGroupInformation fakeUser =
       UserGroupInformation.createUserForTesting(user, new String[] {"someGroup"});
@@ -822,7 +822,7 @@ public class MockRM extends ResourceManager {
     if (this.rmContext.getYarnConfiguration().getBoolean(
         YarnConfiguration.DIST_SCHEDULING_ENABLED,
         YarnConfiguration.DIST_SCHEDULING_ENABLED_DEFAULT)) {
-      return new DistributedSchedulingService(getRMContext(), scheduler) {
+      return new DistributedSchedulingAMService(getRMContext(), scheduler) {
         @Override
         protected void serviceStart() {
           // override to not start rpc handler

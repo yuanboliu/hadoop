@@ -728,6 +728,12 @@ public class DFSConfigKeys extends CommonConfigurationKeys {
   public static final int DFS_HA_TAILEDITS_PERIOD_DEFAULT = 60; // 1m
   public static final String DFS_HA_TAILEDITS_ALL_NAMESNODES_RETRY_KEY = "dfs.ha.tail-edits.namenode-retries";
   public static final int DFS_HA_TAILEDITS_ALL_NAMESNODES_RETRY_DEFAULT = 3;
+  public static final String  DFS_HA_TAILEDITS_INPROGRESS_KEY =
+          "dfs.ha.tail-edits.in-progress";
+  public static final boolean DFS_HA_TAILEDITS_INPROGRESS_DEFAULT = false;
+  public static final String DFS_HA_TAILEDITS_ROLLEDITS_TIMEOUT_KEY =
+      "dfs.ha.tail-edits.rolledits.timeout";
+  public static final int DFS_HA_TAILEDITS_ROLLEDITS_TIMEOUT_DEFAULT = 60; // 1m
   public static final String DFS_HA_LOGROLL_RPC_TIMEOUT_KEY = "dfs.ha.log-roll.rpc.timeout";
   public static final int DFS_HA_LOGROLL_RPC_TIMEOUT_DEFAULT = 20000; // 20s
   public static final String DFS_HA_FENCE_METHODS_KEY = "dfs.ha.fencing.methods";
@@ -1274,12 +1280,6 @@ public class DFSConfigKeys extends CommonConfigurationKeys {
   public static final int     DFS_CLIENT_MAX_BLOCK_ACQUIRE_FAILURES_DEFAULT =
       HdfsClientConfigKeys.DFS_CLIENT_MAX_BLOCK_ACQUIRE_FAILURES_DEFAULT;
 
-  @Deprecated
-  public static final String  DFS_CLIENT_USE_LEGACY_BLOCKREADER =
-      HdfsClientConfigKeys.DFS_CLIENT_USE_LEGACY_BLOCKREADER;
-  @Deprecated
-  public static final boolean DFS_CLIENT_USE_LEGACY_BLOCKREADER_DEFAULT =
-      HdfsClientConfigKeys.DFS_CLIENT_USE_LEGACY_BLOCKREADER_DEFAULT;
   @Deprecated
   public static final String  DFS_CLIENT_USE_LEGACY_BLOCKREADERLOCAL =
       HdfsClientConfigKeys.DFS_CLIENT_USE_LEGACY_BLOCKREADERLOCAL;
