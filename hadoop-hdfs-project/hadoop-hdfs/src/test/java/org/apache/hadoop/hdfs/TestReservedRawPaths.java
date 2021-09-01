@@ -25,6 +25,7 @@ import java.util.EnumSet;
 
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.crypto.key.JavaKeyStoreProvider;
+import org.apache.hadoop.fs.CommonConfigurationKeysPublic;
 import org.apache.hadoop.fs.FileContext;
 import org.apache.hadoop.fs.FileContextTestWrapper;
 import org.apache.hadoop.fs.FileStatus;
@@ -36,19 +37,24 @@ import org.apache.hadoop.hdfs.client.CreateEncryptionZoneFlag;
 import org.apache.hadoop.hdfs.client.HdfsAdmin;
 import org.apache.hadoop.hdfs.server.namenode.EncryptionZoneManager;
 import org.apache.hadoop.hdfs.server.namenode.FSDirectory;
+import org.apache.hadoop.hdfs.server.namenode.FSDirectory.DirOp;
+import org.apache.hadoop.hdfs.server.namenode.INodesInPath;
 import org.apache.hadoop.security.AccessControlException;
 import org.apache.hadoop.security.UserGroupInformation;
-import org.apache.log4j.Level;
-import org.apache.log4j.Logger;
+import org.apache.hadoop.test.GenericTestUtils;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
+import org.slf4j.LoggerFactory;
+import org.slf4j.event.Level;
 
 import static org.apache.hadoop.hdfs.DFSTestUtil.verifyFilesEqual;
 import static org.apache.hadoop.hdfs.DFSTestUtil.verifyFilesNotEqual;
 import static org.apache.hadoop.test.GenericTestUtils.assertExceptionContains;
 import static org.apache.hadoop.test.GenericTestUtils.assertMatches;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
 public class TestReservedRawPaths {
@@ -74,11 +80,12 @@ public class TestReservedRawPaths {
     String testRoot = fsHelper.getTestRootDir();
     File testRootDir = new File(testRoot).getAbsoluteFile();
     final Path jksPath = new Path(testRootDir.toString(), "test.jks");
-    conf.set(DFSConfigKeys.DFS_ENCRYPTION_KEY_PROVIDER_URI,
+    conf.set(CommonConfigurationKeysPublic.HADOOP_SECURITY_KEY_PROVIDER_PATH,
         JavaKeyStoreProvider.SCHEME_NAME + "://file" + jksPath.toUri()
     );
     cluster = new MiniDFSCluster.Builder(conf).numDataNodes(1).build();
-    Logger.getLogger(EncryptionZoneManager.class).setLevel(Level.TRACE);
+    GenericTestUtils.setLogLevel(
+        LoggerFactory.getLogger(EncryptionZoneManager.class), Level.TRACE);
     fs = cluster.getFileSystem();
     fsWrapper = new FileSystemTestWrapper(cluster.getFileSystem());
     fcWrapper = new FileContextTestWrapper(
@@ -97,6 +104,24 @@ public class TestReservedRawPaths {
       cluster.shutdown();
       cluster = null;
     }
+  }
+
+  /**
+   * Verify resolving path will return an iip that tracks if the original
+   * path was a raw path.
+   */
+  @Test(timeout = 120000)
+  public void testINodesInPath() throws IOException {
+    FSDirectory fsd = cluster.getNamesystem().getFSDirectory();
+    final String path = "/path";
+
+    INodesInPath iip = fsd.resolvePath(null, path, DirOp.READ);
+    assertFalse(iip.isRaw());
+    assertEquals(path, iip.getPath());
+
+    iip = fsd.resolvePath(null, "/.reserved/raw" + path, DirOp.READ);
+    assertTrue(iip.isRaw());
+    assertEquals(path, iip.getPath());
   }
 
   /**
@@ -224,7 +249,7 @@ public class TestReservedRawPaths {
   }
 
   @Test(timeout = 120000)
-  public void testAdminAccessOnly() throws Exception {
+  public void testUserReadAccessOnly() throws Exception {
     final Path zone = new Path("zone");
     final Path slashZone = new Path("/", zone);
     fs.mkdirs(slashZone);
@@ -252,34 +277,26 @@ public class TestReservedRawPaths {
       }
     });
 
-    /* Test failure of getFileStatus in reserved/raw as non admin */
+    /* Test success of getFileStatus in reserved/raw as non admin since
+     * read is allowed. */
     final Path ezRawEncFile = new Path(new Path(reservedRaw, zone), base);
     DFSTestUtil.createFile(fs, ezRawEncFile, len, (short) 1, 0xFEED);
     user.doAs(new PrivilegedExceptionAction<Object>() {
       @Override
       public Object run() throws Exception {
         final DistributedFileSystem fs = cluster.getFileSystem();
-        try {
-          fs.getFileStatus(ezRawEncFile);
-          fail("access to /.reserved/raw is superuser-only operation");
-        } catch (AccessControlException e) {
-          assertExceptionContains("Superuser privilege is required", e);
-        }
+        fs.getFileStatus(ezRawEncFile);
         return null;
       }
     });
 
-    /* Test failure of listStatus in reserved/raw as non admin */
+    /* Test success of listStatus in reserved/raw as non admin since read is
+     * allowed. */
     user.doAs(new PrivilegedExceptionAction<Object>() {
       @Override
       public Object run() throws Exception {
         final DistributedFileSystem fs = cluster.getFileSystem();
-        try {
-          fs.listStatus(ezRawEncFile);
-          fail("access to /.reserved/raw is superuser-only operation");
-        } catch (AccessControlException e) {
-          assertExceptionContains("Superuser privilege is required", e);
-        }
+        fs.listStatus(ezRawEncFile);
         return null;
       }
     });

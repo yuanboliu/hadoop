@@ -18,32 +18,36 @@
 package org.apache.hadoop.security;
 
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 
-import org.apache.htrace.core.TraceScope;
-import org.apache.htrace.core.Tracer;
-import com.google.common.annotations.VisibleForTesting;
-import com.google.common.base.Ticker;
-import com.google.common.cache.CacheBuilder;
-import com.google.common.cache.Cache;
-import com.google.common.cache.CacheLoader;
-import com.google.common.cache.LoadingCache;
-import com.google.common.util.concurrent.ListenableFuture;
-import com.google.common.util.concurrent.ListeningExecutorService;
-import com.google.common.util.concurrent.MoreExecutors;
-import com.google.common.util.concurrent.ThreadFactoryBuilder;
+import org.apache.hadoop.tracing.TraceScope;
+import org.apache.hadoop.tracing.Tracer;
+import org.apache.hadoop.thirdparty.com.google.common.annotations.VisibleForTesting;
+import org.apache.hadoop.thirdparty.com.google.common.base.Ticker;
+import org.apache.hadoop.thirdparty.com.google.common.cache.CacheBuilder;
+import org.apache.hadoop.thirdparty.com.google.common.cache.Cache;
+import org.apache.hadoop.thirdparty.com.google.common.cache.CacheLoader;
+import org.apache.hadoop.thirdparty.com.google.common.cache.LoadingCache;
+import org.apache.hadoop.thirdparty.com.google.common.util.concurrent.FutureCallback;
+import org.apache.hadoop.thirdparty.com.google.common.util.concurrent.Futures;
+import org.apache.hadoop.thirdparty.com.google.common.util.concurrent.ListenableFuture;
+import org.apache.hadoop.thirdparty.com.google.common.util.concurrent.ListeningExecutorService;
+import org.apache.hadoop.thirdparty.com.google.common.util.concurrent.MoreExecutors;
+import org.apache.hadoop.thirdparty.com.google.common.util.concurrent.ThreadFactoryBuilder;
 
 import org.apache.hadoop.HadoopIllegalArgumentException;
 import org.apache.hadoop.classification.InterfaceAudience;
@@ -54,9 +58,8 @@ import org.apache.hadoop.fs.CommonConfigurationKeys;
 import org.apache.hadoop.util.ReflectionUtils;
 import org.apache.hadoop.util.StringUtils;
 import org.apache.hadoop.util.Timer;
-
-import org.apache.commons.logging.Log;
-import org.apache.commons.logging.LogFactory;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * A user-to-groups mapping service.
@@ -69,13 +72,14 @@ import org.apache.commons.logging.LogFactory;
 @InterfaceAudience.LimitedPrivate({"HDFS", "MapReduce"})
 @InterfaceStability.Evolving
 public class Groups {
-  private static final Log LOG = LogFactory.getLog(Groups.class);
+  @VisibleForTesting
+  static final Logger LOG = LoggerFactory.getLogger(Groups.class);
   
   private final GroupMappingServiceProvider impl;
 
-  private final LoadingCache<String, List<String>> cache;
-  private final Map<String, List<String>> staticUserToGroupsMap =
-      new HashMap<String, List<String>>();
+  private final LoadingCache<String, Set<String>> cache;
+  private final AtomicReference<Map<String, Set<String>>> staticMapRef =
+      new AtomicReference<>();
   private final long cacheTimeout;
   private final long negativeCacheTimeout;
   private final long warningDeltaMs;
@@ -98,12 +102,11 @@ public class Groups {
   }
 
   public Groups(Configuration conf, final Timer timer) {
-    impl = 
-      ReflectionUtils.newInstance(
-          conf.getClass(CommonConfigurationKeys.HADOOP_SECURITY_GROUP_MAPPING, 
-                        ShellBasedUnixGroupsMapping.class, 
-                        GroupMappingServiceProvider.class), 
-          conf);
+    impl = ReflectionUtils.newInstance(
+        conf.getClass(CommonConfigurationKeys.HADOOP_SECURITY_GROUP_MAPPING,
+            JniBasedUnixGroupsMappingWithFallback.class,
+            GroupMappingServiceProvider.class),
+        conf);
 
     cacheTimeout = 
       conf.getLong(CommonConfigurationKeys.HADOOP_SECURITY_GROUPS_CACHE_SECS, 
@@ -164,6 +167,7 @@ public class Groups {
         CommonConfigurationKeys.HADOOP_USER_GROUP_STATIC_OVERRIDES_DEFAULT);
     Collection<String> mappings = StringUtils.getStringCollection(
         staticMapping, ";");
+    Map<String, Set<String>> staticUserToGroupsMap = new HashMap<>();
     for (String users : mappings) {
       Collection<String> userToGroups = StringUtils.getStringCollection(users,
           "=");
@@ -175,13 +179,15 @@ public class Groups {
       String[] userToGroupsArray = userToGroups.toArray(new String[userToGroups
           .size()]);
       String user = userToGroupsArray[0];
-      List<String> groups = Collections.emptyList();
+      Set<String> groups = Collections.emptySet();
       if (userToGroupsArray.length == 2) {
-        groups = (List<String>) StringUtils
-            .getStringCollection(userToGroupsArray[1]);
+        groups = new LinkedHashSet(StringUtils
+            .getStringCollection(userToGroupsArray[1]));
       }
       staticUserToGroupsMap.put(user, groups);
     }
+    staticMapRef.set(
+        staticUserToGroupsMap.isEmpty() ? null : staticUserToGroupsMap);
   }
 
   private boolean isNegativeCacheEnabled() {
@@ -195,15 +201,52 @@ public class Groups {
   /**
    * Get the group memberships of a given user.
    * If the user's group is not cached, this method may block.
+   * Note this method can be expensive as it involves Set {@literal ->} List
+   * conversion. For user with large group membership
+   * (i.e., {@literal >} 1000 groups), we recommend using getGroupSet
+   * to avoid the conversion and fast membership look up via contains().
    * @param user User's name
-   * @return the group memberships of the user
+   * @return the group memberships of the user as list
+   * @throws IOException if user does not exist
+   * @deprecated Use {@link #getGroupsSet(String user)} instead.
+   */
+  @Deprecated
+  public List<String> getGroups(final String user) throws IOException {
+    return Collections.unmodifiableList(new ArrayList<>(
+        getGroupInternal(user)));
+  }
+
+  /**
+   * Get the group memberships of a given user.
+   * If the user's group is not cached, this method may block.
+   * This provide better performance when user has large group membership via
+   * <br>
+   * 1) avoid {@literal set->list->set} conversion for the caller
+   * UGI/PermissionCheck <br>
+   * 2) fast lookup using contains() via Set instead of List
+   * @param user User's name
+   * @return the group memberships of the user as set
    * @throws IOException if user does not exist
    */
-  public List<String> getGroups(final String user) throws IOException {
+  public Set<String> getGroupsSet(final String user) throws IOException {
+    return Collections.unmodifiableSet(getGroupInternal(user));
+  }
+
+  /**
+   * Get the group memberships of a given user.
+   * If the user's group is not cached, this method may block.
+   * @param user User's name
+   * @return the group memberships of the user as Set
+   * @throws IOException if user does not exist
+   */
+  private Set<String> getGroupInternal(final String user) throws IOException {
     // No need to lookup for groups of static users
-    List<String> staticMapping = staticUserToGroupsMap.get(user);
-    if (staticMapping != null) {
-      return staticMapping;
+    Map<String, Set<String>> staticUserToGroupsMap = staticMapRef.get();
+    if (staticUserToGroupsMap != null) {
+      Set<String> staticMapping = staticUserToGroupsMap.get(user);
+      if (staticMapping != null) {
+        return staticMapping;
+      }
     }
 
     // Check the negative cache first
@@ -256,7 +299,7 @@ public class Groups {
   /**
    * Deals with loading data into the cache.
    */
-  private class GroupCacheLoader extends CacheLoader<String, List<String>> {
+  private class GroupCacheLoader extends CacheLoader<String, Set<String>> {
 
     private ListeningExecutorService executorService;
 
@@ -297,16 +340,17 @@ public class Groups {
      * @throws IOException to prevent caching negative entries
      */
     @Override
-    public List<String> load(String user) throws Exception {
+    public Set<String> load(String user) throws Exception {
+      LOG.debug("GroupCacheLoader - load.");
       TraceScope scope = null;
       Tracer tracer = Tracer.curThreadTracer();
       if (tracer != null) {
         scope = tracer.newScope("Groups#fetchGroupList");
         scope.addKVAnnotation("user", user);
       }
-      List<String> groups = null;
+      Set<String> groups = null;
       try {
-        groups = fetchGroupList(user);
+        groups = fetchGroupSet(user);
       } finally {
         if (scope != null) {
           scope.close();
@@ -331,44 +375,44 @@ public class Groups {
      * implementation, otherwise is arranges for the cache to be updated later
      */
     @Override
-    public ListenableFuture<List<String>> reload(final String key,
-                                                 List<String> oldValue)
+    public ListenableFuture<Set<String>> reload(final String key,
+                                                 Set<String> oldValue)
         throws Exception {
+      LOG.debug("GroupCacheLoader - reload (async).");
       if (!reloadGroupsInBackground) {
         return super.reload(key, oldValue);
       }
 
       backgroundRefreshQueued.incrementAndGet();
-      ListenableFuture<List<String>> listenableFuture =
-          executorService.submit(new Callable<List<String>>() {
-            @Override
-            public List<String> call() throws Exception {
-              boolean success = false;
-              try {
-                backgroundRefreshQueued.decrementAndGet();
-                backgroundRefreshRunning.incrementAndGet();
-                List<String> results = load(key);
-                success = true;
-                return results;
-              } finally {
-                backgroundRefreshRunning.decrementAndGet();
-                if (success) {
-                  backgroundRefreshSuccess.incrementAndGet();
-                } else {
-                  backgroundRefreshException.incrementAndGet();
-                }
-              }
-            }
+      ListenableFuture<Set<String>> listenableFuture =
+          executorService.submit(() -> {
+            backgroundRefreshQueued.decrementAndGet();
+            backgroundRefreshRunning.incrementAndGet();
+            Set<String> results = load(key);
+            return results;
           });
+      Futures.addCallback(listenableFuture, new FutureCallback<Set<String>>() {
+        @Override
+        public void onSuccess(Set<String> result) {
+          backgroundRefreshSuccess.incrementAndGet();
+          backgroundRefreshRunning.decrementAndGet();
+        }
+        @Override
+        public void onFailure(Throwable t) {
+          backgroundRefreshException.incrementAndGet();
+          backgroundRefreshRunning.decrementAndGet();
+        }
+      }, MoreExecutors.directExecutor());
       return listenableFuture;
     }
 
     /**
-     * Queries impl for groups belonging to the user. This could involve I/O and take awhile.
+     * Queries impl for groups belonging to the user.
+     * This could involve I/O and take awhile.
      */
-    private List<String> fetchGroupList(String user) throws IOException {
+    private Set<String> fetchGroupSet(String user) throws IOException {
       long startMs = timer.monotonicNow();
-      List<String> groupList = impl.getGroups(user);
+      Set<String> groups = impl.getGroupsSet(user);
       long endMs = timer.monotonicNow();
       long deltaMs = endMs - startMs ;
       UserGroupInformation.metrics.addGetGroups(deltaMs);
@@ -376,8 +420,7 @@ public class Groups {
         LOG.warn("Potential performance problem: getGroups(user=" + user +") " +
           "took " + deltaMs + " milliseconds.");
       }
-
-      return groupList;
+      return groups;
     }
   }
 

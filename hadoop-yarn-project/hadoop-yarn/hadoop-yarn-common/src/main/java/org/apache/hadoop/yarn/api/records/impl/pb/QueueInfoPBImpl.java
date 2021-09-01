@@ -19,24 +19,29 @@
 package org.apache.hadoop.yarn.api.records.impl.pb;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 import org.apache.hadoop.classification.InterfaceAudience.Private;
 import org.apache.hadoop.classification.InterfaceStability.Unstable;
 import org.apache.hadoop.yarn.api.records.ApplicationReport;
+import org.apache.hadoop.yarn.api.records.QueueConfigurations;
 import org.apache.hadoop.yarn.api.records.QueueInfo;
 import org.apache.hadoop.yarn.api.records.QueueState;
 import org.apache.hadoop.yarn.api.records.QueueStatistics;
 import org.apache.hadoop.yarn.proto.YarnProtos.ApplicationReportProto;
+import org.apache.hadoop.yarn.proto.YarnProtos.QueueConfigurationsMapProto;
+import org.apache.hadoop.yarn.proto.YarnProtos.QueueConfigurationsProto;
 import org.apache.hadoop.yarn.proto.YarnProtos.QueueInfoProto;
 import org.apache.hadoop.yarn.proto.YarnProtos.QueueInfoProtoOrBuilder;
 import org.apache.hadoop.yarn.proto.YarnProtos.QueueStateProto;
 import org.apache.hadoop.yarn.proto.YarnProtos.QueueStatisticsProto;
 
-import com.google.protobuf.TextFormat;
+import org.apache.hadoop.thirdparty.protobuf.TextFormat;
 
 @Private
 @Unstable
@@ -49,7 +54,8 @@ public class QueueInfoPBImpl extends QueueInfo {
   List<ApplicationReport> applicationsList;
   List<QueueInfo> childQueuesList;
   Set<String> accessibleNodeLabels;
-  
+  Map<String, QueueConfigurations> queueConfigurations;
+
   public QueueInfoPBImpl() {
     builder = QueueInfoProto.newBuilder();
   }
@@ -96,6 +102,12 @@ public class QueueInfoPBImpl extends QueueInfo {
   }
 
   @Override
+  public String getQueuePath() {
+    QueueInfoProtoOrBuilder p = viaProto ? proto : builder;
+    return (p.hasQueuePath()) ? p.getQueuePath() : null;
+  }
+
+  @Override
   public QueueState getQueueState() {
     QueueInfoProtoOrBuilder p = viaProto ? proto : builder;
     if (!p.hasState()) {
@@ -116,6 +128,30 @@ public class QueueInfoPBImpl extends QueueInfo {
   public void setCapacity(float capacity) {
     maybeInitBuilder();
     builder.setCapacity(capacity);
+  }
+
+  @Override
+  public float getWeight() {
+    QueueInfoProtoOrBuilder p = viaProto ? proto : builder;
+    return (p.hasWeight()) ? p.getWeight() : -1;
+  }
+
+  @Override
+  public void setWeight(float weight) {
+    maybeInitBuilder();
+    builder.setWeight(weight);
+  }
+
+  @Override
+  public int getMaxParallelApps() {
+    QueueInfoProtoOrBuilder p = viaProto ? proto : builder;
+    return (p.hasMaxParallelApps()) ? p.getMaxParallelApps() : -1;
+  }
+
+  @Override
+  public void setMaxParallelApps(int weight) {
+    maybeInitBuilder();
+    builder.setMaxParallelApps(weight);
   }
 
   @Override
@@ -146,6 +182,16 @@ public class QueueInfoPBImpl extends QueueInfo {
       return;
     }
     builder.setQueueName(queueName);
+  }
+
+  @Override
+  public void setQueuePath(String queuePath) {
+    maybeInitBuilder();
+    if (queuePath == null) {
+      builder.clearQueuePath();
+      return;
+    }
+    builder.setQueuePath(queuePath);
   }
 
   @Override
@@ -279,6 +325,46 @@ public class QueueInfoPBImpl extends QueueInfo {
     builder.addAllChildQueues(iterable);
   }
 
+  private void addQueueConfigurations() {
+    maybeInitBuilder();
+    builder.clearQueueConfigurationsMap();
+    if (queueConfigurations == null) {
+      return;
+    }
+    Iterable<? extends QueueConfigurationsMapProto> values =
+        new Iterable<QueueConfigurationsMapProto>() {
+
+      @Override
+      public Iterator<QueueConfigurationsMapProto> iterator() {
+        return new Iterator<QueueConfigurationsMapProto>() {
+          private Iterator<String> iterator =
+              queueConfigurations.keySet().iterator();
+
+          @Override
+          public boolean hasNext() {
+            return iterator.hasNext();
+          }
+
+          @Override
+          public QueueConfigurationsMapProto next() {
+            String key = iterator.next();
+            return QueueConfigurationsMapProto.newBuilder()
+                .setPartitionName(key)
+                .setQueueConfigurations(
+                    convertToProtoFormat(queueConfigurations.get(key)))
+                .build();
+          }
+
+          @Override
+          public void remove() {
+            throw new UnsupportedOperationException();
+          }
+        };
+      }
+    };
+    this.builder.addAllQueueConfigurationsMap(values);
+  }
+
   private void mergeLocalToBuilder() {
     if (this.childQueuesList != null) {
       addChildQueuesInfoToProto();
@@ -289,6 +375,9 @@ public class QueueInfoPBImpl extends QueueInfo {
     if (this.accessibleNodeLabels != null) {
       builder.clearAccessibleNodeLabels();
       builder.addAllAccessibleNodeLabels(this.accessibleNodeLabels);
+    }
+    if (this.queueConfigurations != null) {
+      addQueueConfigurations();
     }
   }
 
@@ -327,11 +416,21 @@ public class QueueInfoPBImpl extends QueueInfo {
   private QueueState convertFromProtoFormat(QueueStateProto q) {
     return ProtoUtils.convertFromProtoFormat(q);
   }
-  
+
   private QueueStateProto convertToProtoFormat(QueueState queueState) {
     return ProtoUtils.convertToProtoFormat(queueState);
   }
-  
+
+  private QueueConfigurationsPBImpl convertFromProtoFormat(
+      QueueConfigurationsProto q) {
+    return new QueueConfigurationsPBImpl(q);
+  }
+
+  private QueueConfigurationsProto convertToProtoFormat(
+      QueueConfigurations q) {
+    return ((QueueConfigurationsPBImpl)q).getProto();
+  }
+
   @Override
   public void setAccessibleNodeLabels(Set<String> nodeLabels) {
     maybeInitBuilder();
@@ -407,5 +506,51 @@ public class QueueInfoPBImpl extends QueueInfo {
   public void setPreemptionDisabled(boolean preemptionDisabled) {
     maybeInitBuilder();
     builder.setPreemptionDisabled(preemptionDisabled);
+  }
+
+  private void initQueueConfigurations() {
+    if (queueConfigurations != null) {
+      return;
+    }
+    QueueInfoProtoOrBuilder p = viaProto ? proto : builder;
+    List<QueueConfigurationsMapProto> lists = p.getQueueConfigurationsMapList();
+    queueConfigurations =
+        new HashMap<String, QueueConfigurations>(lists.size());
+    for (QueueConfigurationsMapProto queueConfigurationsProto : lists) {
+      queueConfigurations.put(queueConfigurationsProto.getPartitionName(),
+          convertFromProtoFormat(
+              queueConfigurationsProto.getQueueConfigurations()));
+    }
+  }
+
+  @Override
+  public Map<String, QueueConfigurations> getQueueConfigurations() {
+    initQueueConfigurations();
+    return queueConfigurations;
+  }
+
+  @Override
+  public void setQueueConfigurations(
+      Map<String, QueueConfigurations> queueConfigurations) {
+    if (queueConfigurations == null) {
+      return;
+    }
+    initQueueConfigurations();
+    this.queueConfigurations.clear();
+    this.queueConfigurations.putAll(queueConfigurations);
+  }
+
+  @Override
+  public Boolean getIntraQueuePreemptionDisabled() {
+    QueueInfoProtoOrBuilder p = viaProto ? proto : builder;
+    return (p.hasIntraQueuePreemptionDisabled()) ? p
+        .getIntraQueuePreemptionDisabled() : null;
+  }
+
+  @Override
+  public void setIntraQueuePreemptionDisabled(
+      boolean intraQueuePreemptionDisabled) {
+    maybeInitBuilder();
+    builder.setIntraQueuePreemptionDisabled(intraQueuePreemptionDisabled);
   }
 }

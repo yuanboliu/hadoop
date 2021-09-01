@@ -23,14 +23,17 @@ import java.util.Comparator;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.yarn.api.records.ApplicationAttemptId;
 import org.apache.hadoop.yarn.api.records.NodeId;
+import org.apache.hadoop.yarn.api.records.Priority;
 import org.apache.hadoop.yarn.api.records.Resource;
 import org.apache.hadoop.yarn.server.resourcemanager.RMContext;
+import org.apache.hadoop.yarn.server.resourcemanager.scheduler.activities.ActivitiesManager;
 import org.apache.hadoop.yarn.server.resourcemanager.scheduler.ResourceUsage;
 import org.apache.hadoop.yarn.server.resourcemanager.scheduler.SchedulerHealth;
 import org.apache.hadoop.yarn.server.resourcemanager.scheduler.capacity.preemption.PreemptionManager;
 import org.apache.hadoop.yarn.server.resourcemanager.scheduler.common.fica.FiCaSchedulerApp;
 import org.apache.hadoop.yarn.server.resourcemanager.scheduler.common.fica.FiCaSchedulerNode;
 import org.apache.hadoop.yarn.server.resourcemanager.security.RMContainerTokenSecretManager;
+import org.apache.hadoop.yarn.util.Clock;
 import org.apache.hadoop.yarn.util.resource.ResourceCalculator;
 
 /**
@@ -59,10 +62,6 @@ public interface CapacitySchedulerContext {
   Configuration getConf();
 
   ResourceCalculator getResourceCalculator();
-
-  Comparator<CSQueue> getNonPartitionedQueueComparator();
-  
-  PartitionedQueueComparator getPartitionedQueueComparator();
   
   FiCaSchedulerNode getNode(NodeId nodeId);
 
@@ -80,4 +79,27 @@ public interface CapacitySchedulerContext {
    *         cluster.
    */
   ResourceUsage getClusterResourceUsage();
+
+  ActivitiesManager getActivitiesManager();
+
+  CapacitySchedulerQueueManager getCapacitySchedulerQueueManager();
+
+  /**
+   *
+   * @return Max Cluster level App priority.
+   */
+  Priority getMaxClusterLevelAppPriority();
+
+  /**
+   * Returns if configuration is mutable.
+   * @return if configuration is mutable
+   */
+  boolean isConfigurationMutable();
+
+  /**
+   * Get clock from scheduler
+   * @return Clock
+   */
+  Clock getClock();
+
 }

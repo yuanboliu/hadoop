@@ -96,7 +96,7 @@ public class TestDistCpWithAcls {
 
   @AfterClass
   public static void shutdown() {
-    IOUtils.cleanup(null, fs);
+    IOUtils.cleanupWithLogger(null, fs);
     if (cluster != null) {
       cluster.shutdown();
     }
@@ -196,7 +196,7 @@ public class TestDistCpWithAcls {
 
     @Override
     public FileStatus[] listStatus(Path f) throws IOException {
-      return null;
+      return new FileStatus[0];
     }
 
     @Override

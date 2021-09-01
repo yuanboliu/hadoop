@@ -17,23 +17,34 @@
  */
 package org.apache.hadoop.hdfs.server.namenode;
 
+import org.apache.hadoop.ha.HAServiceProtocol.HAServiceState;
+import org.apache.hadoop.hdfs.server.blockmanagement.BlockInfo;
+import org.apache.hadoop.hdfs.server.blockmanagement.BlockManager;
+import org.apache.hadoop.hdfs.server.protocol.SlowDiskReports;
+
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.spy;
 
 import java.io.File;
 import java.io.IOException;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 
+import org.apache.commons.lang3.reflect.FieldUtils;
 import org.apache.hadoop.fs.UnresolvedLinkException;
 import org.apache.hadoop.fs.permission.FsPermission;
 import org.apache.hadoop.fs.permission.PermissionStatus;
 import org.apache.hadoop.hdfs.DFSTestUtil;
+import org.apache.hadoop.hdfs.protocol.Block;
+import org.apache.hadoop.hdfs.protocol.BlockType;
 import org.apache.hadoop.hdfs.protocol.DatanodeID;
 import org.apache.hadoop.hdfs.protocol.HdfsFileStatus;
 import org.apache.hadoop.hdfs.protocol.LocatedBlocks;
 import org.apache.hadoop.hdfs.security.token.delegation.DelegationTokenSecretManager;
 import org.apache.hadoop.hdfs.server.blockmanagement.BlockManagerTestUtil;
 import org.apache.hadoop.hdfs.server.blockmanagement.DatanodeDescriptor;
+import org.apache.hadoop.hdfs.server.blockmanagement.DatanodeStorageInfo;
 import org.apache.hadoop.hdfs.server.common.Storage.StorageDirectory;
+import org.apache.hadoop.hdfs.server.namenode.FSDirectory.DirOp;
 import org.apache.hadoop.hdfs.server.namenode.FSEditLogOp.MkdirOp;
 import org.apache.hadoop.hdfs.server.namenode.LeaseManager.Lease;
 import org.apache.hadoop.hdfs.server.namenode.ha.EditLogTailer;
@@ -41,11 +52,18 @@ import org.apache.hadoop.hdfs.server.protocol.DatanodeRegistration;
 import org.apache.hadoop.hdfs.server.protocol.HeartbeatResponse;
 import org.apache.hadoop.hdfs.server.protocol.NamenodeCommand;
 import org.apache.hadoop.hdfs.server.protocol.NamenodeRegistration;
+import org.apache.hadoop.hdfs.server.protocol.SlowPeerReports;
 import org.apache.hadoop.ipc.Server;
 import org.apache.hadoop.ipc.StandbyException;
 import org.apache.hadoop.security.AccessControlException;
+import org.apache.hadoop.test.Whitebox;
+import org.mockito.ArgumentMatcher;
+import org.mockito.ArgumentMatchers;
 import org.mockito.Mockito;
-import org.mockito.internal.util.reflection.Whitebox;
+import org.mockito.invocation.InvocationOnMock;
+import org.mockito.stubbing.Answer;
+
+import static org.apache.hadoop.hdfs.server.namenode.NameNodeHttpServer.FSIMAGE_ATTRIBUTE_KEY;
 
 /**
  * This is a utility class to expose NameNode functionality for unit tests.
@@ -68,12 +86,19 @@ public class NameNodeAdapter {
   }
   
   public static HdfsFileStatus getFileInfo(NameNode namenode, String src,
-      boolean resolveLink) throws AccessControlException, UnresolvedLinkException,
-        StandbyException, IOException {
+      boolean resolveLink, boolean needLocation, boolean needBlockToken)
+      throws AccessControlException, UnresolvedLinkException, StandbyException,
+      IOException {
+    final FSPermissionChecker pc =
+        namenode.getNamesystem().getPermissionChecker();
+    // consistent with FSNamesystem#getFileInfo()
+    final String operationName = needBlockToken ? "open" : "getfileinfo";
+    FSPermissionChecker.setOperationType(operationName);
     namenode.getNamesystem().readLock();
     try {
       return FSDirStatAndListingOp.getFileInfo(namenode.getNamesystem()
-          .getFSDirectory(), src, resolveLink);
+          .getFSDirectory(), pc, src, resolveLink, needLocation,
+          needBlockToken);
     } finally {
       namenode.getNamesystem().readUnlock();
     }
@@ -112,6 +137,17 @@ public class NameNodeAdapter {
     return ((NameNodeRpcServer)namenode.getRpcServer()).clientRpcServer;
   }
 
+  /**
+   * Sets the FSImage used in the NameNodeHttpServer and returns the old value.
+   */
+  public static FSImage getAndSetFSImageInHttpServer(NameNode namenode,
+      FSImage fsImage) {
+    FSImage previous = (FSImage) namenode.httpServer.getHttpServer()
+        .getAttribute(FSIMAGE_ATTRIBUTE_KEY);
+    namenode.httpServer.setFSImage(fsImage);
+    return  previous;
+  }
+
   public static DelegationTokenSecretManager getDtSecretManager(
       final FSNamesystem ns) {
     return ns.getDelegationTokenSecretManager();
@@ -121,7 +157,8 @@ public class NameNodeAdapter {
       DatanodeDescriptor dd, FSNamesystem namesystem) throws IOException {
     return namesystem.handleHeartbeat(nodeReg,
         BlockManagerTestUtil.getStorageReportsForDatanode(dd),
-        dd.getCacheCapacity(), dd.getCacheRemaining(), 0, 0, 0, null, true);
+        dd.getCacheCapacity(), dd.getCacheRemaining(), 0, 0, 0, null, true,
+        SlowPeerReports.EMPTY_REPORT, SlowDiskReports.EMPTY_REPORT);
   }
 
   public static boolean setReplication(final FSNamesystem ns,
@@ -143,9 +180,11 @@ public class NameNodeAdapter {
     final FSNamesystem fsn = nn.getNamesystem();
     INode inode;
     try {
-      inode = fsn.getFSDirectory().getINode(path, false);
+      inode = fsn.getFSDirectory().getINode(path, DirOp.READ);
     } catch (UnresolvedLinkException e) {
       throw new RuntimeException("Lease manager should not support symlinks");
+    } catch (IOException ioe) {
+      return null; // unresolvable path, ex. parent dir is a file
     }
     return inode == null ? null : fsn.leaseManager.getLease((INodeFile) inode);
   }
@@ -162,6 +201,11 @@ public class NameNodeAdapter {
   public static long getLeaseRenewalTime(NameNode nn, String path) {
     Lease l = getLeaseForPath(nn, path);
     return l == null ? -1 : l.getLastUpdate();
+  }
+
+
+  public static HAServiceState getServiceState(NameNode nn) {
+    return nn.getServiceState();
   }
 
   /**
@@ -183,7 +227,82 @@ public class NameNodeAdapter {
   public static long[] getStats(final FSNamesystem fsn) {
     return fsn.getStats();
   }
-  
+
+  public static long getGenerationStamp(final FSNamesystem fsn)
+      throws IOException {
+    return fsn.getBlockManager().getBlockIdManager().getGenerationStamp();
+  }
+
+  public static long getImpendingGenerationStamp(final FSNamesystem fsn) {
+    return fsn.getBlockManager().getBlockIdManager()
+        .getImpendingGenerationStamp();
+  }
+
+  public static BlockInfo addBlockNoJournal(final FSNamesystem fsn,
+      final String src, final DatanodeStorageInfo[] targets)
+      throws IOException {
+    fsn.writeLock();
+    try {
+      INodeFile file = (INodeFile)fsn.getFSDirectory().getINode(src);
+      Block newBlock = fsn.createNewBlock(BlockType.CONTIGUOUS);
+      INodesInPath inodesInPath = INodesInPath.fromINode(file);
+      FSDirWriteFileOp.saveAllocatedBlock(
+          fsn, src, inodesInPath, newBlock, targets, BlockType.CONTIGUOUS);
+      return file.getLastBlock();
+    } finally {
+      fsn.writeUnlock();
+    }
+  }
+
+  public static void persistBlocks(final FSNamesystem fsn,
+      final String src, final INodeFile file) throws IOException {
+    fsn.writeLock();
+    try {
+      FSDirWriteFileOp.persistBlocks(fsn.getFSDirectory(), src, file, true);
+    } finally {
+      fsn.writeUnlock();
+    }
+  }
+
+  public static BlockInfo getStoredBlock(final FSNamesystem fsn,
+      final Block b) {
+    return fsn.getStoredBlock(b);
+  }
+
+  public static FSNamesystem spyOnNamesystem(NameNode nn) {
+    FSNamesystem fsnSpy = Mockito.spy(nn.getNamesystem());
+    FSNamesystem fsnOld = nn.namesystem;
+    fsnOld.writeLock();
+    fsnSpy.writeLock();
+    nn.namesystem = fsnSpy;
+    try {
+      FieldUtils.writeDeclaredField(
+          (NameNodeRpcServer)nn.getRpcServer(), "namesystem", fsnSpy, true);
+      FieldUtils.writeDeclaredField(
+          fsnSpy.getBlockManager(), "namesystem", fsnSpy, true);
+      FieldUtils.writeDeclaredField(
+          fsnSpy.getLeaseManager(), "fsnamesystem", fsnSpy, true);
+      FieldUtils.writeDeclaredField(
+          fsnSpy.getBlockManager().getDatanodeManager(),
+          "namesystem", fsnSpy, true);
+      FieldUtils.writeDeclaredField(
+          BlockManagerTestUtil.getHeartbeatManager(fsnSpy.getBlockManager()),
+          "namesystem", fsnSpy, true);
+    } catch (IllegalAccessException e) {
+      throw new RuntimeException("Cannot set spy FSNamesystem", e);
+    } finally {
+      fsnSpy.writeUnlock();
+      fsnOld.writeUnlock();
+    }
+    return fsnSpy;
+  }
+
+  public static BlockManager spyOnBlockManager(NameNode nn) {
+    BlockManager bmSpy = Mockito.spy(nn.getNamesystem().getBlockManager());
+    nn.getNamesystem().setBlockManagerForTesting(bmSpy);
+    return bmSpy;
+  }
+
   public static ReentrantReadWriteLock spyOnFsLock(FSNamesystem fsn) {
     ReentrantReadWriteLock spy = Mockito.spy(fsn.getFsLockForTests());
     fsn.setFsLockForTests(spy);
@@ -206,7 +325,34 @@ public class NameNodeAdapter {
     }
     return spyEditLog;
   }
-  
+
+  /**
+   * Spy on EditLog to delay execution of doEditTransaction() for MkdirOp.
+   */
+  public static FSEditLog spyDelayMkDirTransaction(
+      final NameNode nn, final long delay) {
+    FSEditLog realEditLog = nn.getFSImage().getEditLog();
+    FSEditLogAsync spyEditLog = (FSEditLogAsync) spy(realEditLog);
+    DFSTestUtil.setEditLogForTesting(nn.getNamesystem(), spyEditLog);
+    Answer<Boolean> ans = new Answer<Boolean>() {
+      @Override
+      public Boolean answer(InvocationOnMock invocation) throws Throwable {
+        Thread.sleep(delay);
+        return (Boolean) invocation.callRealMethod();
+      }
+    };
+    ArgumentMatcher<FSEditLogOp> am = new ArgumentMatcher<FSEditLogOp>() {
+      @Override
+      public boolean matches(FSEditLogOp argument) {
+        FSEditLogOp op = (FSEditLogOp) argument;
+        return op.opCode == FSEditLogOpCodes.OP_MKDIR;
+      }
+    };
+    doAnswer(ans).when(spyEditLog).doEditTransaction(
+        ArgumentMatchers.argThat(am));
+    return spyEditLog;
+  }
+
   public static JournalSet spyOnJournalSet(NameNode nn) {
     FSEditLog editLog = nn.getFSImage().getEditLog();
     JournalSet js = Mockito.spy(editLog.getJournalSet());

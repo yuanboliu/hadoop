@@ -19,9 +19,9 @@
 package org.apache.hadoop.mapreduce;
 
 
-import static org.mockito.Matchers.any;
-import static org.mockito.Matchers.anyInt;
-import static org.mockito.Matchers.isA;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.isA;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
@@ -33,7 +33,9 @@ import java.io.IOException;
 import java.io.LineNumberReader;
 import java.io.StringReader;
 
-import junit.framework.TestCase;
+import org.junit.Before;
+import org.junit.Test;
+import static org.junit.Assert.*;
 
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.mapred.TaskReport;
@@ -43,9 +45,6 @@ import org.apache.log4j.Layout;
 import org.apache.log4j.Level;
 import org.apache.log4j.Logger;
 import org.apache.log4j.WriterAppender;
-import org.junit.Before;
-import org.junit.Test;
-import org.mockito.invocation.InvocationOnMock;
 import org.mockito.stubbing.Answer;
 
 /**
@@ -53,7 +52,7 @@ import org.mockito.stubbing.Answer;
  * job monitoring is correct and prints 100% for map and reduce before 
  * successful completion.
  */
-public class TestJobMonitorAndPrint extends TestCase {
+public class TestJobMonitorAndPrint {
   private Job job;
   private Configuration conf;
   private ClientProtocol clientProtocol;
@@ -81,15 +80,9 @@ public class TestJobMonitorAndPrint extends TestCase {
         1f, 1f, State.SUCCEEDED, JobPriority.HIGH, "tmp-user", "tmp-jobname",
         "tmp-queue", "tmp-jobfile", "tmp-url", true);
 
-    doAnswer(
-        new Answer<TaskCompletionEvent[]>() {
-          @Override
-          public TaskCompletionEvent[] answer(InvocationOnMock invocation)
-              throws Throwable {
-            return new TaskCompletionEvent[0];
-          }
-        }
-        ).when(job).getTaskCompletionEvents(anyInt(), anyInt());
+    doAnswer((Answer<TaskCompletionEvent[]>) invocation ->
+        TaskCompletionEvent.EMPTY_ARRAY).when(job)
+        .getTaskCompletionEvents(anyInt(), anyInt());
 
     doReturn(new TaskReport[5]).when(job).getTaskReports(isA(TaskType.class));
     when(clientProtocol.getJobStatus(any(JobID.class))).thenReturn(jobStatus_1, jobStatus_2);

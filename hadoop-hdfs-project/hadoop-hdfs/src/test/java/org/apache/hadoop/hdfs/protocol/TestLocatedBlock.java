@@ -18,19 +18,20 @@
 
 package org.apache.hadoop.hdfs.protocol;
 
-import org.apache.commons.logging.Log;
-import org.apache.commons.logging.LogFactory;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.apache.hadoop.hdfs.server.blockmanagement.DatanodeDescriptor;
 import org.junit.Test;
 
 import static org.junit.Assert.fail;
 
 public class TestLocatedBlock {
-  public static final Log LOG = LogFactory.getLog(TestLocatedBlock.class);
+  public static final Logger LOG =
+      LoggerFactory.getLogger(TestLocatedBlock.class);
 
   @Test(timeout = 10000)
   public void testAddCachedLocWhenEmpty() {
-    DatanodeInfo[] ds = new DatanodeInfo[0];
+    DatanodeInfo[] ds = DatanodeInfo.EMPTY_ARRAY;
     ExtendedBlock b1 = new ExtendedBlock("bpid", 1, 1, 1);
     LocatedBlock l1 = new LocatedBlock(b1, ds);
     DatanodeDescriptor dn = new DatanodeDescriptor(

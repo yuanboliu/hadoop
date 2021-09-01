@@ -18,15 +18,16 @@
 package org.apache.hadoop.hdfs.server.datanode;
 
 import static org.junit.Assert.assertFalse;
-import static org.mockito.Matchers.any;
-import static org.mockito.Matchers.anyString;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.times;
 
 import java.io.IOException;
 
-import org.apache.commons.logging.Log;
-import org.apache.commons.logging.LogFactory;
+import org.mockito.exceptions.base.MockitoAssertionError;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.hdfs.*;
 import org.apache.hadoop.hdfs.protocol.Block;
@@ -48,7 +49,8 @@ import org.mockito.Mockito;
  * block additions/deletions.
  */
 public class TestIncrementalBlockReports {
-  public static final Log LOG = LogFactory.getLog(TestIncrementalBlockReports.class);
+  public static final Logger LOG =
+      LoggerFactory.getLogger(TestIncrementalBlockReports.class);
 
   private static final short DN_COUNT = 1;
   private static final long DUMMY_BLOCK_ID = 5678;
@@ -155,7 +157,7 @@ public class TestIncrementalBlockReports {
 
       // Sleep for a very short time since IBR is generated
       // asynchronously.
-      Thread.sleep(2000);
+      Thread.sleep(1000);
 
       // Ensure that no block report was generated immediately.
       // Deleted blocks are reported when the IBR timer elapses.
@@ -166,13 +168,24 @@ public class TestIncrementalBlockReports {
 
       // Trigger a heartbeat, this also triggers an IBR.
       DataNodeTestUtils.triggerHeartbeat(singletonDn);
-      Thread.sleep(2000);
 
       // Ensure that the deleted block is reported.
-      Mockito.verify(nnSpy, times(1)).blockReceivedAndDeleted(
-          any(DatanodeRegistration.class),
-          anyString(),
-          any(StorageReceivedDeletedBlocks[].class));
+      int retries = 0;
+      while (true) {
+        try {
+          Mockito.verify(nnSpy, atLeastOnce()).blockReceivedAndDeleted(
+              any(DatanodeRegistration.class),
+              anyString(),
+              any(StorageReceivedDeletedBlocks[].class));
+          break;
+        } catch (MockitoAssertionError e) {
+          if (retries > 7) {
+            throw e;
+          }
+          retries++;
+          Thread.sleep(2000);
+        }
+      }
 
     } finally {
       cluster.shutdown();

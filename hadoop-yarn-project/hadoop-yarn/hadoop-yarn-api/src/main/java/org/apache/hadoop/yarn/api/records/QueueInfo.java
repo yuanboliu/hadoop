@@ -19,6 +19,7 @@
 package org.apache.hadoop.yarn.api.records;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 import org.apache.hadoop.classification.InterfaceAudience.Private;
@@ -40,9 +41,11 @@ import org.apache.hadoop.yarn.util.Records;
  *   <li>Child queues.</li>
  *   <li>Running applications.</li>
  *   <li>{@link QueueState} of the queue.</li>
+ *   <li>{@link QueueConfigurations} of the queue.</li>
  * </ul>
  *
  * @see QueueState
+ * @see QueueConfigurations
  * @see ApplicationClientProtocol#getQueueInfo(org.apache.hadoop.yarn.api.protocolrecords.GetQueueInfoRequest)
  */
 @Public
@@ -51,14 +54,17 @@ public abstract class QueueInfo {
   
   @Private
   @Unstable
-  public static QueueInfo newInstance(String queueName, float capacity,
+  public static QueueInfo newInstance(String queueName,
+      String queuePath, float capacity,
       float maximumCapacity, float currentCapacity,
       List<QueueInfo> childQueues, List<ApplicationReport> applications,
       QueueState queueState, Set<String> accessibleNodeLabels,
       String defaultNodeLabelExpression, QueueStatistics queueStatistics,
-      boolean preemptionDisabled) {
+      boolean preemptionDisabled, float weight,
+      int maxParallelApps) {
     QueueInfo queueInfo = Records.newRecord(QueueInfo.class);
     queueInfo.setQueueName(queueName);
+    queueInfo.setQueuePath(queuePath);
     queueInfo.setCapacity(capacity);
     queueInfo.setMaximumCapacity(maximumCapacity);
     queueInfo.setCurrentCapacity(currentCapacity);
@@ -69,6 +75,49 @@ public abstract class QueueInfo {
     queueInfo.setDefaultNodeLabelExpression(defaultNodeLabelExpression);
     queueInfo.setQueueStatistics(queueStatistics);
     queueInfo.setPreemptionDisabled(preemptionDisabled);
+    queueInfo.setWeight(weight);
+    queueInfo.setMaxParallelApps(maxParallelApps);
+    return queueInfo;
+  }
+
+  @Private
+  @Unstable
+  public static QueueInfo newInstance(String queueName,
+      String queuePath, float capacity,
+      float maximumCapacity, float currentCapacity,
+      List<QueueInfo> childQueues, List<ApplicationReport> applications,
+      QueueState queueState, Set<String> accessibleNodeLabels,
+      String defaultNodeLabelExpression, QueueStatistics queueStatistics,
+      boolean preemptionDisabled, float weight, int maxParallelApps,
+      Map<String, QueueConfigurations> queueConfigurations) {
+    QueueInfo queueInfo = QueueInfo.newInstance(queueName, queuePath, capacity,
+        maximumCapacity, currentCapacity,
+        childQueues, applications,
+        queueState, accessibleNodeLabels,
+        defaultNodeLabelExpression, queueStatistics,
+        preemptionDisabled, weight, maxParallelApps);
+    queueInfo.setQueueConfigurations(queueConfigurations);
+    return queueInfo;
+  }
+
+  @Private
+  @Unstable
+  public static QueueInfo newInstance(String queueName,
+      String queuePath, float capacity,
+      float maximumCapacity, float currentCapacity,
+      List<QueueInfo> childQueues, List<ApplicationReport> applications,
+      QueueState queueState, Set<String> accessibleNodeLabels,
+      String defaultNodeLabelExpression, QueueStatistics queueStatistics,
+      boolean preemptionDisabled, float weight, int maxParallelApps,
+      Map<String, QueueConfigurations> queueConfigurations,
+      boolean intraQueuePreemptionDisabled) {
+    QueueInfo queueInfo = QueueInfo.newInstance(queueName, queuePath, capacity,
+        maximumCapacity, currentCapacity,
+        childQueues, applications,
+        queueState, accessibleNodeLabels,
+        defaultNodeLabelExpression, queueStatistics,
+        preemptionDisabled, weight, maxParallelApps, queueConfigurations);
+    queueInfo.setIntraQueuePreemptionDisabled(intraQueuePreemptionDisabled);
     return queueInfo;
   }
 
@@ -83,6 +132,18 @@ public abstract class QueueInfo {
   @Private
   @Unstable
   public abstract void setQueueName(String queueName);
+
+  /**
+   * Get the <em>path</em> of the queue.
+   * @return <em>path</em> of the queue
+   */
+  @Public
+  @Stable
+  public abstract String getQueuePath();
+
+  @Private
+  @Unstable
+  public abstract void setQueuePath(String queuePath);
   
   /**
    * Get the <em>configured capacity</em> of the queue.
@@ -95,6 +156,30 @@ public abstract class QueueInfo {
   @Private
   @Unstable
   public abstract void setCapacity(float capacity);
+
+  /**
+   * Get the <em>configured weight</em> of the queue.
+   * @return <em>configured weight</em> of the queue
+   */
+  @Public
+  @Stable
+  public abstract float getWeight();
+
+  @Private
+  @Unstable
+  public abstract void setWeight(float weight);
+
+  /**
+   * Get the <em>configured max parallel apps</em> of the queue.
+   * @return <em>configured max parallel apps</em> of the queue
+   */
+  @Public
+  @Stable
+  public abstract int getMaxParallelApps();
+
+  @Private
+  @Unstable
+  public abstract void setMaxParallelApps(int maxParallelApps);
   
   /**
    * Get the <em>maximum capacity</em> of the queue.
@@ -219,4 +304,39 @@ public abstract class QueueInfo {
   @Private
   @Unstable
   public abstract void setPreemptionDisabled(boolean preemptionDisabled);
+
+  /**
+   * Get the per-node-label queue configurations of the queue.
+   *
+   * @return the per-node-label queue configurations of the queue.
+   */
+  @Public
+  @Stable
+  public abstract Map<String, QueueConfigurations> getQueueConfigurations();
+
+  /**
+   * Set the per-node-label queue configurations for the queue.
+   *
+   * @param queueConfigurations
+   *          the queue configurations
+   */
+  @Private
+  @Unstable
+  public abstract void setQueueConfigurations(
+      Map<String, QueueConfigurations> queueConfigurations);
+
+
+  /**
+   * Get the intra-queue preemption status of the queue.
+   * @return if property is not in proto, return null;
+   *        otherwise, return intra-queue preemption status of the queue
+   */
+  @Public
+  @Stable
+  public abstract Boolean getIntraQueuePreemptionDisabled();
+
+  @Private
+  @Unstable
+  public abstract void setIntraQueuePreemptionDisabled(
+      boolean intraQueuePreemptionDisabled);
 }

@@ -47,6 +47,7 @@ import org.mockito.stubbing.Answer;
 
 import static org.hamcrest.CoreMatchers.not;
 import static org.junit.Assert.assertThat;
+import static org.mockito.ArgumentMatchers.any;
 
 public class TestAuthenticationFilter {
 
@@ -304,6 +305,34 @@ public class TestAuthenticationFilter {
       filter.destroy();
     }
   }
+
+  @Test
+  public void testEmptySecretFileFallbacksToRandomSecret() throws Exception {
+    AuthenticationFilter filter = new AuthenticationFilter();
+    try {
+      FilterConfig config = Mockito.mock(FilterConfig.class);
+      Mockito.when(config.getInitParameter(
+              AuthenticationFilter.AUTH_TYPE)).thenReturn("simple");
+      File secretFile = File.createTempFile("test_empty_secret", ".txt");
+      secretFile.deleteOnExit();
+      Assert.assertTrue(secretFile.exists());
+      Mockito.when(config.getInitParameter(
+              AuthenticationFilter.SIGNATURE_SECRET_FILE))
+              .thenReturn(secretFile.getAbsolutePath());
+      Mockito.when(config.getInitParameterNames()).thenReturn(
+              new Vector<>(Arrays.asList(AuthenticationFilter.AUTH_TYPE,
+                      AuthenticationFilter.SIGNATURE_SECRET_FILE)).elements());
+      ServletContext context = Mockito.mock(ServletContext.class);
+      Mockito.when(context.getAttribute(
+              AuthenticationFilter.SIGNER_SECRET_PROVIDER_ATTRIBUTE))
+              .thenReturn(null);
+      Mockito.when(config.getServletContext()).thenReturn(context);
+      filter.init(config);
+      Assert.assertTrue(filter.isRandomSecret());
+    } finally {
+      filter.destroy();
+    }
+  }
   
   @Test
   public void testInitCaseSensitivity() throws Exception {
@@ -533,7 +562,7 @@ public class TestAuthenticationFilter {
             return null;
           }
         }
-      ).when(chain).doFilter(Mockito.<ServletRequest>anyObject(), Mockito.<ServletResponse>anyObject());
+      ).when(chain).doFilter(any(), any());
 
       Mockito.when(response.containsHeader("WWW-Authenticate")).thenReturn(true);
       filter.doFilter(request, response, chain);
@@ -616,8 +645,8 @@ public class TestAuthenticationFilter {
         Assert.assertNotNull("cookie missing", v);
         Assert.assertTrue(v.contains("u=") && v.contains("p=") && v.contains
                 ("t=") && v.contains("e=") && v.contains("s="));
-        Mockito.verify(chain).doFilter(Mockito.any(ServletRequest.class),
-                Mockito.any(ServletResponse.class));
+        Mockito.verify(chain).doFilter(any(ServletRequest.class),
+                any(ServletResponse.class));
 
         SignerSecretProvider secretProvider =
             StringSignerSecretProviderCreator.newStringSignerSecretProvider();
@@ -727,7 +756,7 @@ public class TestAuthenticationFilter {
             return null;
           }
         }
-      ).when(chain).doFilter(Mockito.<ServletRequest>anyObject(), Mockito.<ServletResponse>anyObject());
+      ).when(chain).doFilter(any(), any());
 
       filter.doFilter(request, response, chain);
 
@@ -780,7 +809,7 @@ public class TestAuthenticationFilter {
             return null;
           }
         }
-      ).when(chain).doFilter(Mockito.<ServletRequest>anyObject(), Mockito.<ServletResponse>anyObject());
+      ).when(chain).doFilter(any(), any());
 
       filter.doFilter(request, response, chain);
 
@@ -1090,8 +1119,8 @@ public class TestAuthenticationFilter {
       Assert.assertTrue(v.contains("u=") && v.contains("p=") && v.contains
           ("t=") && v.contains("i=") && v.contains("e=")
           && v.contains("s="));
-      Mockito.verify(chain).doFilter(Mockito.any(ServletRequest.class),
-          Mockito.any(ServletResponse.class));
+      Mockito.verify(chain).doFilter(any(ServletRequest.class),
+          any(ServletResponse.class));
 
       SignerSecretProvider secretProvider =
           StringSignerSecretProviderCreator.newStringSignerSecretProvider();
@@ -1134,8 +1163,8 @@ public class TestAuthenticationFilter {
 
     Mockito.verify(response).sendError(Mockito.eq(HttpServletResponse
             .SC_UNAUTHORIZED), Mockito.anyString());
-    Mockito.verify(chain, Mockito.never()).doFilter(Mockito.any
-            (ServletRequest.class), Mockito.any(ServletResponse.class));
+    Mockito.verify(chain, Mockito.never()).doFilter(
+        any(ServletRequest.class), any(ServletResponse.class));
 
     Assert.assertTrue("cookie is missing",
         cookieMap.containsKey(AuthenticatedURL.AUTH_COOKIE));
@@ -1232,6 +1261,7 @@ public class TestAuthenticationFilter {
       String tokenSigned = signer.sign(token.toString());
       Cookie cookie = new Cookie(AuthenticatedURL.AUTH_COOKIE, tokenSigned);
       Mockito.when(request.getCookies()).thenReturn(new Cookie[]{cookie});
+      Mockito.when(request.getRequestURL()).thenReturn(new StringBuffer());
 
       filter.doFilter(request, response, chain);
 

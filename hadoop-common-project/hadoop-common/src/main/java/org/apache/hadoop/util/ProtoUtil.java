@@ -21,6 +21,7 @@ package org.apache.hadoop.util;
 import java.io.DataInput;
 import java.io.IOException;
 
+import org.apache.hadoop.ipc.AlignmentContext;
 import org.apache.hadoop.ipc.CallerContext;
 import org.apache.hadoop.ipc.RPC;
 import org.apache.hadoop.ipc.protobuf.IpcConnectionContextProtos.IpcConnectionContextProto;
@@ -28,10 +29,11 @@ import org.apache.hadoop.ipc.protobuf.IpcConnectionContextProtos.UserInformation
 import org.apache.hadoop.ipc.protobuf.RpcHeaderProtos.*;
 import org.apache.hadoop.security.SaslRpcServer.AuthMethod;
 import org.apache.hadoop.security.UserGroupInformation;
-import org.apache.htrace.core.Span;
-import org.apache.htrace.core.Tracer;
+import org.apache.hadoop.tracing.Span;
+import org.apache.hadoop.tracing.Tracer;
+import org.apache.hadoop.tracing.TraceUtils;
 
-import com.google.protobuf.ByteString;
+import org.apache.hadoop.thirdparty.protobuf.ByteString;
 
 public abstract class ProtoUtil {
 
@@ -165,6 +167,13 @@ public abstract class ProtoUtil {
   public static RpcRequestHeaderProto makeRpcRequestHeader(RPC.RpcKind rpcKind,
       RpcRequestHeaderProto.OperationProto operation, int callId,
       int retryCount, byte[] uuid) {
+    return makeRpcRequestHeader(rpcKind, operation, callId, retryCount, uuid,
+        null);
+  }
+
+  public static RpcRequestHeaderProto makeRpcRequestHeader(RPC.RpcKind rpcKind,
+      RpcRequestHeaderProto.OperationProto operation, int callId,
+      int retryCount, byte[] uuid, AlignmentContext alignmentContext) {
     RpcRequestHeaderProto.Builder result = RpcRequestHeaderProto.newBuilder();
     result.setRpcKind(convert(rpcKind)).setRpcOp(operation).setCallId(callId)
         .setRetryCount(retryCount).setClientId(ByteString.copyFrom(uuid));
@@ -172,10 +181,10 @@ public abstract class ProtoUtil {
     // Add tracing info if we are currently tracing.
     Span span = Tracer.getCurrentSpan();
     if (span != null) {
-      result.setTraceInfo(RPCTraceInfoProto.newBuilder()
-          .setTraceId(span.getSpanId().getHigh())
-          .setParentId(span.getSpanId().getLow())
-            .build());
+      RPCTraceInfoProto.Builder traceInfoProtoBuilder =
+          RPCTraceInfoProto.newBuilder().setSpanContext(
+              TraceUtils.spanContextToByteString(span.getContext()));
+      result.setTraceInfo(traceInfoProtoBuilder);
     }
 
     // Add caller context if it is not null
@@ -188,6 +197,11 @@ public abstract class ProtoUtil {
             ByteString.copyFrom(callerContext.getSignature()));
       }
       result.setCallerContext(contextBuilder);
+    }
+
+    // Add alignment context if it is not null
+    if (alignmentContext != null) {
+      alignmentContext.updateRequestState(result);
     }
 
     return result.build();

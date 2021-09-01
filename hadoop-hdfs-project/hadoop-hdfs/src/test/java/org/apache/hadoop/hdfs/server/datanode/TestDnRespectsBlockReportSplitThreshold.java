@@ -21,15 +21,14 @@ package org.apache.hadoop.hdfs.server.datanode;
 import java.io.IOException;
 import java.util.List;
 
-import org.apache.commons.logging.Log;
-import org.apache.commons.logging.LogFactory;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.hdfs.*;
 import org.apache.hadoop.hdfs.protocol.BlockListAsLongs;
 import org.apache.hadoop.hdfs.protocolPB.DatanodeProtocolClientSideTranslatorPB;
 import org.apache.hadoop.hdfs.server.namenode.NameNode;
-import org.apache.hadoop.hdfs.server.protocol.BlockReportContext;
 import org.apache.hadoop.hdfs.server.protocol.DatanodeRegistration;
 import org.apache.hadoop.hdfs.server.protocol.StorageBlockReport;
 import static org.apache.hadoop.hdfs.DFSConfigKeys.DFS_BLOCKREPORT_SPLIT_THRESHOLD_KEY;
@@ -41,9 +40,9 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mockito;
 
 import static org.hamcrest.core.Is.is;
-import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertThat;
-import static org.mockito.Matchers.*;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.times;
 
 /**
@@ -51,7 +50,8 @@ import static org.mockito.Mockito.times;
  * {@link DFSConfigKeys#DFS_BLOCKREPORT_SPLIT_THRESHOLD_KEY}
  */
 public class TestDnRespectsBlockReportSplitThreshold {
-  public static final Log LOG = LogFactory.getLog(TestStorageReport.class);
+  public static final Logger LOG =
+      LoggerFactory.getLogger(TestStorageReport.class);
 
   private static final int BLOCK_SIZE = 1024;
   private static final short REPL_FACTOR = 1;
@@ -87,34 +87,6 @@ public class TestDnRespectsBlockReportSplitThreshold {
     Path path = new Path("/" + filenamePrefix + ".dat");
     DFSTestUtil.createFile(fs, path, BLOCK_SIZE,
         blockCount * BLOCK_SIZE, BLOCK_SIZE, REPL_FACTOR, seed);
-  }
-
-  private void verifyCapturedArgumentsSplit(
-      ArgumentCaptor<StorageBlockReport[]> captor,
-      int expectedReportsPerCall,
-      int expectedTotalBlockCount) {
-    List<StorageBlockReport[]> listOfReports = captor.getAllValues();
-    int numBlocksReported = 0;
-    int storageIndex = 0;
-    int listOfReportsSize = listOfReports.size();
-    for (StorageBlockReport[] reports : listOfReports) {
-      if (storageIndex < (listOfReportsSize - 1)) {
-        assertThat(reports.length, is(expectedReportsPerCall));
-      } else {
-        assertThat(reports.length, is(listOfReportsSize));
-      }
-      for (StorageBlockReport report : reports) {
-        BlockListAsLongs blockList = report.getBlocks();
-        if (!blockList.isStorageReport()) {
-          numBlocksReported += blockList.getNumberOfBlocks();
-        } else {
-          assertEquals(blockList.getNumberOfBlocks(), -1);
-        }
-      }
-      storageIndex++;
-    }
-
-    assert(numBlocksReported >= expectedTotalBlockCount);
   }
 
   private void verifyCapturedArguments(
@@ -163,9 +135,9 @@ public class TestDnRespectsBlockReportSplitThreshold {
     Mockito.verify(nnSpy, times(cluster.getStoragesPerDatanode())).blockReport(
         any(DatanodeRegistration.class),
         anyString(),
-        captor.capture(), Mockito.<BlockReportContext>anyObject());
+        captor.capture(), any());
 
-    verifyCapturedArgumentsSplit(captor, 1, BLOCKS_IN_FILE);
+    verifyCapturedArguments(captor, 1, BLOCKS_IN_FILE);
   }
 
   /**
@@ -195,7 +167,7 @@ public class TestDnRespectsBlockReportSplitThreshold {
     Mockito.verify(nnSpy, times(1)).blockReport(
         any(DatanodeRegistration.class),
         anyString(),
-        captor.capture(), Mockito.<BlockReportContext>anyObject());
+        captor.capture(), any());
 
     verifyCapturedArguments(captor, cluster.getStoragesPerDatanode(), BLOCKS_IN_FILE);
   }
@@ -227,9 +199,9 @@ public class TestDnRespectsBlockReportSplitThreshold {
     Mockito.verify(nnSpy, times(cluster.getStoragesPerDatanode())).blockReport(
         any(DatanodeRegistration.class),
         anyString(),
-        captor.capture(), Mockito.<BlockReportContext>anyObject());
+        captor.capture(), any());
 
-    verifyCapturedArgumentsSplit(captor, 1, BLOCKS_IN_FILE);
+    verifyCapturedArguments(captor, 1, BLOCKS_IN_FILE);
   }
 
 }

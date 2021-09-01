@@ -31,15 +31,16 @@ import java.util.List;
 import java.util.Set;
 
 import org.apache.commons.io.FileUtils;
-import org.apache.commons.logging.Log;
-import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.mapreduce.MRJobConfig;
 import org.apache.hadoop.mapreduce.jobhistory.EventType;
 import org.apache.hadoop.mapreduce.jobhistory.TestJobHistoryEventHandler;
 import org.apache.hadoop.mapreduce.v2.MiniMRYarnCluster;
 import org.apache.hadoop.security.UserGroupInformation;
+import org.apache.hadoop.test.GenericTestUtils;
+import org.apache.hadoop.util.Sets;
 import org.apache.hadoop.yarn.api.records.ApplicationId;
 import org.apache.hadoop.yarn.api.records.ApplicationReport;
 import org.apache.hadoop.yarn.api.records.YarnApplicationState;
@@ -57,14 +58,14 @@ import org.apache.hadoop.yarn.server.timelineservice.storage.TimelineWriter;
 import org.apache.hadoop.yarn.util.timeline.TimelineUtils;
 import org.junit.Assert;
 import org.junit.Test;
-
-import com.google.common.collect.Sets;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public class TestMRTimelineEventHandling {
 
   private static final String TIMELINE_AUX_SERVICE_NAME = "timeline_collector";
-  private static final Log LOG =
-      LogFactory.getLog(TestMRTimelineEventHandling.class);
+  private static final Logger LOG =
+      LoggerFactory.getLogger(TestMRTimelineEventHandling.class);
 
   @Test
   public void testTimelineServiceStartInMiniCluster() throws Exception {
@@ -296,10 +297,10 @@ public class TestMRTimelineEventHandling {
         " does not exist.",
         jobEventFile.exists());
     verifyEntity(jobEventFile, EventType.JOB_FINISHED.name(),
-        true, false, null);
+        true, false, null, false);
     Set<String> cfgsToCheck = Sets.newHashSet("dummy_conf1", "dummy_conf2",
         "huge_dummy_conf1", "huge_dummy_conf2");
-    verifyEntity(jobEventFile, null, false, true, cfgsToCheck);
+    verifyEntity(jobEventFile, null, false, true, cfgsToCheck, false);
 
     // for this test, we expect MR job metrics are published in YARN_APPLICATION
     String outputAppDir =
@@ -320,8 +321,8 @@ public class TestMRTimelineEventHandling {
         "appEventFilePath: " + appEventFilePath +
         " does not exist.",
         appEventFile.exists());
-    verifyEntity(appEventFile, null, true, false, null);
-    verifyEntity(appEventFile, null, false, true, cfgsToCheck);
+    verifyEntity(appEventFile, null, true, false, null, false);
+    verifyEntity(appEventFile, null, false, true, cfgsToCheck, false);
 
     // check for task event file
     String outputDirTask =
@@ -342,7 +343,7 @@ public class TestMRTimelineEventHandling {
         " does not exist.",
         taskEventFile.exists());
     verifyEntity(taskEventFile, EventType.TASK_FINISHED.name(),
-        true, false, null);
+        true, false, null, true);
 
     // check for task attempt event file
     String outputDirTaskAttempt =
@@ -361,7 +362,7 @@ public class TestMRTimelineEventHandling {
     Assert.assertTrue("taskAttemptEventFileName: " + taskAttemptEventFilePath +
         " does not exist.", taskAttemptEventFile.exists());
     verifyEntity(taskAttemptEventFile, EventType.MAP_ATTEMPT_FINISHED.name(),
-        true, false, null);
+        true, false, null, true);
   }
 
   /**
@@ -378,12 +379,13 @@ public class TestMRTimelineEventHandling {
    * @throws IOException
    */
   private void verifyEntity(File entityFile, String eventId,
-      boolean chkMetrics, boolean chkCfg, Set<String> cfgsToVerify)
-      throws IOException {
+      boolean chkMetrics, boolean chkCfg, Set<String> cfgsToVerify,
+      boolean checkIdPrefix) throws IOException {
     BufferedReader reader = null;
     String strLine;
     try {
       reader = new BufferedReader(new FileReader(entityFile));
+      long idPrefix = -1;
       while ((strLine = reader.readLine()) != null) {
         if (strLine.trim().length() > 0) {
           org.apache.hadoop.yarn.api.records.timelineservice.TimelineEntity
@@ -392,6 +394,19 @@ public class TestMRTimelineEventHandling {
                       strLine.trim(),
                       org.apache.hadoop.yarn.api.records.timelineservice.
                           TimelineEntity.class);
+
+          LOG.info("strLine.trim()= " + strLine.trim());
+          if (checkIdPrefix) {
+            Assert.assertTrue("Entity ID prefix expected to be > 0",
+                entity.getIdPrefix() > 0);
+            if (idPrefix == -1) {
+              idPrefix = entity.getIdPrefix();
+            } else {
+              Assert.assertEquals("Entity ID prefix should be same across " +
+                  "each publish of same entity",
+                      idPrefix, entity.getIdPrefix());
+            }
+          }
           if (eventId == null) {
             // Job metrics are published without any events for
             // ApplicationEntity. There is also possibility that some other
@@ -460,21 +475,21 @@ public class TestMRTimelineEventHandling {
     conf.setBoolean(YarnConfiguration.TIMELINE_SERVICE_ENABLED, true);
     conf.setBoolean(MRJobConfig.MAPREDUCE_JOB_EMIT_TIMELINE_DATA, false);
     MiniMRYarnCluster cluster = null;
+    FileSystem fs = null;
+    Path inDir = new Path(GenericTestUtils.getTempPath("input"));
+    Path outDir = new Path(GenericTestUtils.getTempPath("output"));
     try {
+      fs = FileSystem.get(conf);
       cluster = new MiniMRYarnCluster(
         TestMRTimelineEventHandling.class.getSimpleName(), 1);
       cluster.init(conf);
       cluster.start();
       conf.set(YarnConfiguration.TIMELINE_SERVICE_WEBAPP_ADDRESS,
           MiniYARNCluster.getHostname() + ":"
-          + cluster.getApplicationHistoryServer().getPort());
+              + cluster.getApplicationHistoryServer().getPort());
       TimelineStore ts = cluster.getApplicationHistoryServer()
           .getTimelineStore();
 
-      String localPathRoot = System.getProperty("test.build.data",
-          "build/test/data");
-      Path inDir = new Path(localPathRoot, "input");
-      Path outDir = new Path(localPathRoot, "output");
       RunningJob job =
           UtilsForTests.runJobSucceed(new JobConf(conf), inDir, outDir);
       Assert.assertEquals(JobStatus.SUCCEEDED,
@@ -496,6 +511,7 @@ public class TestMRTimelineEventHandling {
       if (cluster != null) {
         cluster.stop();
       }
+      deletePaths(fs, inDir, outDir);
     }
 
     conf = new YarnConfiguration();
@@ -509,14 +525,9 @@ public class TestMRTimelineEventHandling {
       cluster.start();
       conf.set(YarnConfiguration.TIMELINE_SERVICE_WEBAPP_ADDRESS,
           MiniYARNCluster.getHostname() + ":"
-          + cluster.getApplicationHistoryServer().getPort());
+              + cluster.getApplicationHistoryServer().getPort());
       TimelineStore ts = cluster.getApplicationHistoryServer()
           .getTimelineStore();
-
-      String localPathRoot = System.getProperty("test.build.data",
-          "build/test/data");
-      Path inDir = new Path(localPathRoot, "input");
-      Path outDir = new Path(localPathRoot, "output");
 
       conf.setBoolean(MRJobConfig.MAPREDUCE_JOB_EMIT_TIMELINE_DATA, false);
       RunningJob job =
@@ -539,6 +550,20 @@ public class TestMRTimelineEventHandling {
     } finally {
       if (cluster != null) {
         cluster.stop();
+      }
+      deletePaths(fs, inDir, outDir);
+    }
+  }
+
+  /** Delete input paths recursively. Paths should not be null. */
+  private void deletePaths(FileSystem fs, Path... paths) {
+    if (fs == null) {
+      return;
+    }
+    for (Path path : paths) {
+      try {
+        fs.delete(path, true);
+      } catch (Exception ignored) {
       }
     }
   }

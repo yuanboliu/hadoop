@@ -19,8 +19,14 @@ package org.apache.hadoop.portmap;
 
 import java.util.concurrent.ConcurrentHashMap;
 
-import org.apache.commons.logging.Log;
-import org.apache.commons.logging.LogFactory;
+import io.netty.buffer.ByteBuf;
+import io.netty.buffer.Unpooled;
+import io.netty.channel.ChannelHandler;
+import io.netty.channel.ChannelHandlerContext;
+import io.netty.channel.group.ChannelGroup;
+import io.netty.handler.timeout.IdleState;
+import io.netty.handler.timeout.IdleStateEvent;
+import io.netty.handler.timeout.IdleStateHandler;
 import org.apache.hadoop.oncrpc.RpcAcceptedReply;
 import org.apache.hadoop.oncrpc.RpcCall;
 import org.apache.hadoop.oncrpc.RpcInfo;
@@ -29,18 +35,12 @@ import org.apache.hadoop.oncrpc.RpcResponse;
 import org.apache.hadoop.oncrpc.RpcUtil;
 import org.apache.hadoop.oncrpc.XDR;
 import org.apache.hadoop.oncrpc.security.VerifierNone;
-import org.jboss.netty.buffer.ChannelBuffer;
-import org.jboss.netty.buffer.ChannelBuffers;
-import org.jboss.netty.channel.ChannelHandlerContext;
-import org.jboss.netty.channel.ChannelStateEvent;
-import org.jboss.netty.channel.ExceptionEvent;
-import org.jboss.netty.channel.MessageEvent;
-import org.jboss.netty.channel.group.ChannelGroup;
-import org.jboss.netty.handler.timeout.IdleState;
-import org.jboss.netty.handler.timeout.IdleStateAwareChannelUpstreamHandler;
-import org.jboss.netty.handler.timeout.IdleStateEvent;
 
-final class RpcProgramPortmap extends IdleStateAwareChannelUpstreamHandler {
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+@ChannelHandler.Sharable
+final class RpcProgramPortmap extends IdleStateHandler {
   static final int PROGRAM = 100000;
   static final int VERSION = 2;
 
@@ -51,7 +51,8 @@ final class RpcProgramPortmap extends IdleStateAwareChannelUpstreamHandler {
   static final int PMAPPROC_DUMP = 4;
   static final int PMAPPROC_GETVERSADDR = 9;
 
-  private static final Log LOG = LogFactory.getLog(RpcProgramPortmap.class);
+  private static final Logger LOG =
+      LoggerFactory.getLogger(RpcProgramPortmap.class);
 
   private final ConcurrentHashMap<String, PortmapMapping> map = new ConcurrentHashMap<String, PortmapMapping>();
 
@@ -59,6 +60,8 @@ final class RpcProgramPortmap extends IdleStateAwareChannelUpstreamHandler {
   private final ChannelGroup allChannels;
 
   RpcProgramPortmap(ChannelGroup allChannels) {
+    super(1, 1, 1);
+    // FIXME: set default idle timeout 1 second.
     this.allChannels = allChannels;
     PortmapMapping m = new PortmapMapping(PROGRAM, VERSION,
         PortmapMapping.TRANSPORT_TCP, RpcProgram.RPCB_PORT);
@@ -150,14 +153,14 @@ final class RpcProgramPortmap extends IdleStateAwareChannelUpstreamHandler {
   }
 
   @Override
-  public void messageReceived(ChannelHandlerContext ctx, MessageEvent e)
+  public void channelRead(ChannelHandlerContext ctx, Object msg)
       throws Exception {
 
-    RpcInfo info = (RpcInfo) e.getMessage();
+    RpcInfo info = (RpcInfo) msg;
     RpcCall rpcCall = (RpcCall) info.header();
     final int portmapProc = rpcCall.getProcedure();
     int xid = rpcCall.getXid();
-    XDR in = new XDR(info.data().toByteBuffer().asReadOnlyBuffer(),
+    XDR in = new XDR(info.data().nioBuffer().asReadOnlyBuffer(),
         XDR.State.READING);
     XDR out = new XDR();
 
@@ -180,29 +183,29 @@ final class RpcProgramPortmap extends IdleStateAwareChannelUpstreamHandler {
       reply.write(out);
     }
 
-    ChannelBuffer buf = ChannelBuffers.wrappedBuffer(out.asReadOnlyWrap()
+    ByteBuf buf = Unpooled.wrappedBuffer(out.asReadOnlyWrap()
         .buffer());
     RpcResponse rsp = new RpcResponse(buf, info.remoteAddress());
     RpcUtil.sendRpcResponse(ctx, rsp);
   }
 
   @Override
-  public void channelOpen(ChannelHandlerContext ctx, ChannelStateEvent e)
+  public void channelActive(ChannelHandlerContext ctx)
       throws Exception {
-    allChannels.add(e.getChannel());
+    allChannels.add(ctx.channel());
   }
 
   @Override
   public void channelIdle(ChannelHandlerContext ctx, IdleStateEvent e)
       throws Exception {
-    if (e.getState() == IdleState.ALL_IDLE) {
-      e.getChannel().close();
+    if (e.state() == IdleState.ALL_IDLE) {
+      ctx.channel().close();
     }
   }
 
   @Override
-  public void exceptionCaught(ChannelHandlerContext ctx, ExceptionEvent e) {
-    LOG.warn("Encountered ", e.getCause());
-    e.getChannel().close();
+  public void exceptionCaught(ChannelHandlerContext ctx, Throwable t) {
+    LOG.warn("Encountered ", t);
+    ctx.channel().close();
   }
 }

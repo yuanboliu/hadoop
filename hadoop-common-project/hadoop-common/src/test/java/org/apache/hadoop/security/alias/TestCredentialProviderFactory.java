@@ -23,8 +23,6 @@ import java.net.URI;
 import java.util.List;
 import java.util.Random;
 
-import org.apache.commons.logging.Log;
-import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FileStatus;
 import org.apache.hadoop.fs.FileSystem;
@@ -39,13 +37,17 @@ import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TestName;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 
 public class TestCredentialProviderFactory {
-  public static final Log LOG = LogFactory.getLog(TestCredentialProviderFactory.class);
+  public static final Logger LOG =
+      LoggerFactory.getLogger(TestCredentialProviderFactory.class);
 
   @Rule
   public final TestName test = new TestName();
@@ -213,7 +215,7 @@ public class TestCredentialProviderFactory {
     Path path = ProviderUtils.unnestUri(new URI(ourUrl));
     FileSystem fs = path.getFileSystem(conf);
     FileStatus s = fs.getFileStatus(path);
-    assertTrue(s.getPermission().toString().equals("rw-------"));
+    assertEquals("rw-------", s.getPermission().toString());
     assertTrue(file + " should exist", file.isFile());
 
     // check permission retention after explicit change
@@ -235,13 +237,25 @@ public class TestCredentialProviderFactory {
     Path path = ProviderUtils.unnestUri(new URI(ourUrl));
     FileSystem fs = path.getFileSystem(conf);
     FileStatus s = fs.getFileStatus(path);
-    assertTrue("Unexpected permissions: " + s.getPermission().toString(),
-        s.getPermission().toString().equals("rw-------"));
+    assertEquals("Unexpected permissions: " + s.getPermission().toString(),
+        "rw-------", s.getPermission().toString());
     assertTrue(file + " should exist", file.isFile());
 
     // check permission retention after explicit change
     fs.setPermission(path, new FsPermission("777"));
     checkPermissionRetention(conf, ourUrl, path);
+  }
+
+  @Test
+  public void testLocalBCFKSProvider() {
+    Configuration conf = new Configuration();
+    final Path ksPath = new Path(tmpDir.toString(), "test.bcfks");
+    final String ourUrl = LocalBouncyCastleFipsKeyStoreProvider.SCHEME_NAME +
+        "://file" + ksPath.toUri();
+    conf.set(CredentialProviderFactory.CREDENTIAL_PROVIDER_PATH, ourUrl);
+    Exception exception = assertThrows(IOException.class,
+        () -> CredentialProviderFactory.getProviders(conf));
+    assertEquals("Can't create keystore", exception.getMessage());
   }
 
   public void checkPermissionRetention(Configuration conf, String ourUrl,
@@ -266,8 +280,7 @@ public class TestCredentialProviderFactory {
 
     FileSystem fs = path.getFileSystem(conf);
     FileStatus s = fs.getFileStatus(path);
-    assertTrue("Permissions should have been retained from the preexisting " +
-    		"keystore.", s.getPermission().toString().equals("rwxrwxrwx"));
+    assertEquals("Permissions should have been retained from the preexisting " +
+        "keystore.", "rwxrwxrwx", s.getPermission().toString());
   }
 }
-

@@ -18,7 +18,7 @@
 
 package org.apache.hadoop.fs;
 
-import com.google.common.annotations.VisibleForTesting;
+import org.apache.hadoop.thirdparty.com.google.common.annotations.VisibleForTesting;
 
 import java.io.IOException;
 import java.lang.ref.WeakReference;
@@ -26,12 +26,12 @@ import java.util.concurrent.DelayQueue;
 import java.util.concurrent.Delayed;
 import java.util.concurrent.TimeUnit;
 
-import org.apache.commons.logging.Log;
-import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.classification.InterfaceAudience;
 import org.apache.hadoop.security.token.Token;
 import org.apache.hadoop.security.token.TokenIdentifier;
 import org.apache.hadoop.util.Time;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * A daemon thread that waits for the next file system to renew.
@@ -39,8 +39,8 @@ import org.apache.hadoop.util.Time;
 @InterfaceAudience.Private
 public class DelegationTokenRenewer
     extends Thread {
-  private static final Log LOG = LogFactory
-      .getLog(DelegationTokenRenewer.class);
+  private static final Logger LOG = LoggerFactory
+      .getLogger(DelegationTokenRenewer.class);
 
   /** The renewable interface used by the renewer. */
   public interface Renewable {
@@ -97,7 +97,7 @@ public class DelegationTokenRenewer
     public boolean equals(final Object that) {
       if (this == that) {
         return true;
-      } else if (that == null || !(that instanceof RenewAction)) {
+      } else if (!(that instanceof RenewAction)) {
         return false;
       }
       return token.equals(((RenewAction<?>)that).token);
@@ -107,7 +107,7 @@ public class DelegationTokenRenewer
      * Set a new time for the renewal.
      * It can only be called when the action is not in the queue or any
      * collection because the hashCode may change
-     * @param newTime the new time
+     * @param delay the renewal time
      */
     private void updateRenewalTime(long delay) {
       renewalTime = Time.now() + delay - delay/10;
@@ -223,7 +223,7 @@ public class DelegationTokenRenewer
     if (action.token != null) {
       queue.add(action);
     } else {
-      fs.LOG.error("does not have a token for renewal");
+      FileSystem.LOG.error("does not have a token for renewal");
     }
     return action;
   }
@@ -242,14 +242,11 @@ public class DelegationTokenRenewer
       } catch (InterruptedException ie) {
         LOG.error("Interrupted while canceling token for " + fs.getUri()
             + "filesystem");
-        if (LOG.isDebugEnabled()) {
-          LOG.debug(ie.getStackTrace());
-        }
+        LOG.debug("Exception in removeRenewAction: {}", ie);
       }
     }
   }
 
-  @SuppressWarnings("static-access")
   @Override
   public void run() {
     for(;;) {
@@ -262,8 +259,7 @@ public class DelegationTokenRenewer
       } catch (InterruptedException ie) {
         return;
       } catch (Exception ie) {
-        action.weakFs.get().LOG.warn("Failed to renew token, action=" + action,
-            ie);
+        FileSystem.LOG.warn("Failed to renew token, action=" + action, ie);
       }
     }
   }

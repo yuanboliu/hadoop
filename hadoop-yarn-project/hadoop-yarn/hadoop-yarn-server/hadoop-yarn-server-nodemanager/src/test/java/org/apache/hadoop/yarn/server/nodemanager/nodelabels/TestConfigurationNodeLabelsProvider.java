@@ -25,10 +25,10 @@ import java.net.MalformedURLException;
 import java.net.URL;
 import java.util.TimerTask;
 
-import org.apache.commons.io.IOUtils;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FileContext;
 import org.apache.hadoop.fs.Path;
+import org.apache.hadoop.io.IOUtils;
 import org.apache.hadoop.yarn.conf.YarnConfiguration;
 import org.apache.hadoop.yarn.nodelabels.NodeLabelTestBase;
 import org.junit.After;
@@ -98,32 +98,34 @@ public class TestConfigurationNodeLabelsProvider extends NodeLabelTestBase {
     // test for ensuring labels are set during initialization of the class
     nodeLabelsProvider.start();
     assertNLCollectionEquals(toNodeLabelSet("A"),
-        nodeLabelsProvider.getNodeLabels());
+        nodeLabelsProvider.getDescriptors());
 
     // test for valid Modification
     TimerTask timerTask = nodeLabelsProvider.getTimerTask();
     modifyConf("X");
     timerTask.run();
     assertNLCollectionEquals(toNodeLabelSet("X"),
-        nodeLabelsProvider.getNodeLabels());
+        nodeLabelsProvider.getDescriptors());
   }
 
   @Test
   public void testConfigForNoTimer() throws Exception {
     Configuration conf = new Configuration();
     modifyConf("A");
-    conf.setLong(YarnConfiguration.NM_NODE_LABELS_PROVIDER_FETCH_INTERVAL_MS,
-        AbstractNodeLabelsProvider.DISABLE_NODE_LABELS_PROVIDER_FETCH_TIMER);
+    conf.setLong(YarnConfiguration
+            .NM_NODE_LABELS_PROVIDER_FETCH_INTERVAL_MS,
+        AbstractNodeDescriptorsProvider
+            .DISABLE_NODE_DESCRIPTORS_PROVIDER_FETCH_TIMER);
     nodeLabelsProvider.init(conf);
     nodeLabelsProvider.start();
     Assert
-        .assertNull(
-            "Timer is not expected to be created when interval is configured as -1",
-            nodeLabelsProvider.nodeLabelsScheduler);
-    // Ensure that even though timer is not run, node labels are fetched at least once so
-    // that NM registers/updates Labels with RM
+        .assertNull("Timer is not expected to be"
+                + " created when interval is configured as -1",
+            nodeLabelsProvider.getScheduler());
+    // Ensure that even though timer is not run, node labels
+    // are fetched at least once so that NM registers/updates Labels with RM
     assertNLCollectionEquals(toNodeLabelSet("A"),
-        nodeLabelsProvider.getNodeLabels());
+        nodeLabelsProvider.getDescriptors());
   }
 
   @Test
@@ -138,11 +140,11 @@ public class TestConfigurationNodeLabelsProvider extends NodeLabelTestBase {
     // least once so
     // that NM registers/updates Labels with RM
     assertNLCollectionEquals(toNodeLabelSet("A"),
-        nodeLabelsProvider.getNodeLabels());
+        nodeLabelsProvider.getDescriptors());
     modifyConf("X");
     Thread.sleep(1500);
     assertNLCollectionEquals(toNodeLabelSet("X"),
-        nodeLabelsProvider.getNodeLabels());
+        nodeLabelsProvider.getDescriptors());
 
   }
 
@@ -152,7 +154,7 @@ public class TestConfigurationNodeLabelsProvider extends NodeLabelTestBase {
     conf.set(YarnConfiguration.NM_PROVIDER_CONFIGURED_NODE_PARTITION, nodeLabels);
     FileOutputStream confStream = new FileOutputStream(nodeLabelsConfigFile);
     conf.writeXml(confStream);
-    IOUtils.closeQuietly(confStream);
+    IOUtils.closeStream(confStream);
   }
 
   private static class XMLPathClassLoader extends ClassLoader {

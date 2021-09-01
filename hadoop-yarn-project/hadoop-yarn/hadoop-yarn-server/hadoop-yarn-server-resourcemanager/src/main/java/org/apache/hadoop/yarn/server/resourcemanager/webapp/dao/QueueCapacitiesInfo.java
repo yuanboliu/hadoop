@@ -24,6 +24,7 @@ import javax.xml.bind.annotation.XmlAccessType;
 import javax.xml.bind.annotation.XmlAccessorType;
 import javax.xml.bind.annotation.XmlRootElement;
 
+import org.apache.hadoop.yarn.server.resourcemanager.scheduler.QueueResourceQuotas;
 import org.apache.hadoop.yarn.server.resourcemanager.scheduler.capacity.QueueCapacities;
 
 /**
@@ -39,6 +40,7 @@ public class QueueCapacitiesInfo {
   }
 
   public QueueCapacitiesInfo(QueueCapacities capacities,
+      QueueResourceQuotas resourceQuotas,
       boolean considerAMUsage) {
     if (capacities == null) {
       return;
@@ -49,7 +51,9 @@ public class QueueCapacitiesInfo {
     float absCapacity;
     float absUsedCapacity;
     float absMaxCapacity;
-    Float maxAMLimitPercentage;
+    float maxAMLimitPercentage;
+    float weight;
+    float normalizedWeight;
     for (String partitionName : capacities.getExistingNodeLabels()) {
       usedCapacity = capacities.getUsedCapacity(partitionName) * 100;
       capacity = capacities.getCapacity(partitionName) * 100;
@@ -65,15 +69,23 @@ public class QueueCapacitiesInfo {
       if (maxCapacity < CapacitySchedulerQueueInfo.EPSILON || maxCapacity > 1f)
         maxCapacity = 1f;
       maxCapacity = maxCapacity * 100;
+      weight = capacities.getWeight(partitionName);
+      normalizedWeight = capacities.getNormalizedWeight(partitionName);
       queueCapacitiesByPartition.add(new PartitionQueueCapacitiesInfo(
           partitionName, capacity, usedCapacity, maxCapacity, absCapacity,
           absUsedCapacity, absMaxCapacity,
-          considerAMUsage ? maxAMLimitPercentage : null));
+          considerAMUsage ? maxAMLimitPercentage : 0f,
+          weight, normalizedWeight,
+          resourceQuotas.getConfiguredMinResource(partitionName),
+          resourceQuotas.getConfiguredMaxResource(partitionName),
+          resourceQuotas.getEffectiveMinResource(partitionName),
+          resourceQuotas.getEffectiveMaxResource(partitionName)));
     }
   }
 
-  public QueueCapacitiesInfo(QueueCapacities capacities) {
-    this(capacities, true);
+  public QueueCapacitiesInfo(QueueCapacities capacities,
+      QueueResourceQuotas resourceQuotas) {
+    this(capacities, resourceQuotas, true);
   }
 
   public void add(PartitionQueueCapacitiesInfo partitionQueueCapacitiesInfo) {

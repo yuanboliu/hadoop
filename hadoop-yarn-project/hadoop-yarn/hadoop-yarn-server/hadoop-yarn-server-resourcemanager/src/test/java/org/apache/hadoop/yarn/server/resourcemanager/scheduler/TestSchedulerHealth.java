@@ -18,6 +18,7 @@
 
 package org.apache.hadoop.yarn.server.resourcemanager.scheduler;
 
+import org.apache.hadoop.metrics2.lib.DefaultMetricsSystem;
 import org.apache.hadoop.net.NetworkTopology;
 import org.apache.hadoop.util.Time;
 import org.apache.hadoop.yarn.api.records.ContainerId;
@@ -27,6 +28,7 @@ import org.apache.hadoop.yarn.api.records.Resource;
 import org.apache.hadoop.yarn.conf.YarnConfiguration;
 import org.apache.hadoop.yarn.event.AsyncDispatcher;
 import org.apache.hadoop.yarn.exceptions.YarnException;
+import org.apache.hadoop.yarn.server.api.records.NodeStatus;
 import org.apache.hadoop.yarn.server.resourcemanager.NodeManager;
 import org.apache.hadoop.yarn.server.resourcemanager.Application;
 import org.apache.hadoop.yarn.server.resourcemanager.ResourceManager;
@@ -43,6 +45,7 @@ import org.junit.Test;
 
 import java.io.IOException;
 
+import static org.apache.hadoop.yarn.server.resourcemanager.MockNM.createMockNodeStatus;
 import static org.junit.Assume.assumeTrue;
 
 public class TestSchedulerHealth {
@@ -50,6 +53,7 @@ public class TestSchedulerHealth {
   private ResourceManager resourceManager;
 
   public void setup() {
+    DefaultMetricsSystem.setMiniClusterMode(true);
     resourceManager = new ResourceManager() {
       @Override
       protected RMNodeLabelsManager createNodeLabelManager() {
@@ -170,11 +174,11 @@ public class TestSchedulerHealth {
   }
 
   private NodeManager registerNode(String hostName, int containerManagerPort,
-      int httpPort, String rackName, Resource capability) throws IOException,
-      YarnException {
+      int httpPort, String rackName, Resource capability, NodeStatus nodeStatus)
+      throws IOException, YarnException {
     NodeManager nm =
         new NodeManager(hostName, containerManagerPort, httpPort, rackName,
-          capability, resourceManager);
+          capability, resourceManager, nodeStatus);
     NodeAddedSchedulerEvent nodeAddEvent1 =
         new NodeAddedSchedulerEvent(resourceManager.getRMContext().getRMNodes()
           .get(nm.getNodeId()));
@@ -200,19 +204,17 @@ public class TestSchedulerHealth {
     assumeTrue("This test is only supported on Capacity Scheduler",
       isCapacityScheduler);
 
+    NodeStatus mockNodeStatus = createMockNodeStatus();
+
     // Register node1
     String host_0 = "host_0";
     NodeManager nm_0 =
         registerNode(host_0, 1234, 2345, NetworkTopology.DEFAULT_RACK,
-          Resources.createResource(5 * 1024, 1));
+          Resources.createResource(5 * 1024, 1), mockNodeStatus);
 
     // ResourceRequest priorities
-    Priority priority_0 =
-        org.apache.hadoop.yarn.server.resourcemanager.resource.Priority
-          .create(0);
-    Priority priority_1 =
-        org.apache.hadoop.yarn.server.resourcemanager.resource.Priority
-          .create(1);
+    Priority priority_0 = Priority.newInstance(0);
+    Priority priority_1 = Priority.newInstance(1);
 
     // Submit an application
     Application application_0 =
@@ -242,8 +244,10 @@ public class TestSchedulerHealth {
     SchedulerHealth sh =
         ((CapacityScheduler) resourceManager.getResourceScheduler())
           .getSchedulerHealth();
-    Assert.assertEquals(2, sh.getAllocationCount().longValue());
-    Assert.assertEquals(Resource.newInstance(3 * 1024, 2),
+    // Now SchedulerHealth records last container allocated, aggregated
+    // allocation account will not be changed
+    Assert.assertEquals(1, sh.getAllocationCount().longValue());
+    Assert.assertEquals(Resource.newInstance(1 * 1024, 1),
       sh.getResourcesAllocated());
     Assert.assertEquals(2, sh.getAggregateAllocationCount().longValue());
     Assert.assertEquals("host_0:1234", sh.getLastAllocationDetails()
@@ -277,25 +281,23 @@ public class TestSchedulerHealth {
     assumeTrue("This test is only supported on Capacity Scheduler",
       isCapacityScheduler);
 
+    NodeStatus mockNodeStatus = createMockNodeStatus();
+
     // Register nodes
     String host_0 = "host_0";
     NodeManager nm_0 =
         registerNode(host_0, 1234, 2345, NetworkTopology.DEFAULT_RACK,
-          Resources.createResource(2 * 1024, 1));
+          Resources.createResource(2 * 1024, 1), mockNodeStatus);
     String host_1 = "host_1";
     NodeManager nm_1 =
         registerNode(host_1, 1234, 2345, NetworkTopology.DEFAULT_RACK,
-          Resources.createResource(5 * 1024, 1));
+          Resources.createResource(5 * 1024, 1), mockNodeStatus);
     nodeUpdate(nm_0);
     nodeUpdate(nm_1);
 
     // ResourceRequest priorities
-    Priority priority_0 =
-        org.apache.hadoop.yarn.server.resourcemanager.resource.Priority
-          .create(0);
-    Priority priority_1 =
-        org.apache.hadoop.yarn.server.resourcemanager.resource.Priority
-          .create(1);
+    Priority priority_0 = Priority.newInstance(0);
+    Priority priority_1 = Priority.newInstance(1);
 
     // Submit an application
     Application application_0 =

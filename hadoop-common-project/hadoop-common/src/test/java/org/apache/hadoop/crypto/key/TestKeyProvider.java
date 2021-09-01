@@ -22,10 +22,12 @@ import org.apache.hadoop.conf.Configuration;
 
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.security.ProviderUtils;
+import org.apache.hadoop.test.GenericTestUtils;
 import org.junit.Test;
 
 import java.io.IOException;
 import java.net.URI;
+import java.net.URISyntaxException;
 import java.security.NoSuchAlgorithmException;
 import java.text.DateFormat;
 import java.text.SimpleDateFormat;
@@ -38,6 +40,7 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.assertArrayEquals;
+import static org.junit.Assert.fail;
 
 public class TestKeyProvider {
 
@@ -144,14 +147,29 @@ public class TestKeyProvider {
 
   @Test
   public void testUnnestUri() throws Exception {
-    assertEquals(new Path("hdfs://nn.example.com/my/path"),
-        ProviderUtils.unnestUri(new URI("myscheme://hdfs@nn.example.com/my/path")));
-    assertEquals(new Path("hdfs://nn/my/path?foo=bar&baz=bat#yyy"),
-        ProviderUtils.unnestUri(new URI("myscheme://hdfs@nn/my/path?foo=bar&baz=bat#yyy")));
-    assertEquals(new Path("inner://hdfs@nn1.example.com/my/path"),
-        ProviderUtils.unnestUri(new URI("outer://inner@hdfs@nn1.example.com/my/path")));
-    assertEquals(new Path("user:///"),
-        ProviderUtils.unnestUri(new URI("outer://user/")));
+    assertUnwraps("hdfs://nn.example.com/my/path",
+        "myscheme://hdfs@nn.example.com/my/path");
+    assertUnwraps("hdfs://nn/my/path?foo=bar&baz=bat#yyy",
+        "myscheme://hdfs@nn/my/path?foo=bar&baz=bat#yyy");
+    assertUnwraps("inner://hdfs@nn1.example.com/my/path",
+        "outer://inner@hdfs@nn1.example.com/my/path");
+    assertUnwraps("user:///", "outer://user/");
+    assertUnwraps("wasb://account@container/secret.jceks",
+        "jceks://wasb@account@container/secret.jceks");
+    assertUnwraps("abfs://account@container/secret.jceks",
+        "jceks://abfs@account@container/secret.jceks");
+    assertUnwraps("s3a://container/secret.jceks",
+        "jceks://s3a@container/secret.jceks");
+    assertUnwraps("file:///tmp/secret.jceks",
+        "jceks://file/tmp/secret.jceks");
+    assertUnwraps("https://user:pass@service/secret.jceks?token=aia",
+        "jceks://https@user:pass@service/secret.jceks?token=aia");
+  }
+
+  protected void assertUnwraps(final String unwrapped, final String outer)
+      throws URISyntaxException {
+    assertEquals(new Path(unwrapped),
+        ProviderUtils.unnestUri(new URI(outer)));
   }
 
   private static class MyKeyProvider extends KeyProvider {
@@ -182,7 +200,10 @@ public class TestKeyProvider {
 
     @Override
     public Metadata getMetadata(String name) throws IOException {
-      return new Metadata(CIPHER, 128, "description", null, new Date(), 0);
+      if (!"unknown".equals(name)) {
+        return new Metadata(CIPHER, 128, "description", null, new Date(), 0);
+      }
+      return null;
     }
 
     @Override
@@ -234,6 +255,27 @@ public class TestKeyProvider {
     Assert.assertEquals(128, kp.size);
     Assert.assertEquals(CIPHER, kp.algorithm);
     Assert.assertNotNull(kp.material);
+  }
+
+  @Test
+  public void testRolloverUnknownKey() throws Exception {
+    MyKeyProvider kp = new MyKeyProvider(new Configuration());
+    KeyProvider.Options options = new KeyProvider.Options(new Configuration());
+    options.setCipher(CIPHER);
+    options.setBitLength(128);
+    kp.createKey("hello", options);
+    Assert.assertEquals(128, kp.size);
+    Assert.assertEquals(CIPHER, kp.algorithm);
+    Assert.assertNotNull(kp.material);
+
+    kp = new MyKeyProvider(new Configuration());
+    try {
+      kp.rollNewVersion("unknown");
+      fail("should have thrown");
+    } catch (IOException e) {
+      String expectedError = "Can't find Metadata for key";
+      GenericTestUtils.assertExceptionContains(expectedError, e);
+    }
   }
 
   @Test

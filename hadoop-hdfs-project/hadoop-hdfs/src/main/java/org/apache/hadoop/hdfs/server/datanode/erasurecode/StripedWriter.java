@@ -17,7 +17,7 @@
  */
 package org.apache.hadoop.hdfs.server.datanode.erasurecode;
 
-import com.google.common.base.Preconditions;
+import org.apache.hadoop.thirdparty.com.google.common.base.Preconditions;
 import org.apache.hadoop.classification.InterfaceAudience;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.StorageType;
@@ -55,6 +55,7 @@ class StripedWriter {
   private final short[] targetIndices;
   private boolean hasValidTargets;
   private final StorageType[] targetStorageTypes;
+  private final String[] targetStorageIds;
 
   private StripedBlockWriter[] writers;
 
@@ -77,6 +78,8 @@ class StripedWriter {
     assert targets != null;
     this.targetStorageTypes = stripedReconInfo.getTargetStorageTypes();
     assert targetStorageTypes != null;
+    this.targetStorageIds = stripedReconInfo.getTargetStorageIds();
+    assert targetStorageIds != null;
 
     writers = new StripedBlockWriter[targets.length];
 
@@ -192,7 +195,7 @@ class StripedWriter {
   private StripedBlockWriter createWriter(short index) throws IOException {
     return new StripedBlockWriter(this, datanode, conf,
         reconstructor.getBlock(targetIndices[index]), targets[index],
-        targetStorageTypes[index]);
+        targetStorageTypes[index], targetStorageIds[index]);
   }
 
   ByteBuffer allocateWriteBuffer() {
@@ -280,6 +283,10 @@ class StripedWriter {
     return reconstructor.getSocketAddress4Transfer(target);
   }
 
+  StripedReconstructor getReconstructor() {
+    return reconstructor;
+  }
+
   boolean hasValidTargets() {
     return hasValidTargets;
   }
@@ -289,7 +296,8 @@ class StripedWriter {
    */
   void clearBuffers() {
     for (StripedBlockWriter writer : writers) {
-      ByteBuffer targetBuffer = writer.getTargetBuffer();
+      ByteBuffer targetBuffer =
+          writer != null ? writer.getTargetBuffer() : null;
       if (targetBuffer != null) {
         targetBuffer.clear();
       }
@@ -297,8 +305,19 @@ class StripedWriter {
   }
 
   void close() {
+    for (StripedBlockWriter writer : writers) {
+      ByteBuffer targetBuffer =
+          writer != null ? writer.getTargetBuffer() : null;
+      if (targetBuffer != null) {
+        reconstructor.freeBuffer(targetBuffer);
+        writer.freeTargetBuffer();
+      }
+    }
+
     for (int i = 0; i < targets.length; i++) {
-      writers[i].close();
+      if (writers[i] != null) {
+        writers[i].close();
+      }
     }
   }
 }

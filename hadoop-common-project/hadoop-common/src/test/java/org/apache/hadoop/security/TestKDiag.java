@@ -37,6 +37,7 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
 import java.util.Properties;
+import java.util.concurrent.TimeUnit;
 
 import static org.apache.hadoop.fs.CommonConfigurationKeysPublic.HADOOP_SECURITY_AUTHENTICATION;
 import static org.apache.hadoop.security.KDiag.*;
@@ -52,7 +53,7 @@ public class TestKDiag extends Assert {
   public TestName methodName = new TestName();
 
   @Rule
-  public Timeout testTimeout = new Timeout(30000);
+  public Timeout testTimeout = new Timeout(30000, TimeUnit.MILLISECONDS);
 
   @BeforeClass
   public static void nameThread() {
@@ -67,7 +68,7 @@ public class TestKDiag extends Assert {
 
   @BeforeClass
   public static void startMiniKdc() throws Exception {
-    workDir = new File(System.getProperty("test.dir", "target"));
+    workDir = GenericTestUtils.getTestDir(TestKDiag.class.getSimpleName());
     securityProperties = MiniKdc.createConf();
     kdc = new MiniKdc(securityProperties, workDir);
     kdc.start();

@@ -33,7 +33,9 @@ import org.slf4j.LoggerFactory;
 
 import java.io.File;
 import java.util.Properties;
+import java.util.concurrent.TimeUnit;
 
+import static org.apache.hadoop.fs.CommonConfigurationKeysPublic.HADOOP_TOKEN_FILES;
 import static org.apache.hadoop.fs.CommonConfigurationKeysPublic.HADOOP_SECURITY_AUTHENTICATION;
 import static org.apache.hadoop.security.KDiag.ARG_KEYLEN;
 import static org.apache.hadoop.security.KDiag.ARG_KEYTAB;
@@ -44,6 +46,7 @@ import static org.apache.hadoop.security.KDiag.ARG_SECURE;
 import static org.apache.hadoop.security.KDiag.CAT_CONFIG;
 import static org.apache.hadoop.security.KDiag.CAT_KERBEROS;
 import static org.apache.hadoop.security.KDiag.CAT_LOGIN;
+import static org.apache.hadoop.security.KDiag.CAT_TOKEN;
 import static org.apache.hadoop.security.KDiag.KerberosDiagsFailure;
 import static org.apache.hadoop.security.KDiag.exec;
 
@@ -56,7 +59,7 @@ public class TestKDiagNoKDC extends Assert {
   public TestName methodName = new TestName();
 
   @Rule
-  public Timeout testTimeout = new Timeout(30000);
+  public Timeout testTimeout = new Timeout(30000, TimeUnit.MILLISECONDS);
 
   @BeforeClass
   public static void nameThread() {
@@ -120,4 +123,10 @@ public class TestKDiagNoKDC extends Assert {
     assertEquals(-1, kdiag("usage"));
   }
 
+  @Test
+  public void testTokenFile() throws Throwable {
+    conf.set(HADOOP_TOKEN_FILES, "SomeNonExistentFile");
+    kdiagFailure(CAT_TOKEN, ARG_KEYLEN, KEYLEN);
+    conf.unset(HADOOP_TOKEN_FILES);
+  }
 }

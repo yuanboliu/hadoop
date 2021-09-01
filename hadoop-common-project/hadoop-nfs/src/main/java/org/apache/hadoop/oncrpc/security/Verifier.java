@@ -27,22 +27,30 @@ import org.apache.hadoop.oncrpc.XDR;
  */
 public abstract class Verifier extends RpcAuthInfo {
 
-  public static final Verifier VERIFIER_NONE = new VerifierNone();
-
   protected Verifier(AuthFlavor flavor) {
     super(flavor);
   }
 
-  /** Read both AuthFlavor and the verifier from the XDR */
+  /**
+   * Read both AuthFlavor and the verifier from the XDR.
+   * @param xdr XDR message
+   * @return verifier
+   */
   public static Verifier readFlavorAndVerifier(XDR xdr) {
     AuthFlavor flavor = AuthFlavor.fromValue(xdr.readInt());
     final Verifier verifer;
-    if(flavor == AuthFlavor.AUTH_NONE) {
+    if (flavor == AuthFlavor.AUTH_NONE) {
       verifer = new VerifierNone();
-    } else if(flavor == AuthFlavor.RPCSEC_GSS) {
+    } else if (flavor == AuthFlavor.AUTH_SYS) {
+      // Added in HADOOP-15307 based on HDFS-5085:
+      // When the auth flavor is AUTH_SYS, the corresponding verifier is
+      // AUTH_NONE. I.e., it is impossible to have a verifier with auth
+      // flavor AUTH_SYS.
+      verifer = new VerifierNone();
+    } else if (flavor == AuthFlavor.RPCSEC_GSS) {
       verifer = new VerifierGSS();
     } else {
-      throw new UnsupportedOperationException("Unsupported verifier flavor"
+      throw new UnsupportedOperationException("Unsupported verifier flavor: "
           + flavor);
     }
     verifer.read(xdr);
@@ -50,7 +58,9 @@ public abstract class Verifier extends RpcAuthInfo {
   }
   
   /**
-   * Write AuthFlavor and the verifier to the XDR
+   * Write AuthFlavor and the verifier to the XDR.
+   * @param verifier written to XDR
+   * @param xdr XDR message
    */
   public static void writeFlavorAndVerifier(Verifier verifier, XDR xdr) {
     if (verifier instanceof VerifierNone) {

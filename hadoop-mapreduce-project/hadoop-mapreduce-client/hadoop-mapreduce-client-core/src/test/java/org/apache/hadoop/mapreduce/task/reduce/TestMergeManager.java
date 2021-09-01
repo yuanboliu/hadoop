@@ -17,6 +17,7 @@
  */
 package org.apache.hadoop.mapreduce.task.reduce;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.Mockito.mock;
@@ -43,9 +44,9 @@ import org.apache.hadoop.mapred.MapOutputFile;
 import org.apache.hadoop.mapreduce.MRJobConfig;
 import org.apache.hadoop.mapreduce.TaskAttemptID;
 import org.apache.hadoop.mapreduce.task.reduce.MergeManagerImpl.CompressAwarePath;
+import org.apache.hadoop.test.Whitebox;
 import org.junit.Assert;
 import org.junit.Test;
-import org.mockito.internal.util.reflection.Whitebox;
 
 public class TestMergeManager {
 
@@ -78,7 +79,7 @@ public class TestMergeManager {
 
     // next reservation should be a WAIT
     MapOutput<Text, Text> out3 = mgr.reserve(null, OUTPUT_SIZE, 0);
-    Assert.assertEquals("Should be told to wait", null, out3);
+    assertThat(out3).withFailMessage("Should be told to wait").isNull();
 
     // trigger the first merge and wait for merge thread to start merging
     // and free enough output to reserve more
@@ -102,7 +103,7 @@ public class TestMergeManager {
 
     // next reservation should be null
     out3 = mgr.reserve(null, OUTPUT_SIZE, 0);
-    Assert.assertEquals("Should be told to wait", null, out3);
+    assertThat(out3).withFailMessage("Should be told to wait").isNull();
 
     // commit output *before* merge thread completes
     mout1.commit();
@@ -207,6 +208,13 @@ public class TestMergeManager {
     }
   }
 
+  @Test
+  public void testIoSortDefaults() {
+    final JobConf jobConf = new JobConf();
+    assertEquals(10, jobConf.getInt(MRJobConfig.IO_SORT_FACTOR, 100));
+    assertEquals(100, jobConf.getInt(MRJobConfig.IO_SORT_MB, 10));
+  }
+
   @SuppressWarnings({ "unchecked", "deprecation" })
   @Test(timeout=10000)
   public void testOnDiskMerger() throws IOException, URISyntaxException,
@@ -289,22 +297,29 @@ public class TestMergeManager {
     final long maxInMemReduce = mgr.getMaxInMemReduceLimit();
     assertTrue("Large in-memory reduce area unusable: " + maxInMemReduce,
         maxInMemReduce > Integer.MAX_VALUE);
+    assertEquals("maxSingleShuffleLimit to be capped at Integer.MAX_VALUE",
+        Integer.MAX_VALUE, mgr.maxSingleShuffleLimit);
+    verifyReservedMapOutputType(mgr, 10L, "MEMORY");
+    verifyReservedMapOutputType(mgr, 1L + Integer.MAX_VALUE, "DISK");
+  }
+
+  private void verifyReservedMapOutputType(MergeManagerImpl<Text, Text> mgr,
+      long size, String expectedShuffleMode) throws IOException {
+    final TaskAttemptID mapId = TaskAttemptID.forName("attempt_0_1_m_1_1");
+    final MapOutput<Text, Text> mapOutput = mgr.reserve(mapId, size, 1);
+    assertEquals("Shuffled bytes: " + size, expectedShuffleMode,
+        mapOutput.getDescription());
+    mgr.unreserve(size);
   }
 
   @Test
   public void testZeroShuffleMemoryLimitPercent() throws Exception {
     final JobConf jobConf = new JobConf();
     jobConf.setFloat(MRJobConfig.SHUFFLE_MEMORY_LIMIT_PERCENT, 0.0f);
-    final MergeManager<Text, Text> mgr =
+    final MergeManagerImpl<Text, Text> mgr =
         new MergeManagerImpl<>(null, jobConf, mock(LocalFileSystem.class),
             null, null, null, null, null, null, null, null, null, null,
             new MROutputFiles());
-    final long mapOutputSize = 10;
-    final int fetcher = 1;
-    final MapOutput<Text, Text> mapOutput = mgr.reserve(
-        TaskAttemptID.forName("attempt_0_1_m_1_1"),
-        mapOutputSize, fetcher);
-    assertEquals("Tiny map outputs should be shuffled to disk", "DISK",
-        mapOutput.getDescription());
+    verifyReservedMapOutputType(mgr, 10L, "DISK");
   }
 }

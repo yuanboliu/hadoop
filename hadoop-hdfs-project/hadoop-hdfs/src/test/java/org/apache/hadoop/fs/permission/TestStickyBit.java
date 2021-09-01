@@ -32,6 +32,7 @@ import java.util.Arrays;
 
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FSDataOutputStream;
+import org.apache.hadoop.fs.FSExceptionMessages;
 import org.apache.hadoop.fs.FileStatus;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
@@ -43,6 +44,7 @@ import org.apache.hadoop.hdfs.MiniDFSCluster;
 import org.apache.hadoop.io.IOUtils;
 import org.apache.hadoop.security.AccessControlException;
 import org.apache.hadoop.security.UserGroupInformation;
+import org.apache.hadoop.test.GenericTestUtils;
 import org.junit.AfterClass;
 import org.junit.Before;
 import org.junit.BeforeClass;
@@ -94,7 +96,7 @@ public class TestStickyBit {
 
   @AfterClass
   public static void shutdown() throws Exception {
-    IOUtils.cleanup(null, hdfs, hdfsAsUser1, hdfsAsUser2);
+    IOUtils.cleanupWithLogger(null, hdfs, hdfsAsUser1, hdfsAsUser2);
     if (cluster != null) {
       cluster.shutdown();
     }
@@ -119,7 +121,7 @@ public class TestStickyBit {
       h.close();
       h = null;
     } finally {
-      IOUtils.cleanup(null, h);
+      IOUtils.cleanupWithLogger(null, h);
     }
   }
 
@@ -426,6 +428,67 @@ public class TestStickyBit {
     assertFalse(hdfs.getFileStatus(sbSetOff).getPermission().getStickyBit());
   }
 
+  @Test
+  public void testStickyBitRecursiveDeleteFile() throws Exception {
+    Path root = new Path("/" + GenericTestUtils.getMethodName());
+    Path tmp = new Path(root, "tmp");
+    Path file = new Path(tmp, "file");
+
+    // Create a tmp directory with wide-open permissions and sticky bit
+    hdfs.mkdirs(tmp);
+    hdfs.setPermission(root, new FsPermission((short) 0777));
+    hdfs.setPermission(tmp, new FsPermission((short) 01777));
+
+    // Create a file protected by sticky bit
+    writeFile(hdfsAsUser1, file);
+    hdfs.setPermission(file, new FsPermission((short) 0666));
+
+    try {
+      hdfsAsUser2.delete(tmp, true);
+      fail("Non-owner can not delete a file protected by sticky bit"
+          + " recursively");
+    } catch (AccessControlException e) {
+      GenericTestUtils.assertExceptionContains(
+          FSExceptionMessages.PERMISSION_DENIED_BY_STICKY_BIT, e);
+    }
+
+    // Owner can delete a file protected by sticky bit recursively
+    hdfsAsUser1.delete(tmp, true);
+  }
+
+  @Test
+  public void testStickyBitRecursiveDeleteDir() throws Exception {
+    Path root = new Path("/" + GenericTestUtils.getMethodName());
+    Path tmp = new Path(root, "tmp");
+    Path dir = new Path(tmp, "dir");
+    Path file = new Path(dir, "file");
+
+    // Create a tmp directory with wide-open permissions and sticky bit
+    hdfs.mkdirs(tmp);
+    hdfs.setPermission(root, new FsPermission((short) 0777));
+    hdfs.setPermission(tmp, new FsPermission((short) 01777));
+
+    // Create a dir protected by sticky bit
+    hdfsAsUser1.mkdirs(dir);
+    hdfsAsUser1.setPermission(dir, new FsPermission((short) 0777));
+
+    // Create a file in dir
+    writeFile(hdfsAsUser1, file);
+    hdfs.setPermission(file, new FsPermission((short) 0666));
+
+    try {
+      hdfsAsUser2.delete(tmp, true);
+      fail("Non-owner can not delete a directory protected by sticky bit"
+          + " recursively");
+    } catch (AccessControlException e) {
+      GenericTestUtils.assertExceptionContains(
+          FSExceptionMessages.PERMISSION_DENIED_BY_STICKY_BIT, e);
+    }
+
+    // Owner can delete a directory protected by sticky bit recursively
+    hdfsAsUser1.delete(tmp, true);
+  }
+
   /***
    * Write a quick file to the specified file system at specified path
    */
@@ -437,7 +500,7 @@ public class TestStickyBit {
       o.close();
       o = null;
     } finally {
-      IOUtils.cleanup(null, o);
+      IOUtils.cleanupWithLogger(null, o);
     }
   }
 

@@ -21,9 +21,9 @@ import java.net.URI;
 import java.util.ArrayList;
 import java.util.concurrent.atomic.*;
 
-import org.apache.log4j.Level;
-import org.apache.commons.logging.Log;
-import org.apache.commons.logging.LogFactory;
+import org.slf4j.event.Level;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.*;
 import org.apache.hadoop.fs.permission.*;
@@ -48,9 +48,9 @@ public class TestFuseDFS {
   private static Runtime r;
   private static String mountPoint;
 
-  private static final Log LOG = LogFactory.getLog(TestFuseDFS.class);
+  private static final Logger LOG = LoggerFactory.getLogger(TestFuseDFS.class);
   {
-    GenericTestUtils.setLogLevel(LOG, Level.ALL);
+    GenericTestUtils.setLogLevel(LOG, Level.TRACE);
   }
 
   /** Dump the given intput stream to stderr */

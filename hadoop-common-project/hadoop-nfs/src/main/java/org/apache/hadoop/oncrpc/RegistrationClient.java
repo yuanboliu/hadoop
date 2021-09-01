@@ -19,18 +19,18 @@ package org.apache.hadoop.oncrpc;
 
 import java.util.Arrays;
 
-import org.apache.commons.logging.Log;
-import org.apache.commons.logging.LogFactory;
+import io.netty.buffer.ByteBuf;
+import io.netty.channel.ChannelHandlerContext;
 import org.apache.hadoop.oncrpc.RpcAcceptedReply.AcceptState;
-import org.jboss.netty.buffer.ChannelBuffer;
-import org.jboss.netty.channel.ChannelHandlerContext;
-import org.jboss.netty.channel.MessageEvent;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * A simple client that registers an RPC program with portmap.
  */
 public class RegistrationClient extends SimpleTcpClient {
-  public static final Log LOG = LogFactory.getLog(RegistrationClient.class);
+  public static final Logger LOG =
+      LoggerFactory.getLogger(RegistrationClient.class);
 
   public RegistrationClient(String host, int port, XDR request) {
     super(host, port, request);
@@ -57,10 +57,10 @@ public class RegistrationClient extends SimpleTcpClient {
     }
 
     @Override
-    public void messageReceived(ChannelHandlerContext ctx, MessageEvent e) {
-      ChannelBuffer buf = (ChannelBuffer) e.getMessage(); // Read reply
+    public void channelRead(ChannelHandlerContext ctx, Object msg) {
+      ByteBuf buf = (ByteBuf) msg; // Read reply
       if (!validMessageLength(buf.readableBytes())) {
-        e.getChannel().close();
+        ctx.channel().close();
         return;
       }
 
@@ -82,7 +82,7 @@ public class RegistrationClient extends SimpleTcpClient {
         RpcDeniedReply deniedReply = (RpcDeniedReply) reply;
         handle(deniedReply);
       }
-      e.getChannel().close(); // shutdown now that request is complete
+      ctx.channel().close(); // shutdown now that request is complete
     }
 
     private void handle(RpcDeniedReply deniedReply) {

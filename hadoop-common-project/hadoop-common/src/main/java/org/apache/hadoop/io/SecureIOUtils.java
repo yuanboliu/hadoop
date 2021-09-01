@@ -22,7 +22,6 @@ import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.RandomAccessFile;
-import java.util.Arrays;
 
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FSDataInputStream;
@@ -33,12 +32,12 @@ import org.apache.hadoop.io.nativeio.NativeIO;
 import org.apache.hadoop.io.nativeio.NativeIO.POSIX.Stat;
 import org.apache.hadoop.security.UserGroupInformation;
 
-import com.google.common.annotations.VisibleForTesting;
+import org.apache.hadoop.thirdparty.com.google.common.annotations.VisibleForTesting;
 
 /**
  * This class provides secure APIs for opening and creating files on the local
  * disk. The main issue this class tries to handle is that of symlink traversal.
- * <br/>
+ * <br>
  * An example of such an attack is:
  * <ol>
  * <li> Malicious user removes his task's syslog file, and puts a link to the
@@ -51,7 +50,7 @@ import com.google.common.annotations.VisibleForTesting;
  * </ol>
  * A similar attack is possible involving task log truncation, but in that case
  * due to an insecure write to a file.
- * <br/>
+ * <br>
  */
 public class SecureIOUtils {
 
@@ -273,7 +272,7 @@ public class SecureIOUtils {
             UserGroupInformation.createRemoteUser(expectedOwner);
         final String adminsGroupString = "Administrators";
         success = owner.equals(adminsGroupString)
-            && Arrays.asList(ugi.getGroupNames()).contains(adminsGroupString);
+            && ugi.getGroupsSet().contains(adminsGroupString);
       } else {
         success = false;
       }

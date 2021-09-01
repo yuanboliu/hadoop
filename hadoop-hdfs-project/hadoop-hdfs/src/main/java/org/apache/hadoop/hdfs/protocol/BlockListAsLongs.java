@@ -33,12 +33,13 @@ import org.apache.hadoop.classification.InterfaceStability;
 import org.apache.hadoop.hdfs.protocol.BlockListAsLongs.BlockReportReplica;
 import org.apache.hadoop.hdfs.server.common.HdfsServerConstants.ReplicaState;
 import org.apache.hadoop.hdfs.server.datanode.Replica;
-import com.google.common.annotations.VisibleForTesting;
-import com.google.common.base.Preconditions;
-import com.google.protobuf.ByteString;
-import com.google.protobuf.CodedInputStream;
-import com.google.protobuf.CodedOutputStream;
-import com.google.protobuf.WireFormat;
+import org.apache.hadoop.hdfs.server.datanode.fsdataset.FsVolumeSpi;
+import org.apache.hadoop.thirdparty.com.google.common.annotations.VisibleForTesting;
+import org.apache.hadoop.thirdparty.com.google.common.base.Preconditions;
+import org.apache.hadoop.thirdparty.protobuf.ByteString;
+import org.apache.hadoop.thirdparty.protobuf.CodedInputStream;
+import org.apache.hadoop.thirdparty.protobuf.CodedOutputStream;
+import org.apache.hadoop.thirdparty.protobuf.WireFormat;
 
 @InterfaceAudience.Private
 @InterfaceStability.Evolving
@@ -62,34 +63,6 @@ public abstract class BlockListAsLongs implements Iterable<BlockReportReplica> {
     @Override
     public Iterator<BlockReportReplica> iterator() {
       return Collections.emptyIterator();
-    }
-    @Override
-    public boolean isStorageReport() {
-      return false;
-    }
-  };
-
-  // STORAGE_REPORT is used to report all storages in the DN
-  public static final BlockListAsLongs STORAGE_REPORT = new BlockListAsLongs() {
-    @Override
-    public int getNumberOfBlocks() {
-      return -1;
-    }
-    @Override
-    public ByteString getBlocksBuffer() {
-      return ByteString.EMPTY;
-    }
-    @Override
-    public long[] getBlockListAsLongs() {
-      return EMPTY_LONGS;
-    }
-    @Override
-    public Iterator<BlockReportReplica> iterator() {
-      return Collections.emptyIterator();
-    }
-    @Override
-    public boolean isStorageReport() {
-      return true;
     }
   };
 
@@ -229,7 +202,7 @@ public abstract class BlockListAsLongs implements Iterable<BlockReportReplica> {
   /**
    * Very efficient encoding of the block report into a ByteString to avoid
    * the overhead of protobuf repeating fields.  Primitive repeating fields
-   * require re-allocs of an ArrayList<Long> and the associated (un)boxing
+   * require re-allocs of an ArrayList&lt;Long&gt; and the associated (un)boxing
    * overhead which puts pressure on GC.
    * 
    * The structure of the buffer is as follows:
@@ -281,13 +254,6 @@ public abstract class BlockListAsLongs implements Iterable<BlockReportReplica> {
   abstract public long[] getBlockListAsLongs();
 
   /**
-   * Return true for STORAGE_REPORT BlocksListsAsLongs.
-   * Otherwise return false.
-   * @return boolean
-   */
-  abstract public boolean isStorageReport();
-
-  /**
    * Returns a singleton iterator over blocks in the block report.  Do not
    * add the returned blocks to a collection.
    * @return Iterator
@@ -311,12 +277,12 @@ public abstract class BlockListAsLongs implements Iterable<BlockReportReplica> {
       try {
         // zig-zag to reduce size of legacy blocks
         cos.writeSInt64NoTag(replica.getBlockId());
-        cos.writeRawVarint64(replica.getBytesOnDisk());
-        cos.writeRawVarint64(replica.getGenerationStamp());
+        cos.writeUInt64NoTag(replica.getBytesOnDisk());
+        cos.writeUInt64NoTag(replica.getGenerationStamp());
         ReplicaState state = replica.getState();
         // although state is not a 64-bit value, using a long varint to
         // allow for future use of the upper bits
-        cos.writeRawVarint64(state.getValue());
+        cos.writeUInt64NoTag(state.getValue());
         if (state == ReplicaState.FINALIZED) {
           numFinalized++;
         }
@@ -427,11 +393,6 @@ public abstract class BlockListAsLongs implements Iterable<BlockReportReplica> {
     }
 
     @Override
-    public boolean isStorageReport() {
-      return false;
-    }
-
-    @Override
     public Iterator<BlockReportReplica> iterator() {
       return new Iterator<BlockReportReplica>() {
         final BlockReportReplica block = new BlockReportReplica();
@@ -508,15 +469,10 @@ public abstract class BlockListAsLongs implements Iterable<BlockReportReplica> {
       long[] longs = new long[2+values.size()];
       longs[0] = finalizedBlocks;
       longs[1] = numBlocks - finalizedBlocks;
-      for (int i=0; i < longs.length; i++) {
-        longs[i] = values.get(i);
+      for(int i=0; i<values.size(); i++) {
+        longs[2+i] = values.get(i);
       }
       return longs;
-    }
-
-    @Override
-    public boolean isStorageReport() {
-      return false;
     }
 
     @Override
@@ -568,6 +524,7 @@ public abstract class BlockListAsLongs implements Iterable<BlockReportReplica> {
   @InterfaceAudience.Private
   public static class BlockReportReplica extends Block implements Replica {
     private ReplicaState state;
+
     private BlockReportReplica() {
     }
     public BlockReportReplica(Block block) {
@@ -599,6 +556,10 @@ public abstract class BlockListAsLongs implements Iterable<BlockReportReplica> {
     }
     @Override
     public boolean isOnTransientStorage() {
+      throw new UnsupportedOperationException();
+    }
+    @Override
+    public FsVolumeSpi getVolume() {
       throw new UnsupportedOperationException();
     }
     @Override
