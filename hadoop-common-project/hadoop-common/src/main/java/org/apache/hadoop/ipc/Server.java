@@ -68,6 +68,7 @@ import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.stream.Collectors;
 
 import javax.security.sasl.Sasl;
 import javax.security.sasl.SaslException;
@@ -125,7 +126,7 @@ import org.apache.hadoop.tracing.TraceScope;
 import org.apache.hadoop.tracing.Tracer;
 import org.apache.hadoop.tracing.TraceUtils;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import org.apache.hadoop.thirdparty.com.google.common.annotations.VisibleForTesting;
+import org.apache.hadoop.classification.VisibleForTesting;
 import org.apache.hadoop.thirdparty.protobuf.ByteString;
 import org.apache.hadoop.thirdparty.protobuf.CodedOutputStream;
 import org.apache.hadoop.thirdparty.protobuf.Message;
@@ -184,8 +185,11 @@ public abstract class Server {
    * e.g., terse exception group for concise logging messages
    */
   static class ExceptionsHandler {
-    private volatile Set<String> terseExceptions = new HashSet<>();
-    private volatile Set<String> suppressedExceptions = new HashSet<>();
+
+    private final Set<String> terseExceptions =
+        ConcurrentHashMap.newKeySet();
+    private final Set<String> suppressedExceptions =
+        ConcurrentHashMap.newKeySet();
 
     /**
      * Add exception classes for which server won't log stack traces.
@@ -193,8 +197,10 @@ public abstract class Server {
      * @param exceptionClass exception classes 
      */
     void addTerseLoggingExceptions(Class<?>... exceptionClass) {
-      // Thread-safe replacement of terseExceptions.
-      terseExceptions = addExceptions(terseExceptions, exceptionClass);
+      terseExceptions.addAll(Arrays
+          .stream(exceptionClass)
+          .map(Class::toString)
+          .collect(Collectors.toSet()));
     }
 
     /**
@@ -203,9 +209,10 @@ public abstract class Server {
      * @param exceptionClass exception classes
      */
     void addSuppressedLoggingExceptions(Class<?>... exceptionClass) {
-      // Thread-safe replacement of suppressedExceptions.
-      suppressedExceptions = addExceptions(
-          suppressedExceptions, exceptionClass);
+      suppressedExceptions.addAll(Arrays
+          .stream(exceptionClass)
+          .map(Class::toString)
+          .collect(Collectors.toSet()));
     }
 
     boolean isTerseLog(Class<?> t) {
@@ -216,23 +223,6 @@ public abstract class Server {
       return suppressedExceptions.contains(t.toString());
     }
 
-    /**
-     * Return a new set containing all the exceptions in exceptionsSet
-     * and exceptionClass.
-     * @return
-     */
-    private static Set<String> addExceptions(
-        final Set<String> exceptionsSet, Class<?>[] exceptionClass) {
-      // Make a copy of the exceptionSet for performing modification
-      final HashSet<String> newSet = new HashSet<>(exceptionsSet);
-
-      // Add all class names into the HashSet
-      for (Class<?> name : exceptionClass) {
-        newSet.add(name.toString());
-      }
-
-      return Collections.unmodifiableSet(newSet);
-    }
   }
 
   
@@ -379,11 +369,20 @@ public abstract class Server {
   }
 
   /** Returns the remote side ip address when invoked inside an RPC 
-   *  Returns null incase of an error.
+   *  Returns null in case of an error.
    */
   public static InetAddress getRemoteIp() {
     Call call = CurCall.get();
-    return (call != null ) ? call.getHostInetAddress() : null;
+    return (call != null) ? call.getHostInetAddress() : null;
+  }
+
+  /**
+   * Returns the remote side port when invoked inside an RPC
+   * Returns 0 in case of an error.
+   */
+  public static int getRemotePort() {
+    Call call = CurCall.get();
+    return (call != null) ? call.getRemotePort() : 0;
   }
 
   /**
@@ -419,7 +418,7 @@ public abstract class Server {
     Call call = CurCall.get();
     return call != null ? call.clientId : RpcConstants.DUMMY_CLIENT_ID;
   }
-  
+
   /** Returns remote address as a string when invoked inside an RPC.
    *  Returns null in case of an error.
    */
@@ -457,7 +456,7 @@ public abstract class Server {
     return call != null? call.getPriorityLevel() : 0;
   }
 
-  private String bindAddress; 
+  private String bindAddress;
   private int port;                               // port we listen on
   private int handlerCount;                       // number of handler threads
   private int readThreads;                        // number of read threads
@@ -465,7 +464,7 @@ public abstract class Server {
   private Class<? extends Writable> rpcRequestClass;   // class used for deserializing the rpc request
   final protected RpcMetrics rpcMetrics;
   final protected RpcDetailedMetrics rpcDetailedMetrics;
-  
+
   private Configuration conf;
   private String portRangeConfig = null;
   private SecretManager<TokenIdentifier> secretManager;
@@ -499,6 +498,7 @@ public abstract class Server {
   private Map<Integer, Listener> auxiliaryListenerMap;
   private Responder responder = null;
   private Handler[] handlers = null;
+  private final AtomicInteger numInProcessHandler = new AtomicInteger();
 
   private boolean logSlowRPC = false;
 
@@ -508,6 +508,10 @@ public abstract class Server {
    */
   protected boolean isLogSlowRPC() {
     return logSlowRPC;
+  }
+
+  public int getNumInProcessHandler() {
+    return numInProcessHandler.get();
   }
 
   /**
@@ -662,17 +666,17 @@ public abstract class Server {
     }
   }
 
-  @org.apache.hadoop.thirdparty.com.google.common.annotations.VisibleForTesting
+  @VisibleForTesting
   int getPriorityLevel(Schedulable e) {
     return callQueue.getPriorityLevel(e);
   }
 
-  @org.apache.hadoop.thirdparty.com.google.common.annotations.VisibleForTesting
+  @VisibleForTesting
   int getPriorityLevel(UserGroupInformation ugi) {
     return callQueue.getPriorityLevel(ugi);
   }
 
-  @org.apache.hadoop.thirdparty.com.google.common.annotations.VisibleForTesting
+  @VisibleForTesting
   void setPriorityLevel(UserGroupInformation ugi, int priority) {
     callQueue.setPriorityLevel(ugi, priority);
   }
@@ -983,6 +987,9 @@ public abstract class Server {
     public InetAddress getHostInetAddress() {
       return null;
     }
+    public int getRemotePort() {
+      return 0;
+    }
     public String getHostAddress() {
       InetAddress addr = getHostInetAddress();
       return (addr != null) ? addr.getHostAddress() : null;
@@ -1138,6 +1145,11 @@ public abstract class Server {
     @Override
     public InetAddress getHostInetAddress() {
       return connection.getHostInetAddress();
+    }
+
+    @Override
+    public int getRemotePort() {
+      return connection.getRemotePort();
     }
 
     @Override
@@ -2019,6 +2031,10 @@ public abstract class Server {
 
     public int getIngressPort() {
       return ingressPort;
+    }
+
+    public int getRemotePort() {
+      return remotePort;
     }
 
     public InetAddress getHostInetAddress() {
@@ -3013,6 +3029,9 @@ public abstract class Server {
       } else {
         callQueue.add(call);
       }
+
+      LOG.debug("Call has entered the CallQueue and is waiting to be processed. " +
+          "Call details: {}", call);
       long deltaNanos = Time.monotonicNowNanos() - call.timestampNanos;
       call.getProcessingDetails().set(Timing.ENQUEUE, deltaNanos,
           TimeUnit.NANOSECONDS);
@@ -3052,6 +3071,7 @@ public abstract class Server {
 
         try {
           call = callQueue.take(); // pop the queue; maybe blocked here
+          numInProcessHandler.incrementAndGet();
           startTimeNanos = Time.monotonicNowNanos();
           if (alignmentContext != null && call.isCallCoordinated() &&
               call.getClientStateId() > alignmentContext.getLastSeenStateId()) {
@@ -3105,6 +3125,7 @@ public abstract class Server {
           }
         } finally {
           CurCall.set(null);
+          numInProcessHandler.decrementAndGet();
           IOUtils.cleanupWithLogger(LOG, traceScope);
           if (call != null) {
             updateMetrics(call, startTimeNanos, connDropped);
