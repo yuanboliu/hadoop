@@ -36,13 +36,18 @@ import java.nio.charset.Charset;
 import java.nio.charset.CharsetEncoder;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.AccessDeniedException;
+import java.nio.file.attribute.PosixFilePermission;
 import java.nio.file.FileSystems;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
+import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Enumeration;
+import java.util.EnumSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -51,13 +56,13 @@ import java.util.jar.Attributes;
 import java.util.jar.JarOutputStream;
 import java.util.jar.Manifest;
 import java.util.zip.GZIPInputStream;
-import java.util.zip.ZipEntry;
-import java.util.zip.ZipFile;
-import java.util.zip.ZipInputStream;
 
 import org.apache.commons.collections.map.CaseInsensitiveMap;
 import org.apache.commons.compress.archivers.tar.TarArchiveEntry;
 import org.apache.commons.compress.archivers.tar.TarArchiveInputStream;
+import org.apache.commons.compress.archivers.zip.ZipArchiveEntry;
+import org.apache.commons.compress.archivers.zip.ZipArchiveInputStream;
+import org.apache.commons.compress.archivers.zip.ZipFile;
 import org.apache.commons.io.FileUtils;
 import org.apache.hadoop.classification.InterfaceAudience;
 import org.apache.hadoop.classification.InterfaceStability;
@@ -533,6 +538,26 @@ public class FileUtil {
     return dst;
   }
 
+  public static boolean isRegularFile(File file) {
+    return isRegularFile(file, true);
+  }
+
+  /**
+   * Check if the file is regular.
+   * @param file The file being checked.
+   * @param allowLinks Whether to allow matching links.
+   * @return Returns the result of checking whether the file is a regular file.
+   */
+  public static boolean isRegularFile(File file, boolean allowLinks) {
+    if (file != null) {
+      if (allowLinks) {
+        return Files.isRegularFile(file.toPath());
+      }
+      return Files.isRegularFile(file.toPath(), LinkOption.NOFOLLOW_LINKS);
+    }
+    return true;
+  }
+
   /**
    * Convert a os-native filename to a path that works for the shell.
    * @param filename The filename to convert
@@ -622,12 +647,12 @@ public class FileUtil {
    */
   public static void unZip(InputStream inputStream, File toDir)
       throws IOException {
-    try (ZipInputStream zip = new ZipInputStream(inputStream)) {
+    try (ZipArchiveInputStream zip = new ZipArchiveInputStream(inputStream)) {
       int numOfFailedLastModifiedSet = 0;
       String targetDirPath = toDir.getCanonicalPath() + File.separator;
-      for(ZipEntry entry = zip.getNextEntry();
+      for(ZipArchiveEntry entry = zip.getNextZipEntry();
           entry != null;
-          entry = zip.getNextEntry()) {
+          entry = zip.getNextZipEntry()) {
         if (!entry.isDirectory()) {
           File file = new File(toDir, entry.getName());
           if (!file.getCanonicalPath().startsWith(targetDirPath)) {
@@ -646,12 +671,58 @@ public class FileUtil {
           if (!file.setLastModified(entry.getTime())) {
             numOfFailedLastModifiedSet++;
           }
+          if (entry.getPlatform() == ZipArchiveEntry.PLATFORM_UNIX) {
+            Files.setPosixFilePermissions(file.toPath(), permissionsFromMode(entry.getUnixMode()));
+          }
         }
       }
       if (numOfFailedLastModifiedSet > 0) {
         LOG.warn("Could not set last modfied time for {} file(s)",
             numOfFailedLastModifiedSet);
       }
+    }
+  }
+
+  /**
+   * The permission operation of this method only involves users, user groups, and others.
+   * If SUID is set, only executable permissions are reserved.
+   * @param mode Permissions are represented by numerical values
+   * @return The original permissions for files are stored in collections
+   */
+  private static Set<PosixFilePermission> permissionsFromMode(int mode) {
+    EnumSet<PosixFilePermission> permissions =
+        EnumSet.noneOf(PosixFilePermission.class);
+    addPermissions(permissions, mode, PosixFilePermission.OTHERS_READ,
+        PosixFilePermission.OTHERS_WRITE, PosixFilePermission.OTHERS_EXECUTE);
+    addPermissions(permissions, mode >> 3, PosixFilePermission.GROUP_READ,
+        PosixFilePermission.GROUP_WRITE, PosixFilePermission.GROUP_EXECUTE);
+    addPermissions(permissions, mode >> 6, PosixFilePermission.OWNER_READ,
+        PosixFilePermission.OWNER_WRITE, PosixFilePermission.OWNER_EXECUTE);
+    return permissions;
+  }
+
+  /**
+   * Assign the original permissions to the file
+   * @param permissions The original permissions for files are stored in collections
+   * @param mode Use a value of type int to indicate permissions
+   * @param r Read permission
+   * @param w Write permission
+   * @param x Execute permission
+   */
+  private static void addPermissions(
+      Set<PosixFilePermission> permissions,
+      int mode,
+      PosixFilePermission r,
+      PosixFilePermission w,
+      PosixFilePermission x) {
+    if ((mode & 1L) == 1L) {
+      permissions.add(x);
+    }
+    if ((mode & 2L) == 2L) {
+      permissions.add(w);
+    }
+    if ((mode & 4L) == 4L) {
+      permissions.add(r);
     }
   }
 
@@ -663,14 +734,14 @@ public class FileUtil {
    * @throws IOException An I/O exception has occurred
    */
   public static void unZip(File inFile, File unzipDir) throws IOException {
-    Enumeration<? extends ZipEntry> entries;
+    Enumeration<? extends ZipArchiveEntry> entries;
     ZipFile zipFile = new ZipFile(inFile);
 
     try {
-      entries = zipFile.entries();
+      entries = zipFile.getEntries();
       String targetDirPath = unzipDir.getCanonicalPath() + File.separator;
       while (entries.hasMoreElements()) {
-        ZipEntry entry = entries.nextElement();
+        ZipArchiveEntry entry = entries.nextElement();
         if (!entry.isDirectory()) {
           InputStream in = zipFile.getInputStream(entry);
           try {
@@ -694,6 +765,9 @@ public class FileUtil {
               }
             } finally {
               out.close();
+            }
+            if (entry.getPlatform() == ZipArchiveEntry.PLATFORM_UNIX) {
+              Files.setPosixFilePermissions(file.toPath(), permissionsFromMode(entry.getUnixMode()));
             }
           } finally {
             in.close();
@@ -888,10 +962,13 @@ public class FileUtil {
   private static void unTarUsingTar(File inFile, File untarDir,
       boolean gzipped) throws IOException {
     StringBuffer untarCommand = new StringBuffer();
+    // not using canonical path here; this postpones relative path
+    // resolution until bash is executed.
+    final String source = "'" + FileUtil.makeSecureShellPath(inFile) + "'";
     if (gzipped) {
-      untarCommand.append(" gzip -dc '")
-          .append(FileUtil.makeSecureShellPath(inFile))
-          .append("' | (");
+      untarCommand.append(" gzip -dc ")
+          .append(source)
+          .append(" | (");
     }
     untarCommand.append("cd '")
         .append(FileUtil.makeSecureShellPath(untarDir))
@@ -901,15 +978,17 @@ public class FileUtil {
     if (gzipped) {
       untarCommand.append(" -)");
     } else {
-      untarCommand.append(FileUtil.makeSecureShellPath(inFile));
+      untarCommand.append(source);
     }
+    LOG.debug("executing [{}]", untarCommand);
     String[] shellCmd = { "bash", "-c", untarCommand.toString() };
     ShellCommandExecutor shexec = new ShellCommandExecutor(shellCmd);
     shexec.execute();
     int exitcode = shexec.getExitCode();
     if (exitcode != 0) {
       throw new IOException("Error untarring file " + inFile +
-                  ". Tar process exited with exit code " + exitcode);
+          ". Tar process exited with exit code " + exitcode
+          + " from command " + untarCommand);
     }
   }
 
@@ -966,6 +1045,14 @@ public class FileUtil {
           + " would create entry outside of " + outputDir);
     }
 
+    if (entry.isSymbolicLink() || entry.isLink()) {
+      String canonicalTargetPath = getCanonicalPath(entry.getLinkName(), outputDir);
+      if (!canonicalTargetPath.startsWith(targetDirPath)) {
+        throw new IOException(
+            "expanding " + entry.getName() + " would create entry outside of " + outputDir);
+      }
+    }
+
     if (entry.isDirectory()) {
       File subDir = new File(outputDir, entry.getName());
       if (!subDir.mkdirs() && !subDir.isDirectory()) {
@@ -981,10 +1068,12 @@ public class FileUtil {
     }
 
     if (entry.isSymbolicLink()) {
-      // Create symbolic link relative to tar parent dir
-      Files.createSymbolicLink(FileSystems.getDefault()
-              .getPath(outputDir.getPath(), entry.getName()),
-          FileSystems.getDefault().getPath(entry.getLinkName()));
+      // Create symlink with canonical target path to ensure that we don't extract
+      // outside targetDirPath
+      String canonicalTargetPath = getCanonicalPath(entry.getLinkName(), outputDir);
+      Files.createSymbolicLink(
+          FileSystems.getDefault().getPath(outputDir.getPath(), entry.getName()),
+          FileSystems.getDefault().getPath(canonicalTargetPath));
       return;
     }
 
@@ -996,12 +1085,27 @@ public class FileUtil {
     }
 
     if (entry.isLink()) {
-      File src = new File(outputDir, entry.getLinkName());
+      String canonicalTargetPath = getCanonicalPath(entry.getLinkName(), outputDir);
+      File src = new File(canonicalTargetPath);
       HardLink.createHardLink(src, outputFile);
       return;
     }
 
     org.apache.commons.io.FileUtils.copyToFile(tis, outputFile);
+  }
+
+  /**
+   * Gets the canonical path for the given path.
+   *
+   * @param path      The path for which the canonical path needs to be computed.
+   * @param parentDir The parent directory to use if the path is a relative path.
+   * @return The canonical path of the given path.
+   */
+  private static String getCanonicalPath(String path, File parentDir) throws IOException {
+    java.nio.file.Path targetPath = Paths.get(path);
+    return (targetPath.isAbsolute() ?
+        new File(path) :
+        new File(parentDir, path)).getCanonicalPath();
   }
 
   /**
