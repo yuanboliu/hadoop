@@ -376,7 +376,7 @@ public class INodesInPath implements Closeable {
 
   INodesInPath(InodeLockList lockList, byte[][] pathComponents,
       FSDirectory.LockMode lockMode, boolean isRaw) {
-    Preconditions.checkArgument(!lockList.isEmpty());
+    Preconditions.checkArgument(lockList != null && pathComponents != null);
     path = pathComponents;
     mLockList = lockList;
     mLockMode = lockMode;

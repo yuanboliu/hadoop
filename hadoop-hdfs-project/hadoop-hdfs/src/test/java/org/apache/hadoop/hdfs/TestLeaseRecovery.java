@@ -79,7 +79,7 @@ public class TestLeaseRecovery {
       ) throws IOException {
     TestInterDatanodeProtocol.checkMetaInfo(b, dn);
   }
-  
+
   static int min(Integer... x) {
     int m = x[0];
     for(int i = 1; i < x.length; i++) {
@@ -106,7 +106,7 @@ public class TestLeaseRecovery {
    */
   @Test
   public void testBlockSynchronization() throws Exception {
-    final int ORG_FILE_SIZE = 3000; 
+    final int ORG_FILE_SIZE = 3000;
     Configuration conf = new HdfsConfiguration();
     conf.setLong(DFSConfigKeys.DFS_BLOCK_SIZE_KEY, BLOCK_SIZE);
     cluster = new MiniDFSCluster.Builder(conf).numDataNodes(5).build();

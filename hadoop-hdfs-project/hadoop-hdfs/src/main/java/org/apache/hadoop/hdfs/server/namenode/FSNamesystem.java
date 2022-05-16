@@ -484,7 +484,7 @@ public class FSNamesystem implements Namesystem, FSNamesystemMBean,
    */
   private volatile boolean needRollbackFsImage;
 
-  final LeaseManager leaseManager = new LeaseManager(this); 
+  final LeaseManager leaseManager;
 
   Daemon nnrmthread = null; // NamenodeResourceMonitor thread
 
@@ -946,7 +946,7 @@ public class FSNamesystem implements Namesystem, FSNamesystemMBean,
           DFSConfigKeys.DFS_NAMENODE_LIST_OPENFILES_NUM_RESPONSES +
               " must be a positive integer."
       );
-
+      this.leaseManager = new LeaseManager(this);
       this.blockDeletionIncrement = conf.getInt(
           DFSConfigKeys.DFS_NAMENODE_BLOCK_DELETION_INCREMENT_KEY,
           DFSConfigKeys.DFS_NAMENODE_BLOCK_DELETION_INCREMENT_DEFAULT);
@@ -1374,7 +1374,9 @@ public class FSNamesystem implements Namesystem, FSNamesystemMBean,
         blockManager.getSPSManager().stop();
       }
       stopSecretManager();
-      leaseManager.stopMonitor();
+      if (leaseManager != null) {
+        leaseManager.stopMonitor();
+      }
       if (nnrmthread != null) {
         ((NameNodeResourceMonitor) nnrmthread.getRunnable()).stopMonitor();
         nnrmthread.interrupt();
@@ -2605,7 +2607,6 @@ public class FSNamesystem implements Namesystem, FSNamesystemMBean,
   boolean recoverLease(String src, String holder, String clientMachine)
       throws IOException {
     boolean skipSync = false;
-    checkOperation(OperationCategory.WRITE);
     final FSPermissionChecker pc = getPermissionChecker();
     readLock();
     try {
@@ -2617,12 +2618,18 @@ public class FSNamesystem implements Namesystem, FSNamesystemMBean,
       if (!inode.isUnderConstruction()) {
         return true;
       }
-      if (isPermissionEnabled) {
-        dir.checkPathAccess(pc, iip, FsAction.WRITE);
+
+      inode.lockWrite();
+      try {
+        if (isPermissionEnabled) {
+          dir.checkPathAccess(pc, iip, FsAction.WRITE);
+        }
+
+        return recoverLeaseInternal(RecoverLeaseOp.RECOVER_LEASE,
+            iip, src, holder, clientMachine, true);
+      } finally {
+        inode.unlockWrite();
       }
-  
-      return recoverLeaseInternal(RecoverLeaseOp.RECOVER_LEASE,
-          iip, src, holder, clientMachine, true);
     } catch (StandbyException se) {
       skipSync = true;
       throw se;
@@ -3572,6 +3579,8 @@ public class FSNamesystem implements Namesystem, FSNamesystemMBean,
   private Lease reassignLease(Lease lease, String src, String newHolder,
       INodeFile pendingFile) {
     assert hasReadLock();
+    assert pendingFile.isWriteLocked();
+
     if(newHolder == null)
       return lease;
     // The following transaction is not synced. Make sure it's sync'ed later.
@@ -3611,7 +3620,7 @@ public class FSNamesystem implements Namesystem, FSNamesystemMBean,
   void finalizeINodeFileUnderConstruction(String src, INodeFile pendingFile,
       int latestSnapshot, boolean allowCommittedBlock) throws IOException {
     assert hasReadLock();
-
+    assert pendingFile.isReadLocked();
     FileUnderConstructionFeature uc = pendingFile.getFileUnderConstructionFeature();
     if (uc == null) {
       throw new IOException("Cannot finalize file " + src
@@ -3677,6 +3686,12 @@ public class FSNamesystem implements Namesystem, FSNamesystemMBean,
     return getBlockCollection(b.getBlockCollectionId());
   }
 
+  INodeFile getBlockCollectionWithWriteLock(BlockInfo b) {
+    INode inode = getFSDirectory().getInodeWithWriteLock(
+            b.getBlockCollectionId());
+    return inode == null ? null : inode.asFile();
+  }
+
   @Override
   public INodeFile getBlockCollection(long id) {
     assert hasReadLock() : "Accessing INode id = " + id + " without read lock";
@@ -3740,97 +3755,104 @@ public class FSNamesystem implements Namesystem, FSNamesystemMBean,
             + " is null, likely because the file owning this block was"
             + " deleted and the block removal is delayed");
       }
-      final INodeFile iFile = getBlockCollection(storedBlock);
-      src = iFile.getFullPathName();
-      if (isFileDeleted(iFile)) {
-        throw new FileNotFoundException("File not found: "
-            + src + ", likely due to delayed block removal");
-      }
-      if ((!iFile.isUnderConstruction() || storedBlock.isComplete()) &&
-          iFile.getLastBlock().isComplete()) {
-        if (LOG.isDebugEnabled()) {
-          LOG.debug("Unexpected block (=" + oldBlock
-                    + ") since the file (=" + iFile.getLocalName()
-                    + ") is not under construction");
+      INodeFile iFile = null;
+      try {
+        iFile = getBlockCollectionWithWriteLock(storedBlock);
+        src = iFile.getFullPathName();
+        if (isFileDeleted(iFile)) {
+          throw new FileNotFoundException("File not found: "
+              + src + ", likely due to delayed block removal");
         }
-        return;
-      }
-
-      truncatedBlock = iFile.getLastBlock();
-      final long recoveryId = truncatedBlock.getUnderConstructionFeature()
-          .getBlockRecoveryId();
-      copyTruncate = truncatedBlock.getBlockId() != storedBlock.getBlockId();
-      if(recoveryId != newgenerationstamp) {
-        throw new IOException("The recovery id " + newgenerationstamp
-                              + " does not match current recovery id "
-                              + recoveryId + " for block " + oldBlock);
-      }
-
-      if (deleteblock) {
-        Block blockToDel = ExtendedBlock.getLocalBlock(oldBlock);
-        boolean remove = iFile.removeLastBlock(blockToDel) != null;
-        if (remove) {
-          blockManager.removeBlock(storedBlock);
-        }
-      } else {
-        // update last block
-        if(!copyTruncate) {
-          storedBlock.setGenerationStamp(newgenerationstamp);
-          storedBlock.setNumBytes(newlength);
+        if ((!iFile.isUnderConstruction() || storedBlock.isComplete()) &&
+            iFile.getLastBlock().isComplete()) {
+          if (LOG.isDebugEnabled()) {
+            LOG.debug("Unexpected block (=" + oldBlock
+                + ") since the file (=" + iFile.getLocalName()
+                + ") is not under construction");
+          }
+          return;
         }
 
-        // Find the target DatanodeStorageInfos. If not found because of invalid
-        // or empty DatanodeID/StorageID, the slot of same offset in dsInfos is
-        // null
-        final DatanodeStorageInfo[] dsInfos = blockManager.getDatanodeManager().
-            getDatanodeStorageInfos(newtargets, newtargetstorages,
-                "src=%s, oldBlock=%s, newgenerationstamp=%d, newlength=%d",
-                src, oldBlock, newgenerationstamp, newlength);
+        truncatedBlock = iFile.getLastBlock();
+        final long recoveryId = truncatedBlock.getUnderConstructionFeature()
+            .getBlockRecoveryId();
+        copyTruncate = truncatedBlock.getBlockId() != storedBlock.getBlockId();
+        if (recoveryId != newgenerationstamp) {
+          throw new IOException("The recovery id " + newgenerationstamp
+              + " does not match current recovery id "
+              + recoveryId + " for block " + oldBlock);
+        }
 
-        if (closeFile && dsInfos != null) {
-          // the file is getting closed. Insert block locations into blockManager.
-          // Otherwise fsck will report these blocks as MISSING, especially if the
-          // blocksReceived from Datanodes take a long time to arrive.
-          for (int i = 0; i < dsInfos.length; i++) {
-            if (dsInfos[i] != null) {
-              if(copyTruncate) {
-                dsInfos[i].addBlock(truncatedBlock, truncatedBlock);
-              } else {
-                Block bi = new Block(storedBlock);
-                if (storedBlock.isStriped()) {
-                  bi.setBlockId(bi.getBlockId() + i);
+        if (deleteblock) {
+          Block blockToDel = ExtendedBlock.getLocalBlock(oldBlock);
+          boolean remove = iFile.removeLastBlock(blockToDel) != null;
+          if (remove) {
+            blockManager.removeBlock(storedBlock);
+          }
+        } else {
+          // update last block
+          if (!copyTruncate) {
+            storedBlock.setGenerationStamp(newgenerationstamp);
+            storedBlock.setNumBytes(newlength);
+          }
+
+          // Find the target DatanodeStorageInfos. If not found because of invalid
+          // or empty DatanodeID/StorageID, the slot of same offset in dsInfos is
+          // null
+          final DatanodeStorageInfo[] dsInfos = blockManager.getDatanodeManager().
+              getDatanodeStorageInfos(newtargets, newtargetstorages,
+                  "src=%s, oldBlock=%s, newgenerationstamp=%d, newlength=%d",
+                  src, oldBlock, newgenerationstamp, newlength);
+
+          if (closeFile && dsInfos != null) {
+            // the file is getting closed. Insert block locations into blockManager.
+            // Otherwise fsck will report these blocks as MISSING, especially if the
+            // blocksReceived from Datanodes take a long time to arrive.
+            for (int i = 0; i < dsInfos.length; i++) {
+              if (dsInfos[i] != null) {
+                if (copyTruncate) {
+                  dsInfos[i].addBlock(truncatedBlock, truncatedBlock);
+                } else {
+                  Block bi = new Block(storedBlock);
+                  if (storedBlock.isStriped()) {
+                    bi.setBlockId(bi.getBlockId() + i);
+                  }
+                  dsInfos[i].addBlock(storedBlock, bi);
                 }
-                dsInfos[i].addBlock(storedBlock, bi);
               }
+            }
+          }
+
+          // add pipeline locations into the INodeUnderConstruction
+          if (copyTruncate) {
+            iFile.convertLastBlockToUC(truncatedBlock, dsInfos);
+          } else {
+            iFile.convertLastBlockToUC(storedBlock, dsInfos);
+            if (closeFile) {
+              blockManager.markBlockReplicasAsCorrupt(oldBlock.getLocalBlock(),
+                  storedBlock, oldGenerationStamp, oldNumBytes,
+                  dsInfos);
             }
           }
         }
 
-        // add pipeline locations into the INodeUnderConstruction
-        if(copyTruncate) {
-          iFile.convertLastBlockToUC(truncatedBlock, dsInfos);
-        } else {
-          iFile.convertLastBlockToUC(storedBlock, dsInfos);
-          if (closeFile) {
-            blockManager.markBlockReplicasAsCorrupt(oldBlock.getLocalBlock(),
-                storedBlock, oldGenerationStamp, oldNumBytes,
-                dsInfos);
-          }
-        }
-      }
-
-      if (closeFile) {
-        if(copyTruncate) {
-          closeFileCommitBlocks(src, iFile, truncatedBlock);
-          if(!iFile.isBlockInLatestSnapshot(storedBlock)) {
-            blockManager.removeBlock(storedBlock);
+        if (closeFile) {
+          if (copyTruncate) {
+            closeFileCommitBlocks(src, iFile, truncatedBlock);
+            if (!iFile.isBlockInLatestSnapshot(storedBlock)) {
+              blockManager.removeBlock(storedBlock);
+            }
+          } else {
+            closeFileCommitBlocks(src, iFile, storedBlock);
           }
         } else {
-          closeFileCommitBlocks(src, iFile, storedBlock);
+          // If this commit does not want to close the file, persist blocks
+          FSDirWriteFileOp.persistBlocks(dir, src, iFile, false);
         }
-      } else {
-        // If this commit does not want to close the file, persist blocks
-        FSDirWriteFileOp.persistBlocks(dir, src, iFile, false);
+      } finally {
+        if (iFile != null) {
+          iFile.unlockWrite();
+        }
       }
       blockManager.successfulBlockRecovery(storedBlock);
     } finally {
@@ -4062,6 +4084,7 @@ public class FSNamesystem implements Namesystem, FSNamesystemMBean,
    */
   private void closeFile(String path, INodeFile file) {
     assert hasReadLock();
+    assert file.isWriteLocked();
     // file is closed
     getEditLog().logCloseFile(path, file);
     NameNode.stateChangeLog.debug("closeFile: {} with {} blocks is persisted" +
@@ -5358,7 +5381,8 @@ public class FSNamesystem implements Namesystem, FSNamesystemMBean,
   }
 
   boolean isFileDeleted(INodeFile file) {
-    assert hasReadLock();
+    // TODO(sammichen): revisit
+    // assert file.isReadLocked();
     // Not in the inodeMap or in the snapshot but marked deleted.
     if (dir.getInode(file.getId()) == null) {
       return true;
@@ -5367,6 +5391,7 @@ public class FSNamesystem implements Namesystem, FSNamesystemMBean,
     // look at the path hierarchy to see if one parent is deleted by recursive
     // deletion
     INode tmpChild = file;
+    // TODO: Lock parent for read
     INodeDirectory tmpParent = file.getParent();
     while (true) {
       if (tmpParent == null) {
@@ -5386,6 +5411,7 @@ public class FSNamesystem implements Namesystem, FSNamesystemMBean,
       }
 
       tmpChild = tmpParent;
+      // TODO: Lock parent for read
       tmpParent = tmpParent.getParent();
     }
 

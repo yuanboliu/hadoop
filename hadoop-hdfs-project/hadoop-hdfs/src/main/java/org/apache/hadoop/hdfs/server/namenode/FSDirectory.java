@@ -1567,6 +1567,24 @@ public class FSDirectory implements Closeable {
   public INode getInode(long id) {
     return inodeMap.get(id);
   }
+
+  /**
+   * Get the inode from inodeMap based on its inode id with inode write locked.
+   * @param id The given id
+   * @return The inode associated with the given id
+   */
+  public INode getInodeWithWriteLock(long id) {
+    readLock();
+    try {
+      INode inode = inodeMap.get(id);
+      if (inode != null) {
+        inode.lockWrite();
+      }
+      return inode;
+    } finally {
+      readUnlock();
+    }
+  }
   
   @VisibleForTesting
   int getInodeMapSize() {
@@ -2396,6 +2414,42 @@ public class FSDirectory implements Closeable {
             ExceptionMessage.INODE_DOES_NOT_EXIST.getMessage(id));
       }
     }
+  }
+
+  /**
+   * Locks existing inodes on the specified path, in the specified
+   * {@link LockMode}.
+   *
+   * @param pc  A permission checker for traversal checks.  Pass null for no
+   *            permission checks.
+   * @param path the path to lock
+   * @param fileId the inode id
+   * @param dirOp the directory operation type
+   * @param lockMode the {@link LockMode} to lock the inodes with.
+   * @return the {@link INodesInPath} representing the locked path of inodes
+   * @throws InvalidPathException if the path is invalid
+   * @throws FileNotFoundException if the target inode does not exist
+   */
+  public INodesInPath lockInodePath(FSPermissionChecker pc, String path,
+      long fileId, DirOp dirOp, LockMode lockMode)
+      throws InvalidPathException, ParentNotDirectoryException,
+      FileNotFoundException, AccessControlException, UnresolvedPathException {
+    // Older clients may not have given us an inode ID to work with.
+    // In this case, we have to try to resolve the path and hope it
+    // hasn't changed or been deleted since the file was opened for write.
+    INodesInPath iip;
+    if (fileId == HdfsConstants.GRANDFATHER_INODE_ID) {
+      iip = lockInodePath(pc, path, DirOp.WRITE, lockMode);
+    } else {
+      INode inode = getInode(fileId);
+      if (inode == null) {
+        iip = new MutableLockedInodePath(path, InodeLockList.emptyInodeLockList,
+            lockMode);
+      } else {
+        iip = lockInodePath(pc, inode.getFullPathName(), dirOp, lockMode);
+      }
+    }
+    return iip;
   }
 
   INodesInPath lockFullInodePath(String src,

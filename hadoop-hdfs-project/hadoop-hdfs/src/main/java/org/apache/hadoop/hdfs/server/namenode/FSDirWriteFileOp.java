@@ -167,41 +167,45 @@ class FSDirWriteFileOp {
     String clientMachine;
     final BlockType blockType;
 
-    INodesInPath iip = fsn.dir.resolvePath(pc, src, fileId);
-    FileState fileState = analyzeFileState(fsn, iip, fileId, clientName,
-                                           previous, onRetryBlock);
-    if (onRetryBlock[0] != null && onRetryBlock[0].getLocations().length > 0) {
-      // This is a retry. No need to generate new locations.
-      // Use the last block if it has locations.
-      return null;
-    }
+    try (INodesInPath iip = fsn.dir.lockInodePath(pc, src, fileId, DirOp.READ,
+        FSDirectory.LockMode.READ)) {
 
-    final INodeFile pendingFile = fileState.inode;
-    if (!fsn.checkFileProgress(src, pendingFile, false)) {
-      throw new NotReplicatedYetException("Not replicated yet: " + src);
+      FileState fileState = analyzeFileState(fsn, iip, fileId, clientName,
+          previous, onRetryBlock);
+      if (onRetryBlock[0] != null &&
+          onRetryBlock[0].getLocations().length > 0) {
+        // This is a retry. No need to generate new locations.
+        // Use the last block if it has locations.
+        return null;
+      }
+
+      final INodeFile pendingFile = fileState.inode;
+      if (!fsn.checkFileProgress(src, pendingFile, false)) {
+        throw new NotReplicatedYetException("Not replicated yet: " + src);
+      }
+      if (pendingFile.getBlocks().length >= fsn.maxBlocksPerFile) {
+        throw new IOException("File has reached the limit on maximum number of"
+            + " blocks (" + DFSConfigKeys.DFS_NAMENODE_MAX_BLOCKS_PER_FILE_KEY
+            + "): " + pendingFile.getBlocks().length + " >= "
+            + fsn.maxBlocksPerFile);
+      }
+      blockSize = pendingFile.getPreferredBlockSize();
+      clientMachine = pendingFile.getFileUnderConstructionFeature()
+          .getClientMachine();
+      blockType = pendingFile.getBlockType();
+      ErasureCodingPolicy ecPolicy = null;
+      if (blockType == BlockType.STRIPED) {
+        ecPolicy =
+            FSDirErasureCodingOp.unprotectedGetErasureCodingPolicy(fsn, iip);
+        numTargets = (short) (ecPolicy.getSchema().getNumDataUnits()
+            + ecPolicy.getSchema().getNumParityUnits());
+      } else {
+        numTargets = pendingFile.getFileReplication();
+      }
+      storagePolicyID = pendingFile.getStoragePolicyID();
+      return new ValidateAddBlockResult(blockSize, numTargets, storagePolicyID,
+          clientMachine, blockType, ecPolicy);
     }
-    if (pendingFile.getBlocks().length >= fsn.maxBlocksPerFile) {
-      throw new IOException("File has reached the limit on maximum number of"
-          + " blocks (" + DFSConfigKeys.DFS_NAMENODE_MAX_BLOCKS_PER_FILE_KEY
-          + "): " + pendingFile.getBlocks().length + " >= "
-          + fsn.maxBlocksPerFile);
-    }
-    blockSize = pendingFile.getPreferredBlockSize();
-    clientMachine = pendingFile.getFileUnderConstructionFeature()
-        .getClientMachine();
-    blockType = pendingFile.getBlockType();
-    ErasureCodingPolicy ecPolicy = null;
-    if (blockType == BlockType.STRIPED) {
-      ecPolicy =
-          FSDirErasureCodingOp.unprotectedGetErasureCodingPolicy(fsn, iip);
-      numTargets = (short) (ecPolicy.getSchema().getNumDataUnits()
-          + ecPolicy.getSchema().getNumParityUnits());
-    } else {
-      numTargets = pendingFile.getFileReplication();
-    }
-    storagePolicyID = pendingFile.getStoragePolicyID();
-    return new ValidateAddBlockResult(blockSize, numTargets, storagePolicyID,
-                                      clientMachine, blockType, ecPolicy);
   }
 
   static LocatedBlock makeLocatedBlock(FSNamesystem fsn, BlockInfo blk,

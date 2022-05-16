@@ -32,6 +32,7 @@ import java.util.List;
 public class InodeLockList implements AutoCloseable {
   protected List<INode> mInodes;
   protected List<FSDirectory.LockMode> mLockModes;
+  public static final InodeLockList emptyInodeLockList = new InodeLockList();
 
   /**
    * Creates a new instance of {@link InodeLockList}.

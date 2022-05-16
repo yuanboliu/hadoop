@@ -940,6 +940,10 @@ public abstract class INode implements INodeAttributes, Diff.Element<byte[]> {
     return mLock.isWriteLockedByCurrentThread();
   }
 
+  public boolean isReadLocked() {
+    return isWriteLocked() || mLock.getReadHoldCount() > 0;
+  }
+
   /**
    * Obtains a read lock on the inode. Afterward, checks the inode state to ensure the full inode
    * path is consistent with what the caller is expecting. If the state is inconsistent, an

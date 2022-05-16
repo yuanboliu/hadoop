@@ -41,6 +41,7 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.Timeout;
 
+import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -81,7 +82,8 @@ public class TestLeaseManager {
   /** Check that LeaseManager.checkLease release some leases
    */
   @Test
-  public void testCheckLease() throws InterruptedException {
+  public void testCheckLease() throws InterruptedException,
+      FileNotFoundException {
     LeaseManager lm = new LeaseManager(makeMockFsNameSystem());
     final long numLease = 100;
     final long expiryTime = 0;
@@ -116,7 +118,7 @@ public class TestLeaseManager {
   }
 
   @Test
-  public void testCountPath() {
+  public void testCountPath() throws FileNotFoundException {
     LeaseManager lm = new LeaseManager(makeMockFsNameSystem());
 
     lm.addLease("holder1", 1);
@@ -458,8 +460,8 @@ public class TestLeaseManager {
     return pathINodeMap;
   }
 
-
-  private static FSNamesystem makeMockFsNameSystem() {
+  private static FSNamesystem makeMockFsNameSystem() throws
+      FileNotFoundException {
     FSDirectory dir = mock(FSDirectory.class);
     FSNamesystem fsn = mock(FSNamesystem.class);
     when(fsn.isRunning()).thenReturn(true);
@@ -467,6 +469,9 @@ public class TestLeaseManager {
     when(fsn.hasWriteLock()).thenReturn(true);
     when(fsn.getFSDirectory()).thenReturn(dir);
     when(fsn.getMaxLockHoldToReleaseLeaseMs()).thenReturn(maxLockHoldToReleaseLeaseMs);
+    INodesInPath iip = mock(INodesInPath.class);
+    when(dir.lockFullInodePath(anyLong(), any())).thenReturn(iip);
+    when(iip.getPath()).thenReturn("");
     return fsn;
   }
 
