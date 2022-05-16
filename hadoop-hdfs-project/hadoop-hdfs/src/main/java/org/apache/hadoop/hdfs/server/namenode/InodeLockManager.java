@@ -285,4 +285,8 @@ public class InodeLockManager implements Closeable {
   public void close() throws IOException {
     mInodeLocks.close();
   }
+
+  public int getInodeLockPoolSize() {
+    return mInodeLocks.size();
+  }
 }

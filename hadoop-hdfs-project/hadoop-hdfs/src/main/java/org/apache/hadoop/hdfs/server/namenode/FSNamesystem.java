@@ -6252,6 +6252,11 @@ public class FSNamesystem implements Namesystem, FSNamesystemMBean,
     return JSON.toString(nodesMap);
   }
 
+  @Override // NameNodeMXBean
+  public int getInodeLockPoolSize() {
+    return getFSDirectory().getInodeLockPoolSize();
+  }
+
   private long getLastContact(DatanodeDescriptor alivenode) {
     return (monotonicNow() - alivenode.getLastUpdateMonotonic())/1000;
   }

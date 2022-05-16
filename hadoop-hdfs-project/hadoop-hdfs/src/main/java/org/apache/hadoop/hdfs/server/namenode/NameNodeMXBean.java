@@ -310,4 +310,8 @@ public interface NameNodeMXBean {
    */
   String getVerifyECWithTopologyResult();
 
+  default int getInodeLockPoolSize() {
+    return 0;
+  }
+
 }

@@ -2781,6 +2781,10 @@ public class FSDirectory implements Closeable {
     return mInodeLockManager.inodeWriteLockedByCurrentThread(inode.getId());
   }
 
+  public int getInodeLockPoolSize() {
+    return mInodeLockManager.getInodeLockPoolSize();
+  }
+
   private static final class TraversalResult {
     /** True if the traversal found the target inode, false otherwise. */
     private final boolean mFound;
