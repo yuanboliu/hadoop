@@ -300,7 +300,7 @@ public class INodesInPath implements Closeable {
     System.arraycopy(iip.path, 0, path, 0, path.length - 1);
     path[path.length - 1] = childName;
     return new INodesInPath(inodes, path, iip.isRaw,
-        iip.isSnapshot, iip.snapshotId);
+        iip.isSnapshot, iip.snapshotId, iip.getLockList(), iip.getLockMode());
   }
 
   private final byte[][] path;
@@ -344,6 +344,29 @@ public class INodesInPath implements Closeable {
     this.snapshotId = snapshotId;
 
     mLockList = null;
+  }
+
+  INodesInPath(InodeLockList lockList, byte[][] path, INode[] iNodes,
+      FSDirectory.LockMode lockMode) {
+    this(iNodes, path, false, false, CURRENT_STATE_ID, lockList, lockMode);
+  }
+
+  private INodesInPath(INode[] inodes, byte[][] path, boolean isRaw,
+      boolean isSnapshot,int snapshotId, InodeLockList lockList) {
+    this(inodes, path, isRaw, isSnapshot, snapshotId, lockList, null);
+  }
+
+  private INodesInPath(INode[] inodes, byte[][] path, boolean isRaw,
+      boolean isSnapshot, int snapshotId, InodeLockList lockList, FSDirectory.LockMode lockMode) {
+    Preconditions.checkArgument(inodes != null && path != null);
+    this.inodes = inodes;
+    this.path = path;
+    this.isRaw = isRaw;
+    this.isSnapshot = isSnapshot;
+    this.snapshotId = snapshotId;
+
+    mLockList = lockList;
+    mLockMode = lockMode;
   }
 
   @Deprecated
@@ -500,9 +523,11 @@ public class INodesInPath implements Closeable {
     Preconditions.checkState(isDotSnapshotDir() || !isSnapshot());
     final INode[] anodes = new INode[length];
     final byte[][] apath = new byte[length][];
+    InodeLockList lockList = this.mLockList == null ? null : this.mLockList.getAncestorINodeLockListInPath(length);
     System.arraycopy(this.inodes, 0, anodes, 0, length);
     System.arraycopy(this.path, 0, apath, 0, length);
-    return new INodesInPath(anodes, apath, isRaw, false, snapshotId);
+
+    return new INodesInPath(anodes, apath, isRaw, false, snapshotId, lockList);
   }
 
   /**

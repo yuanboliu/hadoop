@@ -59,8 +59,9 @@ class FSDirRenameOp {
       // Rename does not operate on link targets
       // Do not resolveLink when checking permissions of src and dst
       // TODO(runzhiwang): remove resolvePath
-      INodesInPath srcIIP = fsd.resolvePath(pc, src, DirOp.WRITE_LINK);
-      INodesInPath dstIIP = fsd.resolvePath(pc, dst, DirOp.CREATE_LINK);
+
+      INodesInPath srcIIP = inodePathPair.getFirst();
+      INodesInPath dstIIP = inodePathPair.getSecond();
       dstIIP = dstForRenameTo(srcIIP, dstIIP);
       return renameTo(fsd, pc, srcIIP, dstIIP, logRetryCache);
     }
@@ -215,6 +216,8 @@ class FSDirRenameOp {
         return null;
       }
 
+      // TODO(runzhiwang): if we append new node to dstIIP, this code will update dstIIP,
+      //  and updateMtimeAndLease will cause error
       renamedIIP = tx.addSourceToDestination();
       added = (renamedIIP != null);
       if (added) {

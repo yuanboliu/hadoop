@@ -1352,10 +1352,12 @@ public class FSDirectory implements Closeable {
 
     boolean isRename = (inode.getParent() != null);
     // Lock the newly created inode before subsequent operations, and add it to the lock group.
-    existing.getLockList().lockWriteAndCheckParent(inode, parent);
+    if (!isRename) {
+      existing.getLockList().lockWriteAndCheckParent(inode, parent);
+    }
     final boolean added = parent.addChild(inode, true,
         existing.getLatestSnapshotId());
-    if (!added) {
+    if (!added && !isRename) {
 
       // The inode couldn't be added, so we will not add it to the tree and it should soon be
       // garbage collected. We mark it deleted as a precautionary measure in case something
@@ -1385,7 +1387,9 @@ public class FSDirectory implements Closeable {
       }
       addToInodeMap(inode);
     }
-    return existing;
+
+    // TODO(runzhiwang): do not create a new INodesInPath
+    return isRename ? INodesInPath.append(existing, inode, inode.getLocalNameBytes()) : existing;
   }
 
   INodesInPath addLastINodeNoQuotaCheck(INodesInPath existing, INode i) {
@@ -2224,7 +2228,8 @@ public class FSDirectory implements Closeable {
 
     int minLength = Math.min(pathComponents1.length, pathComponents2.length);
     for (int i = 0; i < minLength; i++) {
-      if (pathComponents1[i].equals(pathComponents2[i])) {
+      if ((pathComponents1[i] == null && pathComponents2[i] == DFSUtilClient.EMPTY_BYTES && i == 0) ||
+          pathComponents1[i].equals(pathComponents2[i])) {
         // The two paths share a common path prefix.
         LockMode mode1 = getLockModeForComponent(i, pathComponents1.length, lockMode1, null);
         LockMode mode2 = getLockModeForComponent(i, pathComponents2.length, lockMode2, null);
@@ -2254,9 +2259,9 @@ public class FSDirectory implements Closeable {
         traversalResult2 = traverseToInode(pathComponents2, lockMode2, lockHints);
       }
 
-      INodesInPath inodePath1 = new MutableLockedInodePath(path1,
+      INodesInPath inodePath1 = new MutableLockedInodePath(path1, traversalResult1.getInodes(),
               traversalResult1.getInodeLockList(), lockMode1);
-      INodesInPath inodePath2 = new MutableLockedInodePath(path2,
+      INodesInPath inodePath2 = new MutableLockedInodePath(path2, traversalResult2.getInodes(),
               traversalResult2.getInodeLockList(), lockMode2);
       valid = true;
       return new InodePathPair(inodePath1, inodePath2);
@@ -2601,6 +2606,9 @@ public class FSDirectory implements Closeable {
       TraversalResult result =
               traverseToInodeInternal(pathComponents, inodes, lockList, lockMode,
                       lockHints);
+      while (inodes.size() < pathComponents.length) {
+        inodes.add(null);
+      }
       valid = true;
       return result;
     } finally {

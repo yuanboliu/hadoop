@@ -42,6 +42,14 @@ public class InodeLockList implements AutoCloseable {
   }
 
   /**
+   * Creates a new instance of {@link InodeLockList}.
+   */
+  public InodeLockList(List<INode> inodes, List<FSDirectory.LockMode> lockModes) {
+    mInodes = inodes;
+    mLockModes = lockModes;
+  }
+
+  /**
    * Locks the given inode in read mode, and adds it to this lock list. This call should only be
    * used when locking the root or an inode by id and not path or parent.
    *
@@ -51,6 +59,17 @@ public class InodeLockList implements AutoCloseable {
     inode.lockRead();
     mInodes.add(inode);
     mLockModes.add(FSDirectory.LockMode.READ);
+  }
+
+  InodeLockList getAncestorINodeLockListInPath(int length) {
+    List<INode> inodes = new ArrayList<>();
+    List<FSDirectory.LockMode> lockModes = new ArrayList<>();
+    for (int i = 0; i < length && i < mInodes.size(); i ++) {
+      inodes.add(mInodes.get(i));
+      lockModes.add(mLockModes.get(i));
+    }
+
+    return new InodeLockList(inodes, lockModes);
   }
 
   /**

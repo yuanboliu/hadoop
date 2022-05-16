@@ -21,6 +21,7 @@ package org.apache.hadoop.hdfs.server.namenode;
 import org.apache.hadoop.fs.InvalidPathException;
 
 import javax.annotation.concurrent.ThreadSafe;
+import java.util.List;
 
 /**
  * This class represents an {@link INodesInPath}, where the list of inodes can be extended to
@@ -47,6 +48,13 @@ public class MutableLockedInodePath extends INodesInPath {
       FSDirectory.LockMode lockMode)
       throws InvalidPathException {
     super(uri, lockList, lockMode, false);
+  }
+
+  public MutableLockedInodePath(String uri, List<INode> iNodeList, InodeLockList lockList,
+          FSDirectory.LockMode lockMode)
+          throws InvalidPathException {
+    super(lockList, INode.getPathComponents(uri),
+            iNodeList.toArray(new INode[iNodeList.size()]), lockMode);
   }
 
   /**
