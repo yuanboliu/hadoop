@@ -576,7 +576,7 @@ public abstract class INode implements INodeAttributes, Diff.Element<byte[]> {
   /**
    * @return null if the local name is null; otherwise, return the local name.
    */
-  public final String getLocalName() {
+  public String getLocalName() {
     final byte[] name = getLocalNameBytes();
     return name == null? null: DFSUtil.bytes2String(name);
   }

@@ -84,7 +84,10 @@ public class TestCommitBlockSynchronization {
   }
 
   private INodeFile mockFileUnderConstruction() {
-    return mock(INodeFile.class);
+    INodeFile iNodeFile = mock(INodeFile.class);
+    when(iNodeFile.getLocalName()).thenReturn("MockINodeFile");
+    when(iNodeFile.getLocalNameBytes()).thenReturn("MockINodeFile".getBytes());
+    return iNodeFile;
   }
 
   @Test

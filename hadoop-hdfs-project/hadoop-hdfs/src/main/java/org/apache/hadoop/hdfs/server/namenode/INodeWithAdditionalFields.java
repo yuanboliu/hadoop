@@ -163,7 +163,7 @@ public abstract class INodeWithAdditionalFields extends INode
   }
 
   @Override
-  public final byte[] getLocalNameBytes() {
+  public byte[] getLocalNameBytes() {
     return name;
   }
   
