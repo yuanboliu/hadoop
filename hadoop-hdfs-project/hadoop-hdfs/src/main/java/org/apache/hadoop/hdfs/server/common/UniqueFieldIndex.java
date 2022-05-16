@@ -78,7 +78,7 @@ public class UniqueFieldIndex<T> implements FieldIndex<T> {
     if (res == null) {
       return false;
     }
-    return res == object;
+    return true;
   }
 
   @Override
@@ -103,5 +103,11 @@ public class UniqueFieldIndex<T> implements FieldIndex<T> {
   @Override
   public int size() {
     return mIndexMap.size();
+  }
+
+  public String toString() {
+    StringBuffer buffer = new StringBuffer();
+    mIndexMap.keySet().forEach(key -> buffer.append(key + " "));
+    return buffer.toString();
   }
 }

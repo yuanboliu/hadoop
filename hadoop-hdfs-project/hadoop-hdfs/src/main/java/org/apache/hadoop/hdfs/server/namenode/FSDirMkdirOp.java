@@ -163,6 +163,19 @@ class FSDirMkdirOp {
   private static INodesInPath createSingleDirectory(FSDirectory fsd,
       INodesInPath existing, byte[] localName, PermissionStatus perm)
       throws IOException {
+    INodeDirectory parent = existing.getLastLockListInode().asDirectory();
+    INode child = parent.getChild(localName, CURRENT_STATE_ID);
+    if (child != null) {
+      if (child.isDirectory()) {
+        existing.getLockList().lockRead(child);
+        Preconditions.checkArgument(existing.getLastLockListInode() == child);
+        return existing;
+      } else {
+        throw new FileAlreadyExistsException(parent.getFullPathName() + " " +
+            DFSUtil.bytes2String(localName) + "already exists and is a file");
+      }
+    }
+
     existing = unprotectedMkdir(fsd, fsd.allocateNewInodeId(), existing,
         localName, perm, null, now());
     if (existing == null) {

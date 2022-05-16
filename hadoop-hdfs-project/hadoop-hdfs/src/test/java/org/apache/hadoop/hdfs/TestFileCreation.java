@@ -32,6 +32,8 @@ import static org.apache.hadoop.hdfs.DFSConfigKeys.DFS_NAMENODE_HEARTBEAT_RECHEC
 import static org.apache.hadoop.hdfs.DFSConfigKeys.DFS_NAMENODE_REPLICATION_MIN_KEY;
 import static org.apache.hadoop.hdfs.DFSConfigKeys.DFS_REPLICATION_DEFAULT;
 import static org.apache.hadoop.hdfs.DFSConfigKeys.DFS_REPLICATION_KEY;
+import static org.apache.hadoop.hdfs.protocol.HdfsConstants.SafeModeAction.SAFEMODE_ENTER;
+import static org.apache.hadoop.hdfs.protocol.HdfsConstants.SafeModeAction.SAFEMODE_LEAVE;
 import static org.apache.hadoop.test.MetricsAsserts.assertCounter;
 import static org.apache.hadoop.test.MetricsAsserts.getMetrics;
 import static org.junit.Assert.assertEquals;
@@ -72,6 +74,7 @@ import org.apache.hadoop.hdfs.client.HdfsDataOutputStream;
 import org.apache.hadoop.hdfs.protocol.DatanodeInfo;
 import org.apache.hadoop.hdfs.protocol.ExtendedBlock;
 import org.apache.hadoop.hdfs.protocol.HdfsConstants;
+import org.apache.hadoop.hdfs.protocol.HdfsFileStatus;
 import org.apache.hadoop.hdfs.protocol.LocatedBlock;
 import org.apache.hadoop.hdfs.protocol.LocatedBlocks;
 import org.apache.hadoop.hdfs.server.blockmanagement.BlockManager;
@@ -1494,5 +1497,133 @@ public class TestFileCreation {
       out.write(buffer, 0, n);
     }
     return out.toByteArray();
+  }
+
+  public static class CreateFileTask implements Runnable {
+    private String filePath;
+    private NamenodeProtocols nn;
+    private int count;
+
+    public CreateFileTask(NamenodeProtocols fs, String path, int count) {
+      this.nn = fs;
+      this.filePath = path;
+      this.count = count;
+    }
+
+    @Override
+    public void run() {
+      try {
+        for (int i = 0; i < count; i++) {
+          String fileName = filePath + i;
+          nn.create(fileName,
+              FsPermission.getDefault(), "clientName",
+              new EnumSetWritable<CreateFlag>(
+                  EnumSet.of(CreateFlag.CREATE, CreateFlag.OVERWRITE)), true,
+              (short)1, 4096, null, null, null);
+          nn.complete(fileName, "clientName", null,
+              HdfsConstants.GRANDFATHER_INODE_ID);
+        }
+      } catch (IOException e) {
+        e.printStackTrace();
+      }
+    }
+  }
+
+  public static class VerifyFileTask implements Runnable {
+    private String filePath;
+    private NamenodeProtocols nn;
+    private int count;
+
+    public VerifyFileTask(NamenodeProtocols fs, String path, int count) {
+      this.nn = fs;
+      this.filePath = path;
+      this.count = count;
+    }
+
+    @Override
+    public void run() {
+      try {
+        for (int i = 0; i < count; i++) {
+          String fileName = filePath + i;
+          HdfsFileStatus file = nn.getFileInfo(fileName);
+          Assert.assertTrue("File " + fileName + " doesn't exist",
+              file != null);
+        }
+      } catch (IOException e) {
+        e.printStackTrace();
+      }
+    }
+  }
+
+  @Test
+  public void testFileCreateAndDelete()
+      throws IOException {
+    Configuration conf = new HdfsConfiguration();
+    conf.setInt("dfs.namenode.handler.count", 10);
+    if (simulatedStorage) {
+      SimulatedFSDataset.setFactory(conf);
+    }
+    MiniDFSCluster cluster = new MiniDFSCluster.Builder(conf)
+        .checkDataNodeHostConfig(true).build();
+    NamenodeProtocols nn = cluster.getNameNode().getRpcServer();
+    try {
+      String dirPath = "/grand-father/father/child";
+      int threadCount = 10;
+      int filePerThreadCount = 10;
+      Thread[] threads = new Thread[threadCount];
+      for (int i = 0; i < threadCount; i++) {
+        threads[i] = new Thread(new CreateFileTask(nn, dirPath + "/" + i + "/",
+            filePerThreadCount));
+      }
+      for (int i = 0; i < threadCount; i++) {
+        threads[i].start();
+      }
+
+      for (int i = 0; i < threadCount; i++) {
+        try {
+          threads[i].join();
+        } catch (InterruptedException e) {
+          e.printStackTrace();
+        }
+      }
+
+      // Verify files
+      for (int i = 0; i < threadCount; i++) {
+        threads[i] = new Thread(new VerifyFileTask(nn, dirPath + "/" + i + "/",
+            filePerThreadCount));
+      }
+      for (int i = 0; i < threadCount; i++) {
+        threads[i].start();
+      }
+      for (int i = 0; i < threadCount; i++) {
+        try {
+          threads[i].join();
+        } catch (InterruptedException e) {
+          e.printStackTrace();
+        }
+      }
+      /** debug purpose
+       FSDirectory fsd = cluster.getNamesystem().getFSDirectory();
+       Iterator<INodeWithAdditionalFields> iterator =
+       fsd.getINodeMap().getMapIterator();
+       while (iterator.hasNext()) {
+       INode inode = iterator.next();
+       System.out.println(inode.getId() + " = " + inode.getFullPathName());
+       }*/
+
+      Assert.assertEquals(filePerThreadCount * threadCount + 4 + threadCount,
+          cluster.getNamesystem().getFilesTotal());
+
+      HdfsConstants.SafeModeAction action = SAFEMODE_ENTER;
+      nn.setSafeMode(action, true);
+      nn.saveNamespace(100000, 100000);
+      action = SAFEMODE_LEAVE;
+      nn.setSafeMode(action, true);
+
+      cluster.restartNameNodes();
+      cluster.waitActive();
+    } finally {
+      cluster.shutdown();
+    }
   }
 }

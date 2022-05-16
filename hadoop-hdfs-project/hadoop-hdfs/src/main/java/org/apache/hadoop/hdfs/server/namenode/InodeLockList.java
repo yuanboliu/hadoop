@@ -20,7 +20,6 @@ package org.apache.hadoop.hdfs.server.namenode;
 
 import com.google.common.collect.Lists;
 import org.apache.hadoop.fs.InvalidPathException;
-import org.apache.hadoop.hdfs.server.lock.resource.LockResource;
 import org.apache.hadoop.hdfs.server.lock.resource.RWLockResource;
 import org.apache.hadoop.hdfs.server.namenode.FSDirectory.LockMode;
 
@@ -87,7 +86,6 @@ public class InodeLockList implements AutoCloseable {
       inodes.add(mInodes.get(i));
       locks.add(mLocks.get(i));
     }
-
     return new InodeLockList(inodes, locks, mInodeLockManager, false);
   }
 
@@ -142,8 +140,8 @@ public class InodeLockList implements AutoCloseable {
    * @param inode the inode to lock
    */
   public synchronized void lockWrite(INode inode) {
-    mInodes.add(inode);
     mLocks.add(mInodeLockManager.lockInode(inode, LockMode.WRITE, mUseTryLock));
+    mInodes.add(inode);
   }
 
   /**
@@ -198,9 +196,11 @@ public class InodeLockList implements AutoCloseable {
 
   @Override
   public synchronized void close() {
-    mInodes.clear();
-    mLocks.forEach(LockResource::close);
+    for (int i = mLocks.size() - 1; i >= 0; i--) {
+      mLocks.get(i).close();
+    }
     mLocks.clear();
+    mInodes.clear();
   }
 
   public InodeLockManager getInodeLockManager() {

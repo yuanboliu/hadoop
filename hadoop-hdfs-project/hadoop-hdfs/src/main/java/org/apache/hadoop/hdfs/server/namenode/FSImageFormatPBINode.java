@@ -217,6 +217,9 @@ public final class FSImageFormatPBINode {
         INodeDirectory p = dir.getInode(e.getParent()).asDirectory();
         for (long id : e.getChildrenList()) {
           INode child = dir.getInode(id);
+          Preconditions.checkArgument(child != null,
+              "nodeId = " + id + " parent = " + p.getFullPathName() + " " +
+                  p.getId());
           addToParent(p, child);
         }
         for (int refId : e.getRefChildrenList()) {

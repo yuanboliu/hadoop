@@ -43,9 +43,10 @@ public class INodeMap {
     return new INodeMap(map);
   }
 
-  /** Synchronized by external lock. */
   private final GSet<INode, INodeWithAdditionalFields> map;
-  
+
+  // This function is called by FSImage Saver which is protected by FSNamespace
+  // write lock.
   public Iterator<INodeWithAdditionalFields> getMapIterator() {
     return map.iterator();
   }
@@ -60,7 +61,7 @@ public class INodeMap {
    * necessary. 
    * @param inode The {@link INode} to be added to the map.
    */
-  public final void put(INode inode) {
+  public final synchronized void put(INode inode) {
     if (inode instanceof INodeWithAdditionalFields) {
       map.put((INodeWithAdditionalFields)inode);
     }
@@ -70,14 +71,14 @@ public class INodeMap {
    * Remove a {@link INode} from the map.
    * @param inode The {@link INode} to be removed.
    */
-  public final void remove(INode inode) {
+  public final synchronized void remove(INode inode) {
     map.remove(inode);
   }
   
   /**
    * @return The size of the map.
    */
-  public int size() {
+  public synchronized int size() {
     return map.size();
   }
   
@@ -87,7 +88,7 @@ public class INodeMap {
    * @return The {@link INode} in the map with the given id. Return null if no 
    *         such {@link INode} in the map.
    */
-  public INode get(long id) {
+  public synchronized INode get(long id) {
     INode inode = new INodeWithAdditionalFields(id, null, new PermissionStatus(
         "", "", new FsPermission((short) 0)), 0, 0) {
       
@@ -112,7 +113,7 @@ public class INodeMap {
           int snapshotId, ContentSummaryComputationContext summary) {
         return null;
       }
-      
+
       @Override
       public void cleanSubtree(
           ReclaimContext reclaimContext, int snapshotId, int priorSnapshotId) {
@@ -128,14 +129,14 @@ public class INodeMap {
         return HdfsConstants.BLOCK_STORAGE_POLICY_ID_UNSPECIFIED;
       }
     };
-      
+
     return map.get(inode);
   }
   
   /**
    * Clear the {@link #map}
    */
-  public void clear() {
+  public synchronized void clear() {
     map.clear();
   }
 }

@@ -2128,7 +2128,7 @@ public class FSDirectory implements Closeable {
     InodeLockList lockList = new InodeLockList(mInodeLockManager, false);
     TraversalResult traversalResult = traverseToInodeInternal(
             INode.getPathComponents(descendantUri),
-            inodeList, lockList, lockMode, null);
+            inodeList, lockList, lockMode, null, true);
     if (traversalResult.mFound) {
       return traversalResult.mLockList;
     } else {
@@ -2221,8 +2221,8 @@ public class FSDirectory implements Closeable {
   }
 
   /**
-   * Locks existing inodes on the two specified paths. The two paths will be locked in the
-   * correct order. The target inodes are not required to exist.
+   * Locks existing inodes on the two specified paths. The two paths will be
+   * locked in the correct order. The target inodes are not required to exist.
    *
    * @param path1 the first path to lock
    * @param lockMode1 the {@link LockMode} of the first path
@@ -2231,43 +2231,21 @@ public class FSDirectory implements Closeable {
    * @return a {@link InodePathPair} representing the two locked paths
    * @throws InvalidPathException if a path is invalid
    */
-  public InodePathPair lockInodePathPair(String path1, LockMode lockMode1, String path2,
-          LockMode lockMode2) throws InvalidPathException {
+  public InodePathPair lockInodePathPair(String path1, LockMode lockMode1,
+          String path2, LockMode lockMode2) throws InvalidPathException {
     byte[][] pathComponents1 = INode.getPathComponents(path1);
     byte[][] pathComponents2 = INode.getPathComponents(path2);
-    List<LockMode> lockHints = new ArrayList<>();
-
-    int minLength = Math.min(pathComponents1.length, pathComponents2.length);
-    for (int i = 0; i < minLength; i++) {
-      if ((pathComponents1[i] == null && pathComponents2[i] == DFSUtilClient.EMPTY_BYTES && i == 0) ||
-          pathComponents1[i].equals(pathComponents2[i])) {
-        // The two paths share a common path prefix.
-        LockMode mode1 = getLockModeForComponent(i, pathComponents1.length, lockMode1, null);
-        LockMode mode2 = getLockModeForComponent(i, pathComponents2.length, lockMode2, null);
-        // If either of the modes are WRITE, lock both components as WRITE to prevent deadlock.
-        // TODO(gpang): consider a combine helper method
-        if (mode1 == LockMode.READ && mode2 == LockMode.READ) {
-          lockHints.add(LockMode.READ);
-        } else {
-          lockHints.add(LockMode.WRITE);
-        }
-      } else {
-        // The two paths no longer share a common prefix.
-        break;
-      }
-    }
-
     TraversalResult traversalResult1 = null;
     TraversalResult traversalResult2 = null;
     boolean valid = false;
     try {
       // Lock paths in a deterministic order.
       if (path1.compareTo(path2) > 0) {
-        traversalResult2 = traverseToInode(pathComponents2, lockMode2, lockHints);
-        traversalResult1 = traverseToInode(pathComponents1, lockMode1, lockHints);
+        traversalResult2 = traverseToInode(pathComponents2, lockMode2, null, true);
+        traversalResult1 = traverseToInode(pathComponents1, lockMode1, null, false);
       } else {
-        traversalResult1 = traverseToInode(pathComponents1, lockMode1, lockHints);
-        traversalResult2 = traverseToInode(pathComponents2, lockMode2, lockHints);
+        traversalResult1 = traverseToInode(pathComponents1, lockMode1, null, true);
+        traversalResult2 = traverseToInode(pathComponents2, lockMode2, null, false);
       }
 
       INodesInPath inodePath1 = new MutableLockedInodePath(path1, traversalResult1.getInodes(),
@@ -2299,10 +2277,11 @@ public class FSDirectory implements Closeable {
    */
   private LockMode getLockModeForComponent(int index, int length, LockMode lockMode,
           List<LockMode> lockHints) {
-    if (lockHints != null && index < lockHints.size()) {
+    if (lockHints != null && lockHints.size() > 0 && index < lockHints.size()) {
       // Use the lock hint if it exists.
       return lockHints.get(index);
     }
+
     if (lockMode == LockMode.READ) {
       return LockMode.READ;
     }
@@ -2636,8 +2615,23 @@ public class FSDirectory implements Closeable {
    * @throws InvalidPathException if the path is invalid
    */
   private TraversalResult traverseToInode(byte[][] pathComponents, LockMode lockMode,
-          List<LockMode> lockHints)
-          throws InvalidPathException {
+          List<LockMode> lockHints) throws InvalidPathException {
+    return traverseToInode(pathComponents, lockMode, lockHints, true);
+  }
+  /**
+   * Traverses the tree to find the given path components. Hints for the lock mode at each path
+   * component can be specified.
+   *
+   * @param pathComponents the components of the path to traverse
+   * @param lockMode the {@link LockMode} for the path
+   * @param lockHints optional {@link List} to specify the lock type for each path component; this
+   *                  can be shorter than pathComponents
+   * @param allowNotExist whether component inode is allowed to be not existed
+   * @return the {@link TraversalResult} for this traversal
+   * @throws InvalidPathException if the path is invalid
+   */
+  private TraversalResult traverseToInode(byte[][] pathComponents, LockMode lockMode,
+          List<LockMode> lockHints, boolean allowNotExist) throws InvalidPathException {
     List<INode> inodes = new ArrayList<>();
     InodeLockList lockList = new InodeLockList(mInodeLockManager, false);
 
@@ -2668,18 +2662,12 @@ public class FSDirectory implements Closeable {
         }
       }
 
-      if (getLockModeForComponent(0, pathComponents.length, lockMode, lockHints) == LockMode.READ) {
-        lockList.lockRead(rootDir);
-      } else {
-        lockList.lockWrite(rootDir);
-      }
-      inodes.add(rootDir);
-      TraversalResult result =
-              traverseToInodeInternal(pathComponents, inodes, lockList, lockMode,
-                      lockHints);
+      TraversalResult result = traverseToInodeInternal(pathComponents, inodes,
+              lockList, lockMode, lockHints, allowNotExist);
       while (inodes.size() < pathComponents.length) {
         inodes.add(null);
       }
+
       valid = true;
       return result;
     } finally {
@@ -2709,7 +2697,7 @@ public class FSDirectory implements Closeable {
     List<INode> inodes = extensibleInodePath.getInodeList();
     InodeLockList lockList = extensibleInodePath.getLockList();
     return traverseToInodeInternal(extensibleInodePath.getPathComponents(), inodes,
-            lockList, lockMode, null);
+            lockList, lockMode, null, true);
   }
 
   /**
@@ -2727,40 +2715,80 @@ public class FSDirectory implements Closeable {
    * @throws InvalidPathException
    */
   private TraversalResult traverseToInodeInternal(byte[][] pathComponents, List<INode> inodes,
-          InodeLockList lockList, LockMode lockMode,
-          List<LockMode> lockHints)
+          InodeLockList lockList, LockMode lockMode, List<LockMode> lockHints, boolean allowNotExist)
           throws InvalidPathException {
-    INode current = inodes.get(inodes.size() - 1);
-    for (int i = inodes.size(); i < pathComponents.length; i++) {
+    if (pathComponents.length == 1) {
+      if (lockMode == LockMode.READ) {
+        lockList.lockRead(rootDir);
+      } else {
+        lockList.lockWrite(rootDir);
+      }
+      inodes.add(rootDir);
+      return TraversalResult.createFoundResult(inodes, lockList);
+    }
+    INode current = inodes.size() > 0 ? inodes.get(inodes.size() - 1) : rootDir;
+    // For descendant lock, we shouldn't lock the last inode in the inodes list.
+    // It's already locked before passed in.
+    int startIndex = inodes.size() > 0 ? inodes.size() : 1;
+    boolean lockAncenstor = true;
+    if (inodes.size() > 0) {
+      lockAncenstor = false;
+    }
+    INode parent = current.getParent();
+    for (int i = startIndex; i < pathComponents.length; i++) {
       INode next = ((INodeDirectory) current).getChild(
               pathComponents[i], CURRENT_STATE_ID);
       if (next == null) {
-        // The user might want to create the nonexistent directories, so return the traversal
-        // result current inode with the last INode taken, and the index of the first path
-        // component that couldn't be found.
+        if (!allowNotExist) {
+          // Cases that child non-existence is not allowed, such as rename source path,
+          // In this case, just lock the parent as if child exists. The current outer
+          // operation logic will check the child existence and return with error.
+          if (getLockModeForComponent(i - 1, pathComponents.length, lockMode, lockHints) == LockMode.READ) {
+            lockList.lockReadAndCheckNameAndParent(current, parent, pathComponents[i - 1]);
+          } else {
+            lockList.lockWriteAndCheckNameAndParent(current, parent, pathComponents[i - 1]);
+          }
+          inodes.add(current);
+          return TraversalResult.createNotFoundResult(i, inodes, lockList);
+        }
+        // If child doesn't exist, lock it's parent
+        if (lockMode == LockMode.READ) {
+          lockList.lockReadAndCheckNameAndParent(current, parent, pathComponents[i - 1]);
+        } else {
+          lockList.lockWriteAndCheckNameAndParent(current, parent, pathComponents[i - 1]);
+        }
+        inodes.add(current);
         return TraversalResult.createNotFoundResult(i, inodes, lockList);
       }
-      // Lock the existing next inode before proceeding.
-      if (getLockModeForComponent(i, pathComponents.length, lockMode, lockHints)
-              == LockMode.READ) {
-        lockList.lockReadAndCheckNameAndParent(next, current, pathComponents[i]);
-      } else {
-        lockList.lockWriteAndCheckNameAndParent(next, current, pathComponents[i]);
-      }
-      if (next.isFile()) {
-        // The inode can't have any children. If this is the last path component, we're good.
-        // Otherwise, we can't traverse further, so we clean up and throw an exception.
-        if (i == pathComponents.length - 1) {
-          inodes.add(next);
-          return TraversalResult.createFoundResult(inodes, lockList);
+
+      // Lock the current inode
+      if (i != startIndex || lockAncenstor) {
+        if (getLockModeForComponent(i - 1, pathComponents.length, lockMode, lockHints) == LockMode.READ) {
+          lockList.lockReadAndCheckNameAndParent(current, parent, pathComponents[i - 1]);
         } else {
-          throw new InvalidPathException(
-                  "Traversal failed. Component " + i + "(" + next.getLocalName() + ") is a file");
+          lockList.lockWriteAndCheckNameAndParent(current, parent, pathComponents[i - 1]);
         }
-      } else {
-        inodes.add(next);
-        current = next;
+        inodes.add(current);
       }
+
+      // Check whether child is a directory if it's not the last component.
+      if (next.isFile() && i != pathComponents.length - 1) {
+        throw new InvalidPathException("Traversal failed. Component " + i + "("
+                + next.getLocalName() + ") is a file");
+      }
+
+      // If this is the last path component, we lock the inode and return.
+      if (i == pathComponents.length - 1) {
+        if (getLockModeForComponent(i, pathComponents.length, lockMode, lockHints) == LockMode.READ) {
+          lockList.lockReadAndCheckNameAndParent(next, current, pathComponents[i]);
+        } else {
+          lockList.lockWriteAndCheckNameAndParent(next, current, pathComponents[i]);
+        }
+        inodes.add(next);
+        return TraversalResult.createFoundResult(inodes, lockList);
+      }
+      parent = current;
+      current = next;
     }
     return TraversalResult.createFoundResult(inodes, lockList);
   }

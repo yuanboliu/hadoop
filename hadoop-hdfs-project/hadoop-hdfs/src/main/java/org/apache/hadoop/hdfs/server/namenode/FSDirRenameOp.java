@@ -54,8 +54,8 @@ class FSDirRenameOp {
           " to " + dst);
     }
 
-    try (InodePathPair inodePathPair =
-        fsd.lockInodePathPair(src, FSDirectory.LockMode.WRITE, dst, FSDirectory.LockMode.READ)) {
+    try (InodePathPair inodePathPair = fsd.lockInodePathPair(src,
+        FSDirectory.LockMode.WRITE, dst, FSDirectory.LockMode.READ)) {
       // Rename does not operate on link targets
       // Do not resolveLink when checking permissions of src and dst
       // TODO(runzhiwang): remove resolvePath
@@ -263,10 +263,10 @@ class FSDirRenameOp {
       String src, String dst, BlocksMapUpdateInfo collectedBlocks,
       boolean logRetryCache,Options.Rename... options)
           throws IOException {
-    try (InodePathPair inodePathPair =
-            fsd.lockInodePathPair(src, FSDirectory.LockMode.WRITE, dst, FSDirectory.LockMode.READ)) {
+    try (InodePathPair inodePathPair = fsd.lockInodePathPair(src,
+            FSDirectory.LockMode.WRITE, dst, FSDirectory.LockMode.READ)) {
       // Rename does not operate on link targets
-      // Do not resolveLink when checking permissions of src and dst
+      // Do not resolveLink when checking permissions of src and dstRename does not operate on link targets
       // TODO(runzhiwang): remove resolvePath
       INodesInPath srcIIP = inodePathPair.getFirst();
       INodesInPath dstIIP = inodePathPair.getSecond();

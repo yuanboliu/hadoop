@@ -2971,8 +2971,8 @@ public class FSNamesystem implements Namesystem, FSNamesystemMBean,
     try {
       checkOperation(OperationCategory.WRITE);
       checkNameNodeSafeMode("Cannot complete file " + src);
-      success = FSDirWriteFileOp.completeFile(this, pc, src, holder, last,
-                                              fileId);
+      success = FSDirWriteFileOp.completeFile(
+          this, pc, src, holder, last, fileId);
     } finally {
       readUnlock("completeFile");
     }
@@ -3614,7 +3614,7 @@ public class FSNamesystem implements Namesystem, FSNamesystemMBean,
   void finalizeINodeFileUnderConstruction(String src, INodeFile pendingFile,
       int latestSnapshot, boolean allowCommittedBlock) throws IOException {
     assert hasReadLock();
-    assert dir.isInodeReadLocked(pendingFile);
+    assert dir.isInodeWriteLocked(pendingFile);
     FileUnderConstructionFeature uc = pendingFile.getFileUnderConstructionFeature();
     if (uc == null) {
       throw new IOException("Cannot finalize file " + src
@@ -4545,7 +4545,7 @@ public class FSNamesystem implements Namesystem, FSNamesystemMBean,
 
     boolean saved = false;
     cpLock();  // Block if a checkpointing is in progress on standby.
-    readLock();
+    writeLock();
     try {
       checkOperation(OperationCategory.UNCHECKED);
 
@@ -4555,7 +4555,7 @@ public class FSNamesystem implements Namesystem, FSNamesystemMBean,
       }
       saved = getFSImage().saveNamespace(timeWindow, txGap, this);
     } finally {
-      readUnlock(operationName);
+      writeUnlock(operationName);
       cpUnlock();
     }
     if (saved) {
@@ -6902,7 +6902,7 @@ public class FSNamesystem implements Namesystem, FSNamesystemMBean,
     final String operationName = "startRollingUpgrade";
     checkSuperuserPrivilege(operationName);
     checkOperation(OperationCategory.WRITE);
-    readLock();
+    writeLock();
     try {
       checkOperation(OperationCategory.WRITE);
       if (isRollingUpgrade()) {
@@ -6922,7 +6922,7 @@ public class FSNamesystem implements Namesystem, FSNamesystemMBean,
         getFSImage().rollEditLog(getEffectiveLayoutVersion());
       }
     } finally {
-      readUnlock(operationName);
+      writeUnlock(operationName);
     }
 
     getEditLog().logSync();

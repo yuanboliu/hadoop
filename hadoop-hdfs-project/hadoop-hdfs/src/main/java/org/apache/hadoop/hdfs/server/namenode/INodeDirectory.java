@@ -354,6 +354,9 @@ public class INodeDirectory extends INodeWithAdditionalFields
     }
     children.remove(existedChild);
     children.add(newChild);
+    LOG.debug("replace child from " + existedChild.getId() + " " +
+        existedChild.getFullPathName() + " to " + newChild.getId() + " " +
+        newChild.getFullPathName() + " in parent " + this.getFullPathName());
     
     // replace the instance in the created list of the diff list
     DirectoryWithSnapshotFeature sf = this.getDirectoryWithSnapshotFeature();
@@ -587,6 +590,7 @@ public class INodeDirectory extends INodeWithAdditionalFields
   }
 
   public boolean addChild(INode node) {
+    Preconditions.checkArgument(node != null);
     if (children == null) {
       children = new UniqueFieldIndex<INode>(NAME_INDEX);
     } else if (children.containsObject(node)) {
