@@ -118,6 +118,11 @@ class FSDirStatAndListingOp {
       return getFileInfo(fsd, iip, needLocation, needBlockToken);
     } catch (InvalidPathException e) {
       return null;
+    } catch (AccessControlException ace) {
+      if (pc.isSuperUser()) {
+        return null;
+      }
+      throw ace;
     }
   }
 
