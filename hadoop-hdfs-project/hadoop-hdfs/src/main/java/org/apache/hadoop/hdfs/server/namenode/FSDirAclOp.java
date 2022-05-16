@@ -157,7 +157,6 @@ class FSDirAclOp {
 
   static List<AclEntry> unprotectedSetAcl(FSDirectory fsd, INodesInPath iip,
       List<AclEntry> aclSpec, boolean fromEdits) throws IOException {
-    assert fsd.hasWriteLock();
 
     // ACL removal is logged to edits as OP_SET_ACL with an empty list.
     if (aclSpec.isEmpty()) {
@@ -187,7 +186,6 @@ class FSDirAclOp {
 
   private static void unprotectedRemoveAcl(FSDirectory fsd, INodesInPath iip)
       throws IOException {
-    assert fsd.hasWriteLock();
     INode inode = FSDirectory.resolveLastINode(iip);
     int snapshotId = iip.getLatestSnapshotId();
     AclFeature f = inode.getAclFeature();

@@ -973,8 +973,9 @@ public class FSEditLogLoader {
     }
     case OP_SET_ACL: {
       SetAclOp setAclOp = (SetAclOp) op;
-      INodesInPath iip = fsDir.getINodesInPath(setAclOp.src, DirOp.WRITE);
-      FSDirAclOp.unprotectedSetAcl(fsDir, iip, setAclOp.aclEntries, true);
+      try (INodesInPath iip = fsDir.lockFullInodePath(setAclOp.src, FSDirectory.LockMode.WRITE)) {
+        FSDirAclOp.unprotectedSetAcl(fsDir, iip, setAclOp.aclEntries, true);
+      }
       break;
     }
     case OP_SET_XATTR: {
