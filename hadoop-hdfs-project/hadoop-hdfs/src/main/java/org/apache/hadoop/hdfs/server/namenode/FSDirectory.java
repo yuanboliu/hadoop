@@ -2087,6 +2087,24 @@ public class FSDirectory implements Closeable {
   }
 
   /**
+   * Locks existing inodes on the specified path, in the specified {@link LockMode}. The target
+   * inode is not required to exist.
+   *
+   * @param pc  A permission checker for traversal checks.  Pass null for no permission checks.
+   * @param path the path to lock
+   * @param lockMode the {@link LockMode} to lock the inodes with
+   * @return the {@link INodesInPath} representing the locked path of inodes
+   * @throws InvalidPathException if the path is invalid
+   */
+  public INodesInPath lockInodePath(FSPermissionChecker pc, String path, LockMode lockMode)
+          throws InvalidPathException {
+    TraversalResult traversalResult =
+            traverseToInode(INode.getPathComponents(path), lockMode, null);
+    return new MutableLockedInodePath(path,
+            traversalResult.getInodeLockList(), lockMode);
+  }
+
+  /**
    * Locks existing inodes on the two specified paths. The two paths will be locked in the
    * correct order. The target inodes are not required to exist.
    *

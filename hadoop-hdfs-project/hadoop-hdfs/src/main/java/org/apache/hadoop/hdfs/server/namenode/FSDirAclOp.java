@@ -41,7 +41,7 @@ class FSDirAclOp {
     String src = srcArg;
     checkAclsConfigFlag(fsd);
     try (INodesInPath iip =
-             fsd.lockInodePath(src, FSDirectory.LockMode.WRITE)) {
+             fsd.lockInodePath(pc, src, FSDirectory.LockMode.WRITE)) {
       src = iip.getPath();
       fsd.checkOwner(pc, iip);
       INode inode = FSDirectory.resolveLastINode(iip);
@@ -63,7 +63,7 @@ class FSDirAclOp {
     String src = srcArg;
     checkAclsConfigFlag(fsd);
     try (INodesInPath iip =
-             fsd.lockInodePath(src, FSDirectory.LockMode.WRITE)) {
+             fsd.lockInodePath(pc, src, FSDirectory.LockMode.WRITE)) {
       src = iip.getPath();
       fsd.checkOwner(pc, iip);
       INode inode = FSDirectory.resolveLastINode(iip);
@@ -84,7 +84,7 @@ class FSDirAclOp {
     String src = srcArg;
     checkAclsConfigFlag(fsd);
     try (INodesInPath iip =
-             fsd.lockInodePath(src, FSDirectory.LockMode.WRITE)) {
+             fsd.lockInodePath(pc, src, FSDirectory.LockMode.WRITE)) {
       src = iip.getPath();
       fsd.checkOwner(pc, iip);
       INode inode = FSDirectory.resolveLastINode(iip);
@@ -105,7 +105,7 @@ class FSDirAclOp {
     String src = srcArg;
     checkAclsConfigFlag(fsd);
     try (INodesInPath iip =
-             fsd.lockInodePath(src, FSDirectory.LockMode.WRITE)) {
+             fsd.lockInodePath(pc, src, FSDirectory.LockMode.WRITE)) {
       src = iip.getPath();
       fsd.checkOwner(pc, iip);
       unprotectedRemoveAcl(fsd, iip);
@@ -122,7 +122,7 @@ class FSDirAclOp {
     String src = srcArg;
     checkAclsConfigFlag(fsd);
     try (INodesInPath iip =
-             fsd.lockInodePath(src, FSDirectory.LockMode.WRITE)) {
+             fsd.lockInodePath(pc, src, FSDirectory.LockMode.WRITE)) {
       fsd.checkOwner(pc, iip);
       List<AclEntry> newAcl = unprotectedSetAcl(fsd, iip, aclSpec, false);
       fsd.getEditLog().logSetAcl(iip.getPath(), newAcl);
@@ -136,7 +136,7 @@ class FSDirAclOp {
       FSDirectory fsd, FSPermissionChecker pc, String src) throws IOException {
     checkAclsConfigFlag(fsd);
     try (INodesInPath iip =
-             fsd.lockInodePath(src, FSDirectory.LockMode.READ)) {
+             fsd.lockInodePath(pc, src, FSDirectory.LockMode.READ)) {
       // There is no real inode for the path ending in ".snapshot", so return a
       // non-null, unpopulated AclStatus.  This is similar to getFileInfo.
       if (iip.isDotSnapshotDir() && fsd.getINode4DotSnapshot(iip) != null) {
