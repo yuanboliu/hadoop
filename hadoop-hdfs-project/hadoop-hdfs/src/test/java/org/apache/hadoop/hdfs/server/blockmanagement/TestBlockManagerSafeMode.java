@@ -679,6 +679,7 @@ public class TestBlockManagerSafeMode {
   private void injectBlocksWithFugureGS(long numBytesInFuture) {
     BlockReportReplica brr = mock(BlockReportReplica.class);
     when(brr.getBytesOnDisk()).thenReturn(numBytesInFuture);
+    when(brr.getGenerationStamp()).thenReturn(10000L);
     bmSafeMode.checkBlocksWithFutureGS(brr);
   }
 

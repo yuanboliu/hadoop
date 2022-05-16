@@ -100,7 +100,7 @@ public class TestHostFileManager {
   @Test
   @SuppressWarnings("unchecked")
   public void testIncludeExcludeLists() throws IOException {
-    BlockManager bm = mock(BlockManager.class);
+    BlockManager bm = mock(HdfsBlockManager.class);
     FSNamesystem fsn = mock(FSNamesystem.class);
     Configuration conf = new Configuration();
     HostFileManager hm = new HostFileManager();
