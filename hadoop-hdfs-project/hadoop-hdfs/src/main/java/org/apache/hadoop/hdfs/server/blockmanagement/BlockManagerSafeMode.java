@@ -203,7 +203,7 @@ class BlockManagerSafeMode {
    * If safe mode is not currently on, this is a no-op.
    */
   void checkSafeMode() {
-    assert namesystem.hasWriteLock();
+    assert namesystem.hasReadLock();
     if (namesystem.inTransitionToActive()) {
       return;
     }
@@ -244,7 +244,7 @@ class BlockManagerSafeMode {
    * @param deltaTotal the change in number of total blocks expected
    */
   void adjustBlockTotals(int deltaSafe, int deltaTotal) {
-    assert namesystem.hasWriteLock();
+    assert namesystem.hasReadLock();
     if (!isSafeModeTrackingBlocks()) {
       return;
     }
@@ -278,7 +278,7 @@ class BlockManagerSafeMode {
    * set after the image has been loaded.
    */
   boolean isSafeModeTrackingBlocks() {
-    assert namesystem.hasWriteLock();
+    assert namesystem.hasReadLock();
     return haEnabled && status != BMSafeModeStatus.OFF;
   }
 
@@ -286,7 +286,7 @@ class BlockManagerSafeMode {
    * Set total number of blocks.
    */
   void setBlockTotal(long total) {
-    assert namesystem.hasWriteLock();
+    assert namesystem.hasReadLock();
     synchronized (this) {
       this.blockTotal = total;
       this.blockThreshold = (long) (total * threshold);
@@ -363,7 +363,7 @@ class BlockManagerSafeMode {
    * @return true if it leaves safe mode successfully else false
    */
   boolean leaveSafeMode(boolean force) {
-    assert namesystem.hasWriteLock() : "Leaving safe mode needs write lock!";
+    assert namesystem.hasReadLock() : "Leaving safe mode needs read lock!";
 
     final long bytesInFuture = getBytesInFuture();
     if (bytesInFuture > 0) {
@@ -434,7 +434,7 @@ class BlockManagerSafeMode {
    */
   synchronized void incrementSafeBlockCount(int storageNum,
       BlockInfo storedBlock) {
-    assert namesystem.hasWriteLock();
+    assert namesystem.hasReadLock();
     if (status == BMSafeModeStatus.OFF) {
       return;
     }
@@ -557,7 +557,7 @@ class BlockManagerSafeMode {
 
   /** Check if we are ready to initialize replication queues. */
   private void initializeReplQueuesIfNecessary() {
-    assert namesystem.hasWriteLock();
+    assert namesystem.hasReadLock();
     // Whether it has reached the threshold for initializing replication queues.
     boolean canInitializeReplQueues = blockManager.shouldPopulateReplQueues() &&
         blockSafe >= blockReplQueueThreshold;
@@ -572,7 +572,7 @@ class BlockManagerSafeMode {
    * @return true if both block and datanode threshold are met else false.
    */
   private boolean areThresholdsMet() {
-    assert namesystem.hasWriteLock();
+    assert namesystem.hasReadLock();
     // Calculating the number of live datanodes is time-consuming
     // in large clusters. Skip it when datanodeThreshold is zero.
     // We need to evaluate getNumLiveDataNodes only when
@@ -617,7 +617,7 @@ class BlockManagerSafeMode {
    * Print status every 20 seconds.
    */
   private void reportStatus(String msg, boolean rightNow) {
-    assert namesystem.hasWriteLock();
+    assert namesystem.hasReadLock();
     long curTime = monotonicNow();
     if(!rightNow && (curTime - lastStatusReport < 20 * 1000)) {
       return;

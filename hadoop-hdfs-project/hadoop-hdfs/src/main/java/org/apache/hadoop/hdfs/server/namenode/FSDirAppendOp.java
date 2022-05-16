@@ -81,7 +81,7 @@ final class FSDirAppendOp {
       final String srcArg, final FSPermissionChecker pc, final String holder,
       final String clientMachine, final boolean newBlock,
       final boolean logRetryCache) throws IOException {
-    assert fsn.hasWriteLock();
+    assert fsn.hasReadLock();
 
     final LocatedBlock lb;
     final FSDirectory fsd = fsn.getFSDirectory();
@@ -179,7 +179,7 @@ final class FSDirAppendOp {
       final String clientMachine, final boolean newBlock,
       final boolean writeToEditLog, final boolean logRetryCache)
       throws IOException {
-    assert fsn.hasWriteLock();
+    assert fsn.hasReadLock();
 
     final INodeFile file = iip.getLastINode().asFile();
     final QuotaCounts delta = verifyQuotaForUCBlock(fsn, file, iip);

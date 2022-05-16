@@ -1059,7 +1059,7 @@ public class FSDirectory implements Closeable {
    */
   public void updateSpaceForCompleteBlock(BlockInfo completeBlk,
       INodesInPath inodes) throws IOException {
-    assert namesystem.hasWriteLock();
+    assert namesystem.hasReadLock();
     INodesInPath iip = inodes != null ? inodes :
         INodesInPath.fromINode(namesystem.getBlockCollection(completeBlk));
     INodeFile fileINode = iip.getLastINode().asFile();

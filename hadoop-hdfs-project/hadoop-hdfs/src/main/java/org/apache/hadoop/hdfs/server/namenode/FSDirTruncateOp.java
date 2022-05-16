@@ -71,7 +71,7 @@ final class FSDirTruncateOp {
       final String clientMachine, final long mtime,
       final BlocksMapUpdateInfo toRemoveBlocks, final FSPermissionChecker pc)
       throws IOException, UnresolvedLinkException {
-    assert fsn.hasWriteLock();
+    assert fsn.hasReadLock();
 
     FSDirectory fsd = fsn.getFSDirectory();
     final String src;
@@ -303,7 +303,7 @@ final class FSDirTruncateOp {
   private static boolean unprotectedTruncate(FSNamesystem fsn,
       INodesInPath iip, long newLength, BlocksMapUpdateInfo collectedBlocks,
       long mtime, QuotaCounts delta) throws IOException {
-    assert fsn.hasWriteLock();
+    assert fsn.hasReadLock();
 
     INodeFile file = iip.getLastINode().asFile();
     int latestSnapshot = iip.getLatestSnapshotId();

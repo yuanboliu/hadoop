@@ -131,7 +131,7 @@ final class FSDirErasureCodingOp {
       final String srcArg, final String ecPolicyName,
       final FSPermissionChecker pc, final boolean logRetryCache)
       throws IOException, AccessControlException {
-    assert fsn.hasWriteLock();
+    assert fsn.hasReadLock();
 
     String src = srcArg;
     FSDirectory fsd = fsn.getFSDirectory();

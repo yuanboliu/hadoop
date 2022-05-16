@@ -129,7 +129,7 @@ public class TestHASafeMode {
     cluster.getConfiguration(0).setInt(
         DFSConfigKeys.DFS_NAMENODE_SAFEMODE_MIN_DATANODES_KEY, 3);
     NameNodeAdapter.enterSafeMode(nn0, false);
-    Whitebox.setInternalState(nn0.getNamesystem(), "manualSafeMode", false);
+    nn0.getNamesystem().setManualSafeMode(false);
     BlockManagerTestUtil.setStartupSafeModeForTest(nn0.getNamesystem()
         .getBlockManager());
     assertTrue(nn0.getNamesystem().isInStartupSafeMode());

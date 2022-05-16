@@ -104,7 +104,7 @@ class FSDirWriteFileOp {
    */
   static void persistBlocks(
       FSDirectory fsd, String path, INodeFile file, boolean logRetryCache) {
-    assert fsd.getFSNamesystem().hasWriteLock();
+    assert fsd.getFSNamesystem().hasReadLock();
     Preconditions.checkArgument(file.isUnderConstruction());
     fsd.getEditLog().logUpdateBlocks(path, file, logRetryCache);
     if(NameNode.stateChangeLog.isDebugEnabled()) {
@@ -365,7 +365,7 @@ class FSDirWriteFileOp {
       FileEncryptionInfo feInfo, INode.BlocksMapUpdateInfo toRemoveBlocks,
       boolean shouldReplicate, String ecPolicyName, boolean logRetryEntry)
       throws IOException {
-    assert fsn.hasWriteLock();
+    assert fsn.hasReadLock();
     boolean overwrite = flag.contains(CreateFlag.OVERWRITE);
     boolean isLazyPersist = flag.contains(CreateFlag.LAZY_PERSIST);
 
@@ -688,7 +688,7 @@ class FSDirWriteFileOp {
       FSNamesystem fsn, INodesInPath iip,
       String holder, Block last, long fileId)
       throws IOException {
-    assert fsn.hasWriteLock();
+    assert fsn.hasReadLock();
     final String src = iip.getPath();
     final INodeFile pendingFile;
     INode inode = null;
@@ -779,7 +779,7 @@ class FSDirWriteFileOp {
   static void saveAllocatedBlock(FSNamesystem fsn, String src,
       INodesInPath inodesInPath, Block newBlock, DatanodeStorageInfo[] targets,
       BlockType blockType) throws IOException {
-    assert fsn.hasWriteLock();
+    assert fsn.hasReadLock();
     BlockInfo b = addBlock(fsn.dir, src, inodesInPath, newBlock, targets,
         blockType);
     logAllocatedBlock(src, b);
