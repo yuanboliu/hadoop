@@ -159,7 +159,6 @@ public class TestCheckpoint {
   /*
    * Verify that namenode does not startup if one namedir is bad.
    */
-  @Ignore("ignored by baoloongmao root cannot pass this test")
   @Test
   public void testNameDirError() throws IOException {
     LOG.info("Starting testNameDirError");
@@ -2103,7 +2102,6 @@ public class TestCheckpoint {
    * should function correctly.
    * @throws Exception
    */
-  @Ignore("ignored by baoloongmao root cannot pass this test")
   @Test
   public void testCheckpointWithSeparateDirsAfterNameFails() throws Exception {
     MiniDFSCluster cluster = null;

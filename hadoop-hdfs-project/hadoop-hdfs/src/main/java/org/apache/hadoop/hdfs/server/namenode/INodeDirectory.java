@@ -479,7 +479,12 @@ public class INodeDirectory extends INodeWithAdditionalFields
     }
     return sf.getChildrenList(this, snapshotId);
   }
-  
+
+  // TODO(runzhiwang): Consider snapshot when getChildrenList
+  public int getChildrenSize() {
+    return children == null ? 0 : children.size();
+  }
+
   private ReadOnlyList<INode> getCurrentChildrenList() {
     if (children != null) {
       List<INode> nodes = IteratorUtils.toList(children.iterator());
