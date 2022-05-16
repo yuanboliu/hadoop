@@ -128,15 +128,17 @@ class FSDirStatAndListingOp {
 
   static ContentSummary getContentSummary(
       FSDirectory fsd, FSPermissionChecker pc, String src) throws IOException {
-    final INodesInPath iip = fsd.resolvePath(pc, src, DirOp.READ_LINK);
-    if (fsd.isPermissionEnabled() && fsd.isPermissionContentSummarySubAccess()) {
-      fsd.checkPermission(pc, iip, false, null, null, null,
-          FsAction.READ_EXECUTE);
-      pc = null;
+    try (INodesInPath iip = fsd.lockFullInodePath(src, FSDirectory.LockMode.READ)) {
+      if (fsd.isPermissionEnabled() &&
+          fsd.isPermissionContentSummarySubAccess()) {
+        fsd.checkPermission(pc, iip, false, null, null, null,
+            FsAction.READ_EXECUTE);
+        pc = null;
+      }
+      // getContentSummaryInt() call will check access (if enabled) when
+      // traversing all sub directories.
+      return getContentSummaryInt(fsd, pc, iip);
     }
-    // getContentSummaryInt() call will check access (if enabled) when
-    // traversing all sub directories.
-    return getContentSummaryInt(fsd, pc, iip);
   }
 
   /**
@@ -526,20 +528,24 @@ class FSDirStatAndListingOp {
       FSPermissionChecker pc, INodesInPath iip) throws IOException {
     fsd.readLock();
     try {
-      INode targetNode = iip.getLastINode();
+      INode targetNode = iip.getLastExistingInode();
       if (targetNode == null) {
         throw new FileNotFoundException("File does not exist: " + iip.getPath());
       }
       else {
-        // Make it relinquish locks everytime contentCountLimit entries are
-        // processed. 0 means disabled. I.e. blocking for the entire duration.
-        ContentSummaryComputationContext cscc =
-            new ContentSummaryComputationContext(fsd, fsd.getFSNamesystem(),
-                fsd.getContentCountLimit(), fsd.getContentSleepMicroSec(), pc);
-        ContentSummary cs = targetNode.computeAndConvertContentSummary(
-            iip.getPathSnapshotId(), cscc);
-        fsd.addYieldCount(cscc.getYieldCount());
-        return cs;
+        try (LockedInodePathList children =
+            fsd.lockDescendants(iip, FSDirectory.LockMode.READ)) {
+          // Make it relinquish locks everytime contentCountLimit entries are
+          // processed. 0 means disabled. I.e. blocking for the entire duration.
+          ContentSummaryComputationContext cscc =
+              new ContentSummaryComputationContext(fsd, fsd.getFSNamesystem(),
+                  fsd.getContentCountLimit(), fsd.getContentSleepMicroSec(),
+                  pc);
+          ContentSummary cs = targetNode.computeAndConvertContentSummary(
+              iip.getPathSnapshotId(), cscc);
+          fsd.addYieldCount(cscc.getYieldCount());
+          return cs;
+        }
       }
     } finally {
       fsd.readUnlock();

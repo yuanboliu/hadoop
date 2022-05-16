@@ -23,7 +23,6 @@ import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.fs.PathIsNotEmptyDirectoryException;
 import org.apache.hadoop.fs.UnresolvedLinkException;
 import org.apache.hadoop.fs.permission.FsAction;
-import org.apache.hadoop.hdfs.server.namenode.FSDirectory.DirOp;
 import org.apache.hadoop.hdfs.server.namenode.INode.BlocksMapUpdateInfo;
 import org.apache.hadoop.hdfs.server.namenode.INode.ReclaimContext;
 import org.apache.hadoop.security.AccessControlException;
@@ -56,24 +55,22 @@ class FSDirDeleteOp {
     }
     long filesRemoved = -1;
     FSNamesystem fsn = fsd.getFSNamesystem();
-    fsd.writeLock();
-    try {
-      if (deleteAllowed(iip)) {
-        List<INodeDirectory> snapshottableDirs = new ArrayList<>();
-        FSDirSnapshotOp.checkSnapshot(fsd, iip, snapshottableDirs);
-        ReclaimContext context = new ReclaimContext(
-            fsd.getBlockStoragePolicySuite(), collectedBlocks, removedINodes,
-            removedUCFiles);
+    if (deleteAllowed(iip)) {
+      List<INodeDirectory> snapshottableDirs = new ArrayList<>();
+      FSDirSnapshotOp.checkSnapshot(fsd, iip, snapshottableDirs);
+      ReclaimContext context = new ReclaimContext(
+          fsd.getBlockStoragePolicySuite(), collectedBlocks, removedINodes,
+          removedUCFiles);
+      try (LockedInodePathList children =
+               fsd.lockDescendants(iip, FSDirectory.LockMode.WRITE)) {
         if (unprotectedDelete(fsd, iip, context, mtime)) {
           filesRemoved = context.quotaDelta().getNsDelta();
         }
-        fsd.updateReplicationFactor(context.collectedBlocks()
-                                        .toUpdateReplicationInfo());
-        fsn.removeSnapshottableDirs(snapshottableDirs);
-        fsd.updateCount(iip, context.quotaDelta(), false);
       }
-    } finally {
-      fsd.writeUnlock();
+      fsd.updateReplicationFactor(context.collectedBlocks()
+                                      .toUpdateReplicationInfo());
+      fsn.removeSnapshottableDirs(snapshottableDirs);
+      fsd.updateCount(iip, context.quotaDelta(), false);
     }
     return filesRemoved;
   }
@@ -105,20 +102,21 @@ class FSDirDeleteOp {
       throw new InvalidPathException(src);
     }
 
-    final INodesInPath iip = fsd.resolvePath(pc, src, DirOp.WRITE_LINK);
-    if (fsd.isPermissionEnabled()) {
-      fsd.checkPermission(pc, iip, false, null, FsAction.WRITE, null,
-                          FsAction.ALL, true);
-    }
-    if (fsd.isNonEmptyDirectory(iip)) {
-      if (!recursive) {
-        throw new PathIsNotEmptyDirectoryException(
-            iip.getPath() + " is non empty");
+    try(INodesInPath iip = fsd.lockFullInodePath(src, FSDirectory.LockMode.WRITE)) {
+      if (fsd.isPermissionEnabled()) {
+        fsd.checkPermission(pc, iip, false, null, FsAction.WRITE, null,
+            FsAction.ALL, true);
       }
-      checkProtectedDescendants(fsd, iip);
-    }
+      if (fsd.isNonEmptyDirectory(iip)) {
+        if (!recursive) {
+          throw new PathIsNotEmptyDirectoryException(
+              iip.getPath() + " is non empty");
+        }
+        checkProtectedDescendants(fsd, iip);
+      }
 
-    return deleteInternal(fsn, iip, logRetryCache);
+      return deleteInternal(fsn, iip, logRetryCache);
+    }
   }
 
   /**
@@ -236,8 +234,6 @@ class FSDirDeleteOp {
    */
   private static boolean unprotectedDelete(FSDirectory fsd, INodesInPath iip,
       ReclaimContext reclaimContext, long mtime) {
-    assert fsd.hasWriteLock();
-
     // check if target node exists
     INode targetNode = iip.getLastINode();
     if (targetNode == null) {
@@ -305,10 +301,12 @@ class FSDirDeleteOp {
     // character after '/'.
     for (String descendant :
             protectedDirs.subSet(src + Path.SEPARATOR, src + "0")) {
-      INodesInPath subdirIIP = fsd.getINodesInPath(descendant, DirOp.WRITE);
-      if (fsd.isNonEmptyDirectory(subdirIIP)) {
-        throw new AccessControlException(
-            "Cannot delete non-empty protected subdirectory " + descendant);
+      try (INodesInPath subdirIIP =
+               fsd.lockDescendantPath(iip, FSDirectory.LockMode.WRITE, descendant)) {
+        if (fsd.isNonEmptyDirectory(subdirIIP)) {
+          throw new AccessControlException(
+              "Cannot delete non-empty protected subdirectory " + descendant);
+        }
       }
     }
   }

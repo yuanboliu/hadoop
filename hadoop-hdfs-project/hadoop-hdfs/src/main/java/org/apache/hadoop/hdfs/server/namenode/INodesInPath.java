@@ -56,6 +56,7 @@ public class INodesInPath implements Closeable {
         Arrays.equals(HdfsServerConstants.DOT_SNAPSHOT_DIR_BYTES, pathComponent);
   }
 
+  @Deprecated
   private static INode[] getINodes(final INode inode) {
     int depth = 0, index;
     INode tmp = inode;
@@ -88,6 +89,7 @@ public class INodesInPath implements Closeable {
    * @param inode to construct from
    * @return INodesInPath
    */
+  @Deprecated
   static INodesInPath fromINode(INode inode) {
     INode[] inodes = getINodes(inode);
     byte[][] paths = getPaths(inodes);
@@ -109,11 +111,13 @@ public class INodesInPath implements Closeable {
    * @param inode the {@link INode} to be resolved
    * @return INodesInPath
    */
+  @Deprecated
   static INodesInPath fromINode(final INodeDirectory rootDir, INode inode) {
     byte[][] paths = getPaths(getINodes(inode));
     return resolve(rootDir, paths);
   }
 
+  @Deprecated
   static INodesInPath fromComponents(byte[][] components) {
     return new INodesInPath(new INode[components.length], components);
   }
@@ -140,11 +144,13 @@ public class INodesInPath implements Closeable {
    * @param components array of path component name
    * @return the specified number of existing INodes in the path
    */
+  @Deprecated
   static INodesInPath resolve(final INodeDirectory startingDir,
       final byte[][] components) {
     return resolve(startingDir, components, false);
   }
 
+  @Deprecated
   static INodesInPath resolve(final INodeDirectory startingDir,
       byte[][] components, final boolean isRaw) {
     Preconditions.checkArgument(startingDir.compareTo(components[0]) == 0);
@@ -250,6 +256,7 @@ public class INodesInPath implements Closeable {
    * @param inode the new inode
    * @return a new INodesInPath instance
    */
+  @Deprecated
   public static INodesInPath replace(INodesInPath iip, int pos, INode inode) {
     Preconditions.checkArgument(iip.length() > 0 && pos > 0 // no for root
         && pos < iip.length());
@@ -267,6 +274,7 @@ public class INodesInPath implements Closeable {
    * Extend a given INodesInPath with a child INode. The child INode will be
    * appended to the end of the new INodesInPath.
    */
+  @Deprecated
   public static INodesInPath append(INodesInPath iip, INode child,
       byte[] childName) {
     Preconditions.checkArgument(iip.length() > 0);
@@ -312,6 +320,7 @@ public class INodesInPath implements Closeable {
   protected final InodeLockList mLockList;
   protected FSDirectory.LockMode mLockMode;
 
+  @Deprecated
   private INodesInPath(INode[] inodes, byte[][] path, boolean isRaw,
       boolean isSnapshot,int snapshotId) {
     Preconditions.checkArgument(inodes != null && path != null);
@@ -324,6 +333,7 @@ public class INodesInPath implements Closeable {
     mLockList = null;
   }
 
+  @Deprecated
   private INodesInPath(INode[] inodes, byte[][] path) {
     this(inodes, path, false, false, CURRENT_STATE_ID);
   }
@@ -391,11 +401,16 @@ public class INodesInPath implements Closeable {
    * @return the i-th inode if i >= 0;
    *         otherwise, i < 0, return the (length + i)-th inode.
    */
+  @Deprecated
   public INode getINode(int i) {
+    if (inodes == null) {
+      return mLockList.mInodes.get((i < 0) ? mLockList.mInodes.size() + i : i);
+    }
     return inodes[(i < 0) ? inodes.length + i : i];
   }
 
   /** @return the last inode. */
+  @Deprecated
   public INode getLastINode() {
     if (inodes == null) {
       return getLastExistingInode();
@@ -431,16 +446,21 @@ public class INodesInPath implements Closeable {
     return DFSUtil.byteArray2PathString(path, 0, pos + 1); // it's a length...
   }
 
+  @Deprecated
   public int length() {
     if (inodes == null) {
+      if (mLockList != null && mLockList.mInodes != null) {
+        return mLockList.mInodes.size();
+      }
       return -1;
     }
     return inodes.length;
   }
 
+  @Deprecated
   public INode[] getINodesArray() {
-    INode[] retArr = new INode[inodes.length];
-    System.arraycopy(inodes, 0, retArr, 0, inodes.length);
+    INode[] retArr = new INode[mLockList.mInodes.size()];
+    retArr = mLockList.mInodes.toArray(retArr);
     return retArr;
   }
 
@@ -450,6 +470,7 @@ public class INodesInPath implements Closeable {
    * @return the INodesInPath instance containing ancestral INodes. Note that
    * this method only handles non-snapshot paths.
    */
+  @Deprecated
   private INodesInPath getAncestorINodesInPath(int length) {
     Preconditions.checkArgument(length >= 0 && length < inodes.length);
     Preconditions.checkState(isDotSnapshotDir() || !isSnapshot());
@@ -464,6 +485,7 @@ public class INodesInPath implements Closeable {
    * @return an INodesInPath instance containing all the INodes in the parent
    *         path. We do a deep copy here.
    */
+  @Deprecated
   public INodesInPath getParentINodesInPath() {
     return inodes.length > 1 ? getAncestorINodesInPath(inodes.length - 1) :
         null;
@@ -476,11 +498,13 @@ public class INodesInPath implements Closeable {
    * @param inodeDirectory the ancestor directory
    * @return true if this INodesInPath is a descendant of inodeDirectory
    */
+  @Deprecated
   public boolean isDescendant(final INodeDirectory inodeDirectory) {
     final INodesInPath dirIIP = fromINode(inodeDirectory);
     return isDescendant(dirIIP);
   }
 
+  @Deprecated
   private boolean isDescendant(final INodesInPath ancestorDirIIP) {
     int ancestorDirINodesLength = ancestorDirIIP.length();
     int myParentINodesLength = length() - 1;
@@ -503,6 +527,7 @@ public class INodesInPath implements Closeable {
    * @return a new INodesInPath instance that only contains existing INodes.
    * Note that this method only handles non-snapshot paths.
    */
+  @Deprecated
   public INodesInPath getExistingINodes() {
     Preconditions.checkState(!isSnapshot());
     for (int i = inodes.length; i > 0; i--) {
@@ -551,24 +576,30 @@ public class INodesInPath implements Closeable {
     final StringBuilder b = new StringBuilder(getClass().getSimpleName())
         .append(": path = ").append(getPath())
         .append("\n  inodes = ");
-    if (inodes == null) {
+    if (mLockList == null || mLockList.mInodes == null) {
       b.append("null");
-    } else if (inodes.length == 0) {
+    } else if (mLockList.mInodes.size() == 0) {
       b.append("[]");
     } else {
-      b.append("[").append(toString(inodes[0]));
-      for(int i = 1; i < inodes.length; i++) {
-        b.append(", ").append(toString(inodes[i]));
+      b.append("[").append(toString(mLockList.mInodes.get(0)));
+      for(int i = 1; i < mLockList.mInodes.size(); i++) {
+        b.append(", ").append(toString(mLockList.mInodes.get(i)));
       }
-      b.append("], length=").append(inodes.length);
+      b.append("], length=").append(mLockList.mInodes.size());
     }
     b.append("\n  isSnapshot        = ").append(isSnapshot)
      .append("\n  snapshotId        = ").append(snapshotId);
     return b.toString();
   }
 
+  @Deprecated
   void validate() {
     // check parent up to snapshotRootIndex if this is a snapshot path
+    if (inodes == null) {
+      // skip validate avoid NPE.
+      return;
+    }
+
     int i = 0;
     if (inodes[i] != null) {
       for(i++; i < inodes.length && inodes[i] != null; i++) {

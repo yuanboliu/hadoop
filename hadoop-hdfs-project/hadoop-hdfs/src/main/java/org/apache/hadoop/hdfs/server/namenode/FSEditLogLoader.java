@@ -625,9 +625,10 @@ public class FSEditLogLoader {
       DeleteOp deleteOp = (DeleteOp)op;
       final String src = renameReservedPathsOnUpgrade(
           deleteOp.path, logVersion);
-      final INodesInPath iip = fsDir.getINodesInPath(src, DirOp.WRITE_LINK);
-      FSDirDeleteOp.deleteForEditLog(fsDir, iip, deleteOp.timestamp);
-
+      try (INodesInPath iip =
+               fsDir.lockFullInodePath(src, FSDirectory.LockMode.WRITE)) {
+        FSDirDeleteOp.deleteForEditLog(fsDir, iip, deleteOp.timestamp);
+      }
       if (toAddRetryCache) {
         fsNamesys.addCacheEntry(deleteOp.rpcClientId, deleteOp.rpcCallId);
       }
