@@ -56,20 +56,15 @@ public class FSDirAttrOp {
     if (FSDirectory.isExactReservedName(src)) {
       throw new InvalidPathException(src);
     }
-    INodesInPath iip;
     boolean changed;
-    fsd.writeLock();
-    try {
-      iip = fsd.resolvePath(pc, src, DirOp.WRITE);
+    try (INodesInPath iip = fsd.lockFullInodePath(pc, src, FSDirectory.LockMode.WRITE)) {
       fsd.checkOwner(pc, iip);
       changed = unprotectedSetPermission(fsd, iip, permission);
-    } finally {
-      fsd.writeUnlock();
+      if (changed) {
+        fsd.getEditLog().logSetPermissions(iip.getPath(), permission);
+      }
+      return fsd.getAuditFileInfo(iip);
     }
-    if (changed) {
-      fsd.getEditLog().logSetPermissions(iip.getPath(), permission);
-    }
-    return fsd.getAuditFileInfo(iip);
   }
 
   static FileStatus setOwner(
@@ -78,30 +73,25 @@ public class FSDirAttrOp {
     if (FSDirectory.isExactReservedName(src)) {
       throw new InvalidPathException(src);
     }
-    INodesInPath iip;
     boolean changed;
-    fsd.writeLock();
-    try {
-      iip = fsd.resolvePath(pc, src, DirOp.WRITE);
+    try (INodesInPath iip = fsd.lockFullInodePath(pc, src, FSDirectory.LockMode.WRITE)) {
       fsd.checkOwner(pc, iip);
       if (!pc.isSuperUser()) {
         if (username != null && !pc.getUser().equals(username)) {
           throw new AccessControlException("User " + pc.getUser()
-              + " is not a super user (non-super user cannot change owner).");
+                  + " is not a super user (non-super user cannot change owner).");
         }
         if (group != null && !pc.isMemberOfGroup(group)) {
           throw new AccessControlException(
-              "User " + pc.getUser() + " does not belong to " + group);
+                  "User " + pc.getUser() + " does not belong to " + group);
         }
       }
       changed = unprotectedSetOwner(fsd, iip, username, group);
-    } finally {
-      fsd.writeUnlock();
+      if (changed) {
+        fsd.getEditLog().logSetOwner(iip.getPath(), username, group);
+      }
+      return fsd.getAuditFileInfo(iip);
     }
-    if (changed) {
-      fsd.getEditLog().logSetOwner(iip.getPath(), username, group);
-    }
-    return fsd.getAuditFileInfo(iip);
   }
 
   static FileStatus setTimes(
@@ -266,7 +256,6 @@ public class FSDirAttrOp {
       FSDirectory fsd, INodesInPath iip, FsPermission permissions)
       throws FileNotFoundException, UnresolvedLinkException,
              QuotaExceededException, SnapshotAccessControlException {
-    assert fsd.hasWriteLock();
     final INode inode = FSDirectory.resolveLastINode(iip);
     int snapshotId = iip.getLatestSnapshotId();
     long oldPerm = inode.getPermissionLong();
@@ -278,7 +267,6 @@ public class FSDirAttrOp {
       FSDirectory fsd, INodesInPath iip, String username, String groupname)
       throws FileNotFoundException, UnresolvedLinkException,
       QuotaExceededException, SnapshotAccessControlException {
-    assert fsd.hasWriteLock();
     final INode inode = FSDirectory.resolveLastINode(iip);
     long oldPerm = inode.getPermissionLong();
     if (username != null) {

@@ -630,7 +630,7 @@ public class FSEditLogLoader {
       final String src = renameReservedPathsOnUpgrade(
           deleteOp.path, logVersion);
       try (INodesInPath iip =
-               fsDir.lockFullInodePath(src, FSDirectory.LockMode.WRITE)) {
+          fsDir.lockFullInodePath(src, FSDirectory.LockMode.WRITE)) {
         FSDirDeleteOp.deleteForEditLog(fsDir, iip, deleteOp.timestamp);
       }
       if (toAddRetryCache) {
@@ -657,18 +657,22 @@ public class FSEditLogLoader {
       SetPermissionsOp setPermissionsOp = (SetPermissionsOp)op;
       final String src =
           renameReservedPathsOnUpgrade(setPermissionsOp.src, logVersion);
-      final INodesInPath iip = fsDir.getINodesInPath(src, DirOp.WRITE);
-      FSDirAttrOp.unprotectedSetPermission(fsDir, iip,
-          setPermissionsOp.permissions);
+      try (INodesInPath iip =
+          fsDir.lockFullInodePath(src, FSDirectory.LockMode.WRITE)) {
+        FSDirAttrOp.unprotectedSetPermission(fsDir, iip,
+                setPermissionsOp.permissions);
+      }
       break;
     }
     case OP_SET_OWNER: {
       SetOwnerOp setOwnerOp = (SetOwnerOp)op;
       final String src = renameReservedPathsOnUpgrade(
           setOwnerOp.src, logVersion);
-      final INodesInPath iip = fsDir.getINodesInPath(src, DirOp.WRITE);
-      FSDirAttrOp.unprotectedSetOwner(fsDir, iip,
-          setOwnerOp.username, setOwnerOp.groupname);
+      try (INodesInPath iip =
+          fsDir.lockFullInodePath(src, FSDirectory.LockMode.WRITE)) {
+        FSDirAttrOp.unprotectedSetOwner(fsDir, iip,
+                setOwnerOp.username, setOwnerOp.groupname);
+      }
       break;
     }
     case OP_SET_NS_QUOTA: {

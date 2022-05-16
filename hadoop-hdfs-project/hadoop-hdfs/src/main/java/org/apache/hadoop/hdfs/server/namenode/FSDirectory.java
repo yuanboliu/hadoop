@@ -661,6 +661,8 @@ public class FSDirectory implements Closeable {
    * @throws AccessControlException
    * @throws ParentNotDirectoryException
    * @throws UnresolvedLinkException
+   *
+   * @deprecated Use {@link #lockFullInodePath(FSPermissionChecker, String, LockMode)} instead.
    */
   @Deprecated
   @VisibleForTesting
@@ -2197,6 +2199,29 @@ public class FSDirectory implements Closeable {
       return LockMode.WRITE;
     }
     return LockMode.READ;
+  }
+
+  /**
+   * Locks existing inodes on the specified path, in the specified {@link LockMode}. The target
+   * inode must exist.
+   *
+   * @param pc  A permission checker for traversal checks.  Pass null for no permission checks.
+   * @param path the path to lock
+   * @param lockMode the {@link LockMode} to lock the inodes with
+   * @return the {@link INodesInPath} representing the locked path of inodes
+   * @throws InvalidPathException if the path is invalid
+   * @throws FileNotFoundException if the target inode does not exist
+   */
+  public INodesInPath lockFullInodePath(FSPermissionChecker pc, String path, LockMode lockMode)
+      throws InvalidPathException, FileNotFoundException {
+    TraversalResult traversalResult =
+        traverseToInode(INode.getPathComponents(path), lockMode, null);
+    if (!traversalResult.isFound()) {
+      traversalResult.getInodeLockList().close();
+      throw new FileNotFoundException(ExceptionMessage.PATH_DOES_NOT_EXIST.getMessage(path));
+    }
+    return new MutableLockedInodePath(path,
+        traversalResult.getInodeLockList(), lockMode);
   }
 
   /**

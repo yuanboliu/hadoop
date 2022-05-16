@@ -73,7 +73,7 @@ class FSDirStatAndListingOp {
       }
     }
     try (INodesInPath lockedInodePath =
-            fsd.lockFullInodePath(srcArg, FSDirectory.LockMode.READ)) {
+            fsd.lockFullInodePath(pc, srcArg, FSDirectory.LockMode.READ)) {
       if (fsd.isPermissionEnabled()) {
         if (iip.getLastINode() != null && iip.getLastINode().isDirectory()) {
           fsd.checkPathAccess(pc, iip, FsAction.READ_EXECUTE);
@@ -99,7 +99,7 @@ class FSDirStatAndListingOp {
   static HdfsFileStatus getFileInfo(FSDirectory fsd, FSPermissionChecker pc,
       String srcArg, boolean resolveLink, boolean needLocation,
       boolean needBlockToken) throws IOException {
-    try (INodesInPath iip = fsd.lockFullInodePath(srcArg, FSDirectory.LockMode.READ)) {
+    try (INodesInPath iip = fsd.lockFullInodePath(pc, srcArg, FSDirectory.LockMode.READ)) {
       DirOp dirOp = resolveLink ? DirOp.READ : DirOp.READ_LINK;
       if (pc.isSuperUser()) {
         // superuser can only get an ACE if an existing ancestor is a file.
@@ -123,14 +123,14 @@ class FSDirStatAndListingOp {
   static boolean isFileClosed(FSDirectory fsd, FSPermissionChecker pc,
       String src) throws IOException {
     try (INodesInPath iip =
-             fsd.lockFullInodePath(src, FSDirectory.LockMode.READ)) {
+             fsd.lockFullInodePath(pc, src, FSDirectory.LockMode.READ)) {
       return !INodeFile.valueOf(iip.getLastINode(), src).isUnderConstruction();
     }
   }
 
   static ContentSummary getContentSummary(
       FSDirectory fsd, FSPermissionChecker pc, String src) throws IOException {
-    try (INodesInPath iip = fsd.lockFullInodePath(src, FSDirectory.LockMode.READ)) {
+    try (INodesInPath iip = fsd.lockFullInodePath(pc, src, FSDirectory.LockMode.READ)) {
       if (fsd.isPermissionEnabled() &&
           fsd.isPermissionContentSummarySubAccess()) {
         fsd.checkPermission(pc, iip, false, null, null, null,
@@ -157,7 +157,7 @@ class FSDirStatAndListingOp {
         "Negative length is not supported. File: " + src);
     BlockManager bm = fsd.getBlockManager();
     try (INodesInPath iip =
-             fsd.lockFullInodePath(src, FSDirectory.LockMode.READ)) {
+             fsd.lockFullInodePath(pc, src, FSDirectory.LockMode.READ)) {
       src = iip.getPath();
       final INodeFile inode = INodeFile.valueOf(iip.getLastINode(), src);
       if (fsd.isPermissionEnabled()) {
