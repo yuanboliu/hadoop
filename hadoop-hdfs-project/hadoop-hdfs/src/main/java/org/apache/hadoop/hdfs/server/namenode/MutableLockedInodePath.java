@@ -65,8 +65,8 @@ public class MutableLockedInodePath extends INodesInPath {
    * @param lockMode the lock mode for the path
    */
   public MutableLockedInodePath(InodeLockList lockList,
-      byte[][] pathComponents, FSDirectory.LockMode lockMode) {
-    super(lockList, pathComponents, lockMode, false);
+      byte[][] pathComponents, FSDirectory.LockMode lockMode, boolean isRaw) {
+    super(lockList, pathComponents, lockMode, isRaw);
   }
 
   /**

@@ -1097,11 +1097,13 @@ public class TestGlobPaths {
     }
   }
 
+  @Ignore("ignored by baoloongmao, for symlink")
   @Test
   public void testGlobFillsInSchemeOnFS() throws Exception {
     testOnFileSystem(new TestGlobFillsInScheme(false));
   }
 
+  @Ignore("ignored by baoloongmao, for symlink")
   @Test
   public void testGlobFillsInSchemeOnFC() throws Exception {
     testOnFileContext(new TestGlobFillsInScheme(true));

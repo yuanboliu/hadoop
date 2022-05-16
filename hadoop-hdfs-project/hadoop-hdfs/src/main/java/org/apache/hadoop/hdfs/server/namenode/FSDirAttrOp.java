@@ -57,7 +57,7 @@ public class FSDirAttrOp {
       throw new InvalidPathException(src);
     }
     boolean changed;
-    try (INodesInPath iip = fsd.lockFullInodePath(pc, src, FSDirectory.LockMode.WRITE)) {
+    try (INodesInPath iip = fsd.lockInodePath(pc, src, DirOp.WRITE, FSDirectory.LockMode.WRITE)) {
       fsd.checkOwner(pc, iip);
       changed = unprotectedSetPermission(fsd, iip, permission);
       if (changed) {
@@ -74,7 +74,7 @@ public class FSDirAttrOp {
       throw new InvalidPathException(src);
     }
     boolean changed;
-    try (INodesInPath iip = fsd.lockFullInodePath(pc, src, FSDirectory.LockMode.WRITE)) {
+    try (INodesInPath iip = fsd.lockInodePath(pc, src, DirOp.WRITE, FSDirectory.LockMode.WRITE)) {
       fsd.checkOwner(pc, iip);
       if (!pc.isSuperUser()) {
         if (username != null && !pc.getUser().equals(username)) {

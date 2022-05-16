@@ -2183,23 +2183,23 @@ public class FSDirectory implements Closeable {
       }
     }
     components = resolveComponents(components, this);
-    TraversalResult traversalResult =
-            traverseToInode(components, lockMode, null);
-    MutableLockedInodePath iip = new MutableLockedInodePath(path,
-            traversalResult.getInodeLockList(), lockMode, isRaw);
+    INodesInPath iipForCheck = INodesInPath.resolve(rootDir, components, isRaw);
+    // verify all ancestors are dirs and traversable.  note that only
+    // methods that create new namespace items have the signature to throw
+    // PNDE
     try {
-      checkTraverse(pc, iip, dirOp);
+      checkTraverse(pc, iipForCheck, dirOp);
     } catch (ParentNotDirectoryException pnde) {
-      iip.close();
       if (!isCreate) {
         throw new AccessControlException(pnde.getMessage());
       }
       throw pnde;
-    } catch (Throwable e) {
-      iip.close();
-      throw e;
     }
-    return iip;
+    TraversalResult traversalResult =
+            traverseToInode(components, lockMode, null);
+    return new MutableLockedInodePath(
+            traversalResult.getInodeLockList(),
+            iipForCheck.getPathComponents(), lockMode, isRaw);
   }
 
   public INodesInPath lockInodePath(byte[][] path, DirOp dirOp, LockMode lockMode)
@@ -2208,7 +2208,7 @@ public class FSDirectory implements Closeable {
     TraversalResult traversalResult =
             traverseToInode(path, lockMode, null);
     MutableLockedInodePath iip = new MutableLockedInodePath(
-            traversalResult.getInodeLockList(), path, lockMode);
+            traversalResult.getInodeLockList(), path, lockMode, false);
     try {
       checkTraverse(null, iip, dirOp);
     } catch (Throwable e) {
@@ -2551,7 +2551,7 @@ public class FSDirectory implements Closeable {
               new CompositeInodeLockList(inodePath.getLockList(), inodeLockList), lockMode);
     } else {
       return new MutableLockedInodePath(
-              new CompositeInodeLockList(inodePath.getLockList(), inodeLockList), pathComponents, lockMode);
+              new CompositeInodeLockList(inodePath.getLockList(), inodeLockList), pathComponents, lockMode, inodePath.isRaw());
     }
   }
 
@@ -2628,7 +2628,7 @@ public class FSDirectory implements Closeable {
         throw new InvalidPathException(
                 ExceptionMessage.PATH_COMPONENTS_INVALID.getMessage("empty"));
       } else if (pathComponents.length == 1) {
-        if (pathComponents[0] == null) {
+        if (pathComponents[0] == null || pathComponents[0].length == 0) {
           if (getLockModeForComponent(0, pathComponents.length, lockMode, lockHints)
                   == LockMode.READ) {
             lockList.lockRead(rootDir);
@@ -2640,7 +2640,7 @@ public class FSDirectory implements Closeable {
           return TraversalResult.createFoundResult(inodes, lockList);
         } else {
           throw new InvalidPathException(
-                  ExceptionMessage.PATH_COMPONENTS_INVALID_START.getMessage(pathComponents[0]));
+                  ExceptionMessage.PATH_COMPONENTS_INVALID_START.getMessage(new String(pathComponents[0])));
         }
       }
 

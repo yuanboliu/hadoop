@@ -127,7 +127,7 @@ class FSDirStatAndListingOp {
   static boolean isFileClosed(FSDirectory fsd, FSPermissionChecker pc,
       String src) throws IOException {
     try (INodesInPath iip =
-             fsd.lockFullInodePath(pc, src, FSDirectory.LockMode.READ)) {
+             fsd.lockInodePath(pc, src, DirOp.WRITE, FSDirectory.LockMode.READ)) {
       return !INodeFile.valueOf(iip.getLastINode(), src).isUnderConstruction();
     }
   }
