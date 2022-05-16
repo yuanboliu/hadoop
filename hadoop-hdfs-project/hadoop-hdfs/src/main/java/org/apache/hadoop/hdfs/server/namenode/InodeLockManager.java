@@ -23,6 +23,7 @@ import com.google.common.cache.CacheBuilder;
 import com.google.common.cache.CacheLoader;
 import com.google.common.cache.LoadingCache;
 import com.google.common.util.concurrent.Striped;
+import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.InvalidPathException;
 import org.apache.hadoop.hdfs.server.lock.collections.LockPool;
 import org.apache.hadoop.hdfs.server.lock.exception.ExceptionMessage;
@@ -47,13 +48,7 @@ public class InodeLockManager implements Closeable {
    * We use weak values so that when nothing holds a reference to
    * a lock, the garbage collector can remove the lock's entry from the pool.
    */
-  // TODO(baoloongmao): make these configurable
-  private final LockPool<Long> mInodeLocks =
-      new LockPool<>((key)-> new ReentrantReadWriteLock(),
-          1000,
-          500000,
-          1000000,
-          100);
+  private final LockPool<Long> mInodeLocks;
 
   /**
    * Locks for guarding changes to last modified time and size on read-locked parent inodes.
@@ -83,6 +78,27 @@ public class InodeLockManager implements Closeable {
               return new AtomicBoolean();
             }
           });
+
+  public InodeLockManager(Configuration conf) {
+    int initSize =
+        conf.getInt(NameNodePoolConfigKeys.NAMENODE_LOCK_POOL_INITSIZE_KEY,
+            NameNodePoolConfigKeys.NAMENODE_LOCK_POOL_INITSIZE_KEY_DEFAULT);
+    int lowWatermark =
+        conf.getInt(NameNodePoolConfigKeys.NAMENODE_LOCK_POOL_LOW_WATERMARK_KEY,
+            NameNodePoolConfigKeys.NAMENODE_LOCK_POOL_LOW_WATERMARK_DEFAULT);
+    int highWatermark =
+        conf.getInt(NameNodePoolConfigKeys.NAMENODE_LOCK_POOL_HIGH_WATERMARK_KEY,
+            NameNodePoolConfigKeys.NAMENODE_LOCK_POOL_HIGH_WATERMARK_DEFAULT);
+    int concurrencyLevel =
+        conf.getInt(NameNodePoolConfigKeys.NAMENODE_LOCK_POOL_CONCURRENCY_LEVEL_KEY,
+            NameNodePoolConfigKeys.NAMENODE_LOCK_POOL_CONCURRENCY_LEVEL_DEFAULT);
+    mInodeLocks =
+        new LockPool<>((key)-> new ReentrantReadWriteLock(),
+            initSize,
+            lowWatermark,
+            highWatermark,
+            concurrencyLevel);
+  }
 
   @VisibleForTesting
   boolean inodeReadLockedByCurrentThread(long inodeId) {

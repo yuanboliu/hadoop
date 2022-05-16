@@ -286,7 +286,7 @@ public class FSDirectory implements Closeable {
   };
 
   FSDirectory(FSNamesystem ns, Configuration conf) throws IOException {
-    mInodeLockManager = new InodeLockManager();
+    mInodeLockManager = new InodeLockManager(conf);
     this.inodeId = new INodeId();
     rootDir = createRoot(ns);
     inodeMap = INodeMap.newInstance(rootDir);
