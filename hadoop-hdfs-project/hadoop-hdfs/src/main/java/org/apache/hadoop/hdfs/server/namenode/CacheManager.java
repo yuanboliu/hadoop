@@ -287,7 +287,7 @@ public class CacheManager {
   }
 
   public void clearDirectiveStats() {
-    assert namesystem.hasWriteLock();
+    assert namesystem.hasReadLock();
     for (CacheDirective directive : directivesById.values()) {
       directive.resetStatistics();
     }
@@ -316,7 +316,7 @@ public class CacheManager {
   }
 
   private long getNextDirectiveId() throws IOException {
-    assert namesystem.hasWriteLock();
+    assert namesystem.hasReadLock();
     if (nextDirectiveId >= Long.MAX_VALUE - 1) {
       throw new IOException("No more available IDs.");
     }
@@ -549,7 +549,7 @@ public class CacheManager {
   public CacheDirectiveInfo addDirective(
       CacheDirectiveInfo info, FSPermissionChecker pc, EnumSet<CacheFlag> flags)
       throws IOException {
-    assert namesystem.hasWriteLock();
+    assert namesystem.hasReadLock();
     CacheDirective directive;
     try {
       CachePool pool = getCachePool(validatePoolName(info));
@@ -627,7 +627,7 @@ public class CacheManager {
 
   public void modifyDirective(CacheDirectiveInfo info,
       FSPermissionChecker pc, EnumSet<CacheFlag> flags) throws IOException {
-    assert namesystem.hasWriteLock();
+    assert namesystem.hasReadLock();
     String idString =
         (info.getId() == null) ?
             "(null)" : info.getId().toString();
@@ -678,7 +678,7 @@ public class CacheManager {
 
   private void removeInternal(CacheDirective directive)
       throws InvalidRequestException {
-    assert namesystem.hasWriteLock();
+    assert namesystem.hasReadLock();
     // Remove the corresponding entry in directivesByPath.
     String path = directive.getPath();
     List<CacheDirective> directives = directivesByPath.get(path);
@@ -703,7 +703,7 @@ public class CacheManager {
 
   public void removeDirective(long id, FSPermissionChecker pc)
       throws IOException {
-    assert namesystem.hasWriteLock();
+    assert namesystem.hasReadLock();
     try {
       CacheDirective directive = getById(id);
       checkWritePermission(pc, directive.getPool());
@@ -794,7 +794,7 @@ public class CacheManager {
    */
   public CachePoolInfo addCachePool(CachePoolInfo info)
       throws IOException {
-    assert namesystem.hasWriteLock();
+    assert namesystem.hasReadLock();
     CachePool pool;
     try {
       CachePoolInfo.validate(info);
@@ -824,7 +824,7 @@ public class CacheManager {
    */
   public void modifyCachePool(CachePoolInfo info)
       throws IOException {
-    assert namesystem.hasWriteLock();
+    assert namesystem.hasReadLock();
     StringBuilder bld = new StringBuilder();
     try {
       CachePoolInfo.validate(info);
@@ -894,7 +894,7 @@ public class CacheManager {
    */
   public void removeCachePool(String poolName)
       throws IOException {
-    assert namesystem.hasWriteLock();
+    assert namesystem.hasReadLock();
     try {
       CachePoolInfo.validateName(poolName);
       CachePool pool = cachePools.remove(poolName);
