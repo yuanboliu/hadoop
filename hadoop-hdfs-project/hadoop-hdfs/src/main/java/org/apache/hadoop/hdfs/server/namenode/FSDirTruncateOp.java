@@ -219,7 +219,7 @@ final class FSDirTruncateOp {
   static Block prepareFileForTruncate(FSNamesystem fsn, INodesInPath iip,
       String leaseHolder, String clientMachine, long lastBlockDelta,
       Block newBlock) throws IOException {
-    assert fsn.hasWriteLock();
+    assert fsn.hasReadLock();
 
     INodeFile file = iip.getLastINode().asFile();
     assert !file.isStriped();

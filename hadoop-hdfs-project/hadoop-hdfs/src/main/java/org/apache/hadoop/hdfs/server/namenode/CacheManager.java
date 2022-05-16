@@ -43,7 +43,9 @@ import java.util.Map.Entry;
 import java.util.SortedMap;
 import java.util.TreeMap;
 import java.util.concurrent.locks.ReentrantLock;
+import java.util.concurrent.locks.ReentrantReadWriteLock;
 
+import net.jcip.annotations.GuardedBy;
 import org.apache.commons.io.IOUtils;
 import org.apache.hadoop.classification.InterfaceAudience;
 import org.apache.hadoop.conf.Configuration;
@@ -125,6 +127,7 @@ public class CacheManager {
    * listCacheDirectives relies on the ordering of elements in this map
    * to track what has already been listed by the client.
    */
+  @GuardedBy("cmLock")
   private final TreeMap<Long, CacheDirective> directivesById =
       new TreeMap<Long, CacheDirective>();
 
@@ -132,19 +135,28 @@ public class CacheManager {
    * The directive ID to use for a new directive.  IDs always increase, and are
    * never reused.
    */
+  @GuardedBy("cmLock")
   private long nextDirectiveId;
 
   /**
    * Cache directives, sorted by path
    */
+  @GuardedBy("cmLock")
   private final TreeMap<String, List<CacheDirective>> directivesByPath =
       new TreeMap<String, List<CacheDirective>>();
 
   /**
    * Cache pools, sorted by name.
    */
+  @GuardedBy("cmLock")
   private final TreeMap<String, CachePool> cachePools =
       new TreeMap<String, CachePool>();
+
+  /**
+   * Lock which protects the nextDirectiveId, directivesById, directivesByPath
+   * and cachePools.
+   */
+  private final ReentrantReadWriteLock cmLock = new ReentrantReadWriteLock();
 
   /**
    * Maximum number of cache pools to list in one operation.
@@ -244,10 +256,15 @@ public class CacheManager {
    * reset FSNamesystem state. See {@link FSNamesystem#clear()}.
    */
   void clear() {
-    directivesById.clear();
-    directivesByPath.clear();
-    cachePools.clear();
-    nextDirectiveId = 1;
+    cmLock.writeLock().lock();
+    try {
+      directivesById.clear();
+      directivesByPath.clear();
+      cachePools.clear();
+      nextDirectiveId = 1;
+    } finally {
+      cmLock.writeLock().unlock();
+    }
   }
 
   public void startMonitorThread() {
@@ -288,8 +305,13 @@ public class CacheManager {
 
   public void clearDirectiveStats() {
     assert namesystem.hasReadLock();
-    for (CacheDirective directive : directivesById.values()) {
-      directive.resetStatistics();
+    cmLock.writeLock().lock();
+    try {
+      for (CacheDirective directive : directivesById.values()) {
+        directive.resetStatistics();
+      }
+    } finally {
+      cmLock.writeLock().unlock();
     }
   }
 
@@ -297,30 +319,53 @@ public class CacheManager {
    * @return Unmodifiable view of the collection of CachePools.
    */
   public Collection<CachePool> getCachePools() {
-    assert namesystem.hasReadLock();
-    return Collections.unmodifiableCollection(cachePools.values());
+    cmLock.readLock().lock();
+    try {
+      return Collections.unmodifiableCollection(cachePools.values());
+    } finally {
+      cmLock.readLock().unlock();
+    }
   }
 
   /**
    * @return Unmodifiable view of the collection of CacheDirectives.
    */
   public Collection<CacheDirective> getCacheDirectives() {
-    assert namesystem.hasReadLock();
-    return Collections.unmodifiableCollection(directivesById.values());
+    cmLock.readLock().lock();
+    try {
+      return Collections.unmodifiableCollection(directivesById.values());
+    } finally {
+      cmLock.readLock().unlock();
+    }
   }
   
   @VisibleForTesting
+  // Access to the returned GSet should be protected by readLock() & writeLock()
+  @Deprecated
   public GSet<CachedBlock, CachedBlock> getCachedBlocks() {
-    assert namesystem.hasReadLock();
     return cachedBlocks;
+  }
+
+  public CachedBlock getCachedBlock(CachedBlock block) {
+    cmLock.readLock().lock();
+    try {
+      return cachedBlocks.get(block);
+    } finally {
+      cmLock.readLock().unlock();
+    }
   }
 
   private long getNextDirectiveId() throws IOException {
     assert namesystem.hasReadLock();
-    if (nextDirectiveId >= Long.MAX_VALUE - 1) {
-      throw new IOException("No more available IDs.");
+    cmLock.writeLock().lock();
+    try {
+      if (nextDirectiveId >= Long.MAX_VALUE - 1) {
+        throw new IOException("No more available IDs.");
+      }
+      return nextDirectiveId++;
+    } finally {
+      cmLock.writeLock().unlock();
     }
-    return nextDirectiveId++;
   }
 
   // Helper getter / validation methods
@@ -488,6 +533,7 @@ public class CacheManager {
       throw new InvalidRequestException("Invalid negative ID.");
     }
     // Find the directive.
+    assert hasReadLock();
     CacheDirective directive = directivesById.get(id);
     if (directive == null) {
       throw new InvalidRequestException("No directive with ID " + id
@@ -501,6 +547,7 @@ public class CacheManager {
    */
   private CachePool getCachePool(String poolName)
       throws InvalidRequestException {
+    assert hasReadLock();
     CachePool pool = cachePools.get(poolName);
     if (pool == null) {
       throw new InvalidRequestException("Unknown pool " + poolName);
@@ -511,6 +558,7 @@ public class CacheManager {
   // RPC handlers
 
   private void addInternal(CacheDirective directive, CachePool pool) {
+    assert hasWriteLock();
     boolean addedDirective = pool.getDirectiveList().add(directive);
     assert addedDirective;
     directivesById.put(directive.getId(), directive);
@@ -538,10 +586,15 @@ public class CacheManager {
       throws InvalidRequestException {
     long id = directive.getId();
     CacheDirective entry = new CacheDirective(directive);
-    CachePool pool = cachePools.get(directive.getPool());
-    addInternal(entry, pool);
-    if (nextDirectiveId <= id) {
-      nextDirectiveId = id + 1;
+    cmLock.writeLock().lock();
+    try {
+      CachePool pool = cachePools.get(directive.getPool());
+      addInternal(entry, pool);
+      if (nextDirectiveId <= id) {
+        nextDirectiveId = id + 1;
+      }
+    } finally {
+      cmLock.writeLock().unlock();
     }
     return entry.toInfo();
   }
@@ -551,6 +604,7 @@ public class CacheManager {
       throws IOException {
     assert namesystem.hasReadLock();
     CacheDirective directive;
+    cmLock.writeLock().lock();
     try {
       CachePool pool = getCachePool(validatePoolName(info));
       checkWritePermission(pc, pool);
@@ -570,6 +624,8 @@ public class CacheManager {
     } catch (IOException e) {
       LOG.warn("addDirective of " + info + " failed: ", e);
       throw e;
+    } finally {
+      cmLock.writeLock().unlock();
     }
     LOG.info("addDirective of {} successful.", info);
     return directive.toInfo();
@@ -619,10 +675,15 @@ public class CacheManager {
     if (id == null) {
       throw new InvalidRequestException("Must supply an ID.");
     }
-    CacheDirective prevEntry = getById(id);
-    CacheDirectiveInfo newInfo = createFromInfoAndDefaults(info, prevEntry);
-    removeInternal(prevEntry);
-    addInternal(new CacheDirective(newInfo), getCachePool(newInfo.getPool()));
+    cmLock.writeLock().lock();
+    try {
+      CacheDirective prevEntry = getById(id);
+      CacheDirectiveInfo newInfo = createFromInfoAndDefaults(info, prevEntry);
+      removeInternal(prevEntry);
+      addInternal(new CacheDirective(newInfo), getCachePool(newInfo.getPool()));
+    } finally {
+      cmLock.writeLock().unlock();
+    }
   }
 
   public void modifyDirective(CacheDirectiveInfo info,
@@ -631,6 +692,7 @@ public class CacheManager {
     String idString =
         (info.getId() == null) ?
             "(null)" : info.getId().toString();
+    cmLock.writeLock().lock();
     try {
       // Check for invalid IDs.
       Long id = info.getId();
@@ -672,6 +734,8 @@ public class CacheManager {
     } catch (IOException e) {
       LOG.warn("modifyDirective of " + idString + " failed: ", e);
       throw e;
+    } finally {
+      cmLock.writeLock().unlock();
     }
     LOG.info("modifyDirective of {} successfully applied {}.", idString, info);
   }
@@ -679,6 +743,7 @@ public class CacheManager {
   private void removeInternal(CacheDirective directive)
       throws InvalidRequestException {
     assert namesystem.hasReadLock();
+    assert cmLock.isWriteLockedByCurrentThread();
     // Remove the corresponding entry in directivesByPath.
     String path = directive.getPath();
     List<CacheDirective> directives = directivesByPath.get(path);
@@ -704,6 +769,7 @@ public class CacheManager {
   public void removeDirective(long id, FSPermissionChecker pc)
       throws IOException {
     assert namesystem.hasReadLock();
+    cmLock.writeLock().lock();
     try {
       CacheDirective directive = getById(id);
       checkWritePermission(pc, directive.getPool());
@@ -711,6 +777,8 @@ public class CacheManager {
     } catch (IOException e) {
       LOG.warn("removeDirective of " + id + " failed: ", e);
       throw e;
+    } finally {
+      cmLock.writeLock().unlock();
     }
     LOG.info("removeDirective of " + id + " successful.");
   }
@@ -719,7 +787,6 @@ public class CacheManager {
         listCacheDirectives(long prevId,
             CacheDirectiveInfo filter,
             FSPermissionChecker pc) throws IOException {
-    assert namesystem.hasReadLock();
     final int NUM_PRE_ALLOCATED_ENTRIES = 16;
     String filterPath = null;
     if (filter.getPath() != null) {
@@ -732,54 +799,59 @@ public class CacheManager {
 
     // Querying for a single ID
     final Long id = filter.getId();
-    if (id != null) {
-      if (!directivesById.containsKey(id)) {
-        throw new InvalidRequestException("Did not find requested id " + id);
-      }
-      // Since we use a tailMap on directivesById, setting prev to id-1 gets
-      // us the directive with the id (if present)
-      prevId = id - 1;
-    }
-
     ArrayList<CacheDirectiveEntry> replies =
         new ArrayList<CacheDirectiveEntry>(NUM_PRE_ALLOCATED_ENTRIES);
-    int numReplies = 0;
-    SortedMap<Long, CacheDirective> tailMap =
-      directivesById.tailMap(prevId + 1);
-    for (Entry<Long, CacheDirective> cur : tailMap.entrySet()) {
-      if (numReplies >= maxListCacheDirectivesNumResponses) {
-        return new BatchedListEntries<CacheDirectiveEntry>(replies, true);
+    cmLock.readLock().lock();
+    try {
+      if (id != null) {
+        if (!directivesById.containsKey(id)) {
+          throw new InvalidRequestException("Did not find requested id " + id);
+        }
+        // Since we use a tailMap on directivesById, setting prev to id-1 gets
+        // us the directive with the id (if present)
+        prevId = id - 1;
       }
-      CacheDirective curDirective = cur.getValue();
-      CacheDirectiveInfo info = cur.getValue().toInfo();
 
-      // If the requested ID is present, it should be the first item.
-      // Hitting this case means the ID is not present, or we're on the second
-      // item and should break out.
-      if (id != null &&
-          !(info.getId().equals(id))) {
-        break;
-      }
-      if (filter.getPool() != null && 
-          !info.getPool().equals(filter.getPool())) {
-        continue;
-      }
-      if (filterPath != null &&
-          !info.getPath().toUri().getPath().equals(filterPath)) {
-        continue;
-      }
-      boolean hasPermission = true;
-      if (pc != null) {
-        try {
-          pc.checkPermission(curDirective.getPool(), FsAction.READ);
-        } catch (AccessControlException e) {
-          hasPermission = false;
+      int numReplies = 0;
+      SortedMap<Long, CacheDirective> tailMap =
+          directivesById.tailMap(prevId + 1);
+      for (Entry<Long, CacheDirective> cur : tailMap.entrySet()) {
+        if (numReplies >= maxListCacheDirectivesNumResponses) {
+          return new BatchedListEntries<CacheDirectiveEntry>(replies, true);
+        }
+        CacheDirective curDirective = cur.getValue();
+        CacheDirectiveInfo info = cur.getValue().toInfo();
+
+        // If the requested ID is present, it should be the first item.
+        // Hitting this case means the ID is not present, or we're on the second
+        // item and should break out.
+        if (id != null &&
+            !(info.getId().equals(id))) {
+          break;
+        }
+        if (filter.getPool() != null &&
+            !info.getPool().equals(filter.getPool())) {
+          continue;
+        }
+        if (filterPath != null &&
+            !info.getPath().toUri().getPath().equals(filterPath)) {
+          continue;
+        }
+        boolean hasPermission = true;
+        if (pc != null) {
+          try {
+            pc.checkPermission(curDirective.getPool(), FsAction.READ);
+          } catch (AccessControlException e) {
+            hasPermission = false;
+          }
+        }
+        if (hasPermission) {
+          replies.add(new CacheDirectiveEntry(info, cur.getValue().toStats()));
+          numReplies++;
         }
       }
-      if (hasPermission) {
-        replies.add(new CacheDirectiveEntry(info, cur.getValue().toStats()));
-        numReplies++;
-      }
+    } finally {
+      cmLock.readLock().unlock();
     }
     return new BatchedListEntries<CacheDirectiveEntry>(replies, false);
   }
@@ -796,6 +868,7 @@ public class CacheManager {
       throws IOException {
     assert namesystem.hasReadLock();
     CachePool pool;
+    cmLock.writeLock().lock();
     try {
       CachePoolInfo.validate(info);
       String poolName = info.getPoolName();
@@ -809,6 +882,8 @@ public class CacheManager {
     } catch (IOException e) {
       LOG.info("addCachePool of " + info + " failed: ", e);
       throw e;
+    } finally {
+      cmLock.writeLock().unlock();
     }
     LOG.info("addCachePool of {} successful.", info);
     return pool.getInfo(true);
@@ -826,6 +901,7 @@ public class CacheManager {
       throws IOException {
     assert namesystem.hasReadLock();
     StringBuilder bld = new StringBuilder();
+    cmLock.writeLock().lock();
     try {
       CachePoolInfo.validate(info);
       String poolName = info.getPoolName();
@@ -879,6 +955,8 @@ public class CacheManager {
     } catch (IOException e) {
       LOG.info("modifyCachePool of " + info + " failed: ", e);
       throw e;
+    } finally {
+      cmLock.writeLock().unlock();
     }
     LOG.info("modifyCachePool of {} successful; {}", info.getPoolName(), 
         bld.toString());
@@ -895,6 +973,7 @@ public class CacheManager {
   public void removeCachePool(String poolName)
       throws IOException {
     assert namesystem.hasReadLock();
+    cmLock.writeLock().lock();
     try {
       CachePoolInfo.validateName(poolName);
       CachePool pool = cachePools.remove(poolName);
@@ -914,33 +993,45 @@ public class CacheManager {
     } catch (IOException e) {
       LOG.info("removeCachePool of " + poolName + " failed: ", e);
       throw e;
+    } finally {
+      cmLock.writeLock().unlock();
     }
     LOG.info("removeCachePool of " + poolName + " successful.");
   }
 
   public BatchedListEntries<CachePoolEntry>
       listCachePools(FSPermissionChecker pc, String prevKey) {
-    assert namesystem.hasReadLock();
     final int NUM_PRE_ALLOCATED_ENTRIES = 16;
     ArrayList<CachePoolEntry> results = 
         new ArrayList<CachePoolEntry>(NUM_PRE_ALLOCATED_ENTRIES);
-    SortedMap<String, CachePool> tailMap = cachePools.tailMap(prevKey, false);
-    int numListed = 0;
-    for (Entry<String, CachePool> cur : tailMap.entrySet()) {
-      if (numListed++ >= maxListCachePoolsResponses) {
-        return new BatchedListEntries<CachePoolEntry>(results, true);
+    cmLock.readLock().lock();
+    try {
+      SortedMap<String, CachePool> tailMap = cachePools.tailMap(prevKey, false);
+      int numListed = 0;
+      for (Entry<String, CachePool> cur : tailMap.entrySet()) {
+        if (numListed++ >= maxListCachePoolsResponses) {
+          return new BatchedListEntries<CachePoolEntry>(results, true);
+        }
+        results.add(cur.getValue().getEntry(pc));
       }
-      results.add(cur.getValue().getEntry(pc));
+    } finally {
+      cmLock.readLock().unlock();
     }
+
     return new BatchedListEntries<CachePoolEntry>(results, false);
   }
 
   public void setCachedLocations(LocatedBlocks locations) {
     // don't attempt lookups if there are no cached blocks
-    if (cachedBlocks.size() > 0) {
-      for (LocatedBlock lb : locations.getLocatedBlocks()) {
-        setCachedLocations(lb);
+    cmLock.readLock().lock();
+    try {
+      if (cachedBlocks.size() > 0) {
+        for (LocatedBlock lb : locations.getLocatedBlocks()) {
+          setCachedLocations(lb);
+        }
       }
+    } finally {
+      cmLock.readLock().unlock();
     }
   }
 
@@ -948,6 +1039,7 @@ public class CacheManager {
     CachedBlock cachedBlock =
         new CachedBlock(block.getBlock().getBlockId(),
             (short)0, false);
+    assert hasReadLock();
     cachedBlock = cachedBlocks.get(cachedBlock);
     if (cachedBlock == null) {
       return;
@@ -983,7 +1075,6 @@ public class CacheManager {
               DFS_NAMENODE_CACHING_ENABLED_KEY, blockIds.size());
       return;
     }
-    namesystem.writeLock();
     final long startTime = Time.monotonicNow();
     final long endTime;
     try {
@@ -997,7 +1088,6 @@ public class CacheManager {
       processCacheReportImpl(datanode, blockIds);
     } finally {
       endTime = Time.monotonicNow();
-      namesystem.writeUnlock("processCacheReport");
     }
 
     // Log the block report processing stats from Namenode perspective
@@ -1016,32 +1106,37 @@ public class CacheManager {
     cached.clear();
     CachedBlocksList cachedList = datanode.getCached();
     CachedBlocksList pendingCachedList = datanode.getPendingCached();
-    for (Iterator<Long> iter = blockIds.iterator(); iter.hasNext(); ) {
-      long blockId = iter.next();
-      LOG.trace("Cache report from datanode {} has block {}", datanode,
-          blockId);
-      CachedBlock cachedBlock =
-          new CachedBlock(blockId, (short)0, false);
-      CachedBlock prevCachedBlock = cachedBlocks.get(cachedBlock);
-      // Add the block ID from the cache report to the cachedBlocks map
-      // if it's not already there.
-      if (prevCachedBlock != null) {
-        cachedBlock = prevCachedBlock;
-      } else {
-        cachedBlocks.put(cachedBlock);
-        LOG.trace("Added block {}  to cachedBlocks", cachedBlock);
+    cmLock.writeLock().lock();
+    try {
+      for (Iterator<Long> iter = blockIds.iterator(); iter.hasNext(); ) {
+        long blockId = iter.next();
+        LOG.trace("Cache report from datanode {} has block {}", datanode,
+            blockId);
+        CachedBlock cachedBlock =
+            new CachedBlock(blockId, (short) 0, false);
+        CachedBlock prevCachedBlock = cachedBlocks.get(cachedBlock);
+        // Add the block ID from the cache report to the cachedBlocks map
+        // if it's not already there.
+        if (prevCachedBlock != null) {
+          cachedBlock = prevCachedBlock;
+        } else {
+          cachedBlocks.put(cachedBlock);
+          LOG.trace("Added block {}  to cachedBlocks", cachedBlock);
+        }
+        // Add the block to the datanode's implicit cached block list
+        // if it's not already there.  Similarly, remove it from the pending
+        // cached block list if it exists there.
+        if (!cachedBlock.isPresent(cachedList)) {
+          cachedList.add(cachedBlock);
+          LOG.trace("Added block {} to CACHED list.", cachedBlock);
+        }
+        if (cachedBlock.isPresent(pendingCachedList)) {
+          pendingCachedList.remove(cachedBlock);
+          LOG.trace("Removed block {} from PENDING_CACHED list.", cachedBlock);
+        }
       }
-      // Add the block to the datanode's implicit cached block list
-      // if it's not already there.  Similarly, remove it from the pending
-      // cached block list if it exists there.
-      if (!cachedBlock.isPresent(cachedList)) {
-        cachedList.add(cachedBlock);
-        LOG.trace("Added block {} to CACHED list.", cachedBlock);
-      }
-      if (cachedBlock.isPresent(pendingCachedList)) {
-        pendingCachedList.remove(cachedBlock);
-        LOG.trace("Removed block {} from PENDING_CACHED list.", cachedBlock);
-      }
+    } finally {
+      cmLock.writeLock().unlock();
     }
   }
 
@@ -1054,63 +1149,73 @@ public class CacheManager {
    */
   public void saveStateCompat(DataOutputStream out, String sdPath)
       throws IOException {
-    serializerCompat.save(out, sdPath);
+    cmLock.readLock().lock();
+    try {
+      serializerCompat.save(out, sdPath);
+    } finally {
+      cmLock.readLock().unlock();
+    }
   }
 
   public PersistState saveState() throws IOException {
+    cmLock.readLock().lock();
     ArrayList<CachePoolInfoProto> pools = Lists
         .newArrayListWithCapacity(cachePools.size());
     ArrayList<CacheDirectiveInfoProto> directives = Lists
         .newArrayListWithCapacity(directivesById.size());
 
-    for (CachePool pool : cachePools.values()) {
-      CachePoolInfo p = pool.getInfo(true);
-      CachePoolInfoProto.Builder b = CachePoolInfoProto.newBuilder()
-          .setPoolName(p.getPoolName());
+    try {
+      for (CachePool pool : cachePools.values()) {
+        CachePoolInfo p = pool.getInfo(true);
+        CachePoolInfoProto.Builder b = CachePoolInfoProto.newBuilder()
+                .setPoolName(p.getPoolName());
 
-      if (p.getOwnerName() != null)
-        b.setOwnerName(p.getOwnerName());
+        if (p.getOwnerName() != null)
+          b.setOwnerName(p.getOwnerName());
 
-      if (p.getGroupName() != null)
-        b.setGroupName(p.getGroupName());
+        if (p.getGroupName() != null)
+          b.setGroupName(p.getGroupName());
 
-      if (p.getMode() != null)
-        b.setMode(p.getMode().toShort());
+        if (p.getMode() != null)
+          b.setMode(p.getMode().toShort());
 
-      if (p.getLimit() != null)
-        b.setLimit(p.getLimit());
+        if (p.getLimit() != null)
+          b.setLimit(p.getLimit());
 
-      if (p.getMaxRelativeExpiryMs() != null) {
-        b.setMaxRelativeExpiry(p.getMaxRelativeExpiryMs());
+        if (p.getMaxRelativeExpiryMs() != null) {
+          b.setMaxRelativeExpiry(p.getMaxRelativeExpiryMs());
+        }
+
+        pools.add(b.build());
       }
 
-      pools.add(b.build());
-    }
+      for (CacheDirective directive : directivesById.values()) {
+        CacheDirectiveInfo info = directive.toInfo();
+        CacheDirectiveInfoProto.Builder b = CacheDirectiveInfoProto.newBuilder()
+                .setId(info.getId());
 
-    for (CacheDirective directive : directivesById.values()) {
-      CacheDirectiveInfo info = directive.toInfo();
-      CacheDirectiveInfoProto.Builder b = CacheDirectiveInfoProto.newBuilder()
-          .setId(info.getId());
+        if (info.getPath() != null) {
+          b.setPath(info.getPath().toUri().getPath());
+        }
 
-      if (info.getPath() != null) {
-        b.setPath(info.getPath().toUri().getPath());
+        if (info.getReplication() != null) {
+          b.setReplication(info.getReplication());
+        }
+
+        if (info.getPool() != null) {
+          b.setPool(info.getPool());
+        }
+
+        Expiration expiry = info.getExpiration();
+        if (expiry != null) {
+          assert (!expiry.isRelative());
+          b.setExpiration(PBHelperClient.convert(expiry));
+        }
+
+        directives.add(b.build());
       }
-
-      if (info.getReplication() != null) {
-        b.setReplication(info.getReplication());
-      }
-
-      if (info.getPool() != null) {
-        b.setPool(info.getPool());
-      }
-
-      Expiration expiry = info.getExpiration();
-      if (expiry != null) {
-        assert (!expiry.isRelative());
-        b.setExpiration(PBHelperClient.convert(expiry));
-      }
-
-      directives.add(b.build());
+    } finally {
+      cmLock.readLock().unlock();
     }
     CacheManagerSection s = CacheManagerSection.newBuilder()
         .setNextDirectiveId(nextDirectiveId).setNumPools(pools.size())
@@ -1126,48 +1231,59 @@ public class CacheManager {
    * @throws IOException
    */
   public void loadStateCompat(DataInput in) throws IOException {
-    serializerCompat.load(in);
+    cmLock.writeLock().lock();
+    try {
+      serializerCompat.load(in);
+    } finally {
+      cmLock.writeLock().unlock();
+    }
   }
 
   public void loadState(PersistState s) throws IOException {
-    nextDirectiveId = s.section.getNextDirectiveId();
-    for (CachePoolInfoProto p : s.pools) {
-      CachePoolInfo info = new CachePoolInfo(p.getPoolName());
-      if (p.hasOwnerName())
-        info.setOwnerName(p.getOwnerName());
+    cmLock.writeLock().lock();
+    try {
+      nextDirectiveId = s.section.getNextDirectiveId();
+      for (CachePoolInfoProto p : s.pools) {
+        CachePoolInfo info = new CachePoolInfo(p.getPoolName());
+        if (p.hasOwnerName())
+          info.setOwnerName(p.getOwnerName());
 
-      if (p.hasGroupName())
-        info.setGroupName(p.getGroupName());
+        if (p.hasGroupName())
+          info.setGroupName(p.getGroupName());
 
-      if (p.hasMode())
-        info.setMode(new FsPermission((short) p.getMode()));
+        if (p.hasMode())
+          info.setMode(new FsPermission((short) p.getMode()));
 
-      if (p.hasDefaultReplication()) {
-        info.setDefaultReplication((short) p.getDefaultReplication());
+        if (p.hasDefaultReplication()) {
+          info.setDefaultReplication((short) p.getDefaultReplication());
+        }
+
+        if (p.hasLimit())
+          info.setLimit(p.getLimit());
+
+        if (p.hasMaxRelativeExpiry()) {
+          info.setMaxRelativeExpiryMs(p.getMaxRelativeExpiry());
+        }
+
+        addCachePool(info);
       }
 
-      if (p.hasLimit())
-        info.setLimit(p.getLimit());
-
-      if (p.hasMaxRelativeExpiry()) {
-        info.setMaxRelativeExpiryMs(p.getMaxRelativeExpiry());
+      for (CacheDirectiveInfoProto p : s.directives) {
+        // Get pool reference by looking it up in the map
+        final String poolName = p.getPool();
+        CacheDirective directive = new CacheDirective(p.getId(), new Path(
+                p.getPath()).toUri().getPath(), (short) p.getReplication(), p
+                .getExpiration().getMillis());
+        addCacheDirective(poolName, directive);
       }
-
-      addCachePool(info);
-    }
-
-    for (CacheDirectiveInfoProto p : s.directives) {
-      // Get pool reference by looking it up in the map
-      final String poolName = p.getPool();
-      CacheDirective directive = new CacheDirective(p.getId(), new Path(
-          p.getPath()).toUri().getPath(), (short) p.getReplication(), p
-          .getExpiration().getMillis());
-      addCacheDirective(poolName, directive);
+    } finally {
+      cmLock.writeLock().unlock();
     }
   }
 
   private void addCacheDirective(final String poolName,
       final CacheDirective directive) throws IOException {
+    assert hasWriteLock();
     CachePool pool = cachePools.get(poolName);
     if (pool == null) {
       throw new IOException("Directive refers to pool " + poolName
@@ -1189,12 +1305,14 @@ public class CacheManager {
 
   private final class SerializerCompat {
     private void save(DataOutputStream out, String sdPath) throws IOException {
+      assert hasReadLock();
       out.writeLong(nextDirectiveId);
       savePools(out, sdPath);
       saveDirectives(out, sdPath);
     }
 
     private void load(DataInput in) throws IOException {
+      assert hasWriteLock();
       nextDirectiveId = in.readLong();
       // pools need to be loaded first since directives point to their parent pool
       loadPools(in);
@@ -1206,6 +1324,7 @@ public class CacheManager {
      */
     private void savePools(DataOutputStream out,
         String sdPath) throws IOException {
+      assert hasReadLock();
       StartupProgress prog = NameNode.getStartupProgress();
       Step step = new Step(StepType.CACHE_POOLS, sdPath);
       prog.beginStep(Phase.SAVING_CHECKPOINT, step);
@@ -1224,6 +1343,7 @@ public class CacheManager {
      */
     private void saveDirectives(DataOutputStream out, String sdPath)
         throws IOException {
+      assert hasReadLock();
       StartupProgress prog = NameNode.getStartupProgress();
       Step step = new Step(StepType.CACHE_ENTRIES, sdPath);
       prog.beginStep(Phase.SAVING_CHECKPOINT, step);
@@ -1309,5 +1429,33 @@ public class CacheManager {
     } finally {
       crmLock.unlock();
     }
+  }
+
+  public FSNamesystem getNamesystem() {
+    return namesystem;
+  }
+
+  public boolean hasReadLock() {
+    return cmLock.getReadHoldCount() > 0 || hasWriteLock();
+  }
+
+  public boolean hasWriteLock() {
+    return cmLock.isWriteLockedByCurrentThread();
+  }
+
+  public void writeLock() {
+    cmLock.writeLock().lock();
+  }
+
+  public void writeUnLock() {
+    cmLock.writeLock().unlock();
+  }
+
+  public void readLock() {
+    cmLock.readLock().lock();
+  }
+
+  public void readUnLock() {
+    cmLock.readLock().unlock();
   }
 }

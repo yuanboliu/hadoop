@@ -20,6 +20,7 @@ package org.apache.hadoop.hdfs.server.blockmanagement;
 import static org.apache.hadoop.util.ExitUtil.terminate;
 
 import java.io.Closeable;
+import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -43,11 +44,11 @@ import org.apache.hadoop.hdfs.server.namenode.CacheManager;
 import org.apache.hadoop.hdfs.server.namenode.CachePool;
 import org.apache.hadoop.hdfs.server.namenode.CachedBlock;
 import org.apache.hadoop.hdfs.server.namenode.FSDirectory;
-import org.apache.hadoop.hdfs.server.namenode.FSDirectory.DirOp;
 import org.apache.hadoop.hdfs.server.namenode.FSNamesystem;
 import org.apache.hadoop.hdfs.server.namenode.INode;
 import org.apache.hadoop.hdfs.server.namenode.INodeDirectory;
 import org.apache.hadoop.hdfs.server.namenode.INodeFile;
+import org.apache.hadoop.hdfs.server.namenode.INodesInPath;
 import org.apache.hadoop.hdfs.server.namenode.snapshot.Snapshot;
 import org.apache.hadoop.hdfs.util.ReadOnlyList;
 import org.apache.hadoop.util.GSet;
@@ -88,7 +89,7 @@ public class CacheReplicationMonitor extends Thread implements Closeable {
   private final long intervalMs;
 
   /**
-   * The CacheReplicationMonitor (CRM) lock. Used to synchronize starting and
+   * The CacheReplicationMonitor(CRM) lock. Used to synchronize starting and
    * waiting for rescan operations.
    */
   private final ReentrantLock lock;
@@ -284,29 +285,31 @@ public class CacheReplicationMonitor extends Thread implements Closeable {
   private void rescan() throws InterruptedException {
     scannedDirectives = 0;
     scannedBlocks = 0;
-    try {
-      namesystem.writeLock();
-      try {
-        lock.lock();
-        if (shutdown) {
-          throw new InterruptedException("CacheReplicationMonitor was " +
-              "shut down.");
-        }
-        curScanCount = completedScanCount + 1;
-      } finally {
-        lock.unlock();
-      }
 
+    lock.lock();
+    try {
+      if (shutdown) {
+        throw new InterruptedException("CacheReplicationMonitor was " +
+            "shut down.");
+      }
+      curScanCount = completedScanCount + 1;
+    } finally {
+      lock.unlock();
+    }
+
+    cacheManager.writeLock();
+    try {
       resetStatistics();
       rescanCacheDirectives();
       rescanCachedBlockMap();
       blockManager.getDatanodeManager().resetLastCachingDirectiveSentTime();
     } finally {
-      namesystem.writeUnlock();
+      cacheManager.writeUnLock();
     }
   }
 
   private void resetStatistics() {
+    assert cacheManager.hasWriteLock();
     for (CachePool pool: cacheManager.getCachePools()) {
       pool.resetStatistics();
     }
@@ -327,36 +330,38 @@ public class CacheReplicationMonitor extends Thread implements Closeable {
       // Skip processing this entry if it has expired
       if (directive.getExpiryTime() > 0 && directive.getExpiryTime() <= now) {
         LOG.debug("Directive {}: the directive expired at {} (now = {})",
-             directive.getId(), directive.getExpiryTime(), now);
+            directive.getId(), directive.getExpiryTime(), now);
         continue;
       }
       String path = directive.getPath();
-      INode node;
-      try {
-        node = fsDir.getINode(path, DirOp.READ);
+      try (INodesInPath iip =
+               fsDir.lockFullInodePath(path, FSDirectory.LockMode.READ)) {
+        INode node = iip.getLastExistingInode();
+        if (node == null) {
+          LOG.debug("Directive {}: No inode found at {}", directive.getId(),
+              path);
+        } else if (node.isDirectory()) {
+          INodeDirectory dir = node.asDirectory();
+          ReadOnlyList<INode> children = dir
+              .getChildrenList(Snapshot.CURRENT_STATE_ID);
+          // TODO(sammichen): Handle child is deleted during access case
+          for (INode child : children) {
+            if (child.isFile()) {
+              rescanFile(directive, child.asFile());
+            }
+          }
+        } else if (node.isFile()) {
+          rescanFile(directive, node.asFile());
+        } else {
+          LOG.debug("Directive {}: ignoring non-directive, non-file inode {} ",
+              directive.getId(), node);
+        }
+      } catch (FileNotFoundException fileNotFoundException) {
+        fileNotFoundException.printStackTrace();
       } catch (IOException e) {
         // We don't cache through symlinks or invalid paths
         LOG.debug("Directive {}: Failed to resolve path {} ({})",
             directive.getId(), path, e.getMessage());
-        continue;
-      }
-      if (node == null)  {
-        LOG.debug("Directive {}: No inode found at {}", directive.getId(),
-            path);
-      } else if (node.isDirectory()) {
-        INodeDirectory dir = node.asDirectory();
-        ReadOnlyList<INode> children = dir
-            .getChildrenList(Snapshot.CURRENT_STATE_ID);
-        for (INode child : children) {
-          if (child.isFile()) {
-            rescanFile(directive, child.asFile());
-          }
-        }
-      } else if (node.isFile()) {
-        rescanFile(directive, node.asFile());
-      } else {
-        LOG.debug("Directive {}: ignoring non-directive, non-file inode {} ",
-            directive.getId(), node);
       }
     }
   }
@@ -405,8 +410,10 @@ public class CacheReplicationMonitor extends Thread implements Closeable {
       Block block = new Block(blockInfo.getBlockId());
       CachedBlock ncblock = new CachedBlock(block.getBlockId(),
           directive.getReplication(), mark);
+      assert cacheManager.hasReadLock();
       CachedBlock ocblock = cachedBlocks.get(ncblock);
       if (ocblock == null) {
+        assert cacheManager.hasWriteLock();
         cachedBlocks.put(ncblock);
         ocblock = ncblock;
       } else {
@@ -518,6 +525,8 @@ public class CacheReplicationMonitor extends Thread implements Closeable {
         }
       }
     }
+
+    assert cacheManager.hasReadLock();
     for (Iterator<CachedBlock> cbIter = cachedBlocks.iterator();
         cbIter.hasNext(); ) {
       scannedBlocks++;

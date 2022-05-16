@@ -74,7 +74,7 @@ class FSDirStatAndListingOp {
       }
     }
     try (INodesInPath lockedInodePath =
-            fsd.lockFullInodePath(pc, srcArg, FSDirectory.LockMode.READ)) {
+            fsd.lockInodePath(pc, srcArg, DirOp.READ, FSDirectory.LockMode.READ)) {
       if (fsd.isPermissionEnabled()) {
         if (iip.getLastINode() != null && iip.getLastINode().isDirectory()) {
           fsd.checkPathAccess(pc, iip, FsAction.READ_EXECUTE);
@@ -161,7 +161,7 @@ class FSDirStatAndListingOp {
         "Negative length is not supported. File: " + src);
     BlockManager bm = fsd.getBlockManager();
     try (INodesInPath iip =
-             fsd.lockFullInodePath(pc, src, FSDirectory.LockMode.READ)) {
+            fsd.lockInodePath(pc, src, DirOp.READ, FSDirectory.LockMode.READ)) {
       src = iip.getPath();
       final INodeFile inode = INodeFile.valueOf(iip.getLastINode(), src);
       if (fsd.isPermissionEnabled()) {
@@ -229,7 +229,7 @@ class FSDirStatAndListingOp {
       return getSnapshotsListing(fsd, iip, startAfter);
     }
     final int snapshot = iip.getPathSnapshotId();
-    final INode targetNode = iip.getLastINode();
+    final INode targetNode = iip.getInodeOrNull();
     if (targetNode == null) {
       return null;
     }

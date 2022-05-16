@@ -740,15 +740,14 @@ public class TestCacheDirectives {
   private static void waitForCachedBlocks(NameNode nn,
       final int expectedCachedBlocks, final int expectedCachedReplicas,
       final String logString) throws Exception {
-    final FSNamesystem namesystem = nn.getNamesystem();
-    final CacheManager cacheManager = namesystem.getCacheManager();
+    final CacheManager cacheManager = nn.getNamesystem().getCacheManager();
     LOG.info("Waiting for " + expectedCachedBlocks + " blocks with " +
              expectedCachedReplicas + " replicas.");
     GenericTestUtils.waitFor(new Supplier<Boolean>() {
       @Override
       public Boolean get() {
         int numCachedBlocks = 0, numCachedReplicas = 0;
-        namesystem.readLock();
+        cacheManager.readLock();
         try {
           GSet<CachedBlock, CachedBlock> cachedBlocks =
               cacheManager.getCachedBlocks();
@@ -761,7 +760,7 @@ public class TestCacheDirectives {
             }
           }
         } finally {
-          namesystem.readUnlock();
+          cacheManager.readUnLock();
         }
 
         LOG.info(logString + " cached blocks: have " + numCachedBlocks +

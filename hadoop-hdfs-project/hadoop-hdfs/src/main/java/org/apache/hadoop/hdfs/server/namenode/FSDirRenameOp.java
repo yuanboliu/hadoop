@@ -245,20 +245,14 @@ class FSDirRenameOp {
       FSDirectory fsd, FSPermissionChecker pc, final String srcArg,
       final String dstArg, boolean logRetryCache, Options.Rename... options)
       throws IOException {
-    String src = srcArg;
-    String dst = dstArg;
     if (NameNode.stateChangeLog.isDebugEnabled()) {
       NameNode.stateChangeLog.debug("DIR* NameSystem.renameTo: with options -" +
-          " " + src + " to " + dst);
+          " " + srcArg + " to " + dstArg);
     }
 
-    try (InodePathPair inodePathPair =
-        fsd.lockInodePathPair(src, FSDirectory.LockMode.WRITE, dst, FSDirectory.LockMode.READ)) {
-
-      BlocksMapUpdateInfo collectedBlocks = new BlocksMapUpdateInfo();
-      // returns resolved path
-      return renameTo(fsd, pc, src, dst, collectedBlocks, logRetryCache, options);
-    }
+    BlocksMapUpdateInfo collectedBlocks = new BlocksMapUpdateInfo();
+    // returns resolved path
+    return renameTo(fsd, pc, srcArg, dstArg, collectedBlocks, logRetryCache, options);
   }
 
   /**
@@ -269,53 +263,59 @@ class FSDirRenameOp {
       String src, String dst, BlocksMapUpdateInfo collectedBlocks,
       boolean logRetryCache,Options.Rename... options)
           throws IOException {
-    final INodesInPath srcIIP = fsd.resolvePath(pc, src, DirOp.WRITE_LINK);
-    final INodesInPath dstIIP = fsd.resolvePath(pc, dst, DirOp.CREATE_LINK);
-    if (fsd.isPermissionEnabled()) {
-      boolean renameToTrash = false;
-      if (null != options &&
-          Arrays.asList(options).
-          contains(Options.Rename.TO_TRASH)) {
-        renameToTrash = true;
+    try (InodePathPair inodePathPair =
+            fsd.lockInodePathPair(src, FSDirectory.LockMode.WRITE, dst, FSDirectory.LockMode.READ)) {
+      // Rename does not operate on link targets
+      // Do not resolveLink when checking permissions of src and dst
+      // TODO(runzhiwang): remove resolvePath
+      INodesInPath srcIIP = inodePathPair.getFirst();
+      INodesInPath dstIIP = inodePathPair.getSecond();
+      if (fsd.isPermissionEnabled()) {
+        boolean renameToTrash = false;
+        if (null != options &&
+                Arrays.asList(options).
+                        contains(Options.Rename.TO_TRASH)) {
+          renameToTrash = true;
+        }
+
+        if (renameToTrash) {
+          // if destination is the trash directory,
+          // besides the permission check on "rename"
+          // we need to enforce the check for "delete"
+          // otherwise, it would expose a
+          // security hole that stuff moved to trash
+          // will be deleted by superuser
+          fsd.checkPermission(pc, srcIIP, false, null, FsAction.WRITE, null,
+                  FsAction.ALL, true);
+        } else {
+          // Rename does not operate on link targets
+          // Do not resolveLink when checking permissions of src and dst
+          // Check write access to parent of src
+          fsd.checkPermission(pc, srcIIP, false, null, FsAction.WRITE, null,
+                  null, false);
+        }
+        // Check write access to ancestor of dst
+        fsd.checkPermission(pc, dstIIP, false, FsAction.WRITE, null, null, null,
+                false);
       }
 
-      if(renameToTrash) {
-        // if destination is the trash directory,
-        // besides the permission check on "rename"
-        // we need to enforce the check for "delete"
-        // otherwise, it would expose a
-        // security hole that stuff moved to trash
-        // will be deleted by superuser
-        fsd.checkPermission(pc, srcIIP, false, null, FsAction.WRITE, null,
-            FsAction.ALL, true);
-      } else {
-        // Rename does not operate on link targets
-        // Do not resolveLink when checking permissions of src and dst
-        // Check write access to parent of src
-        fsd.checkPermission(pc, srcIIP, false, null, FsAction.WRITE, null,
-            null, false);
+      if (NameNode.stateChangeLog.isDebugEnabled()) {
+        NameNode.stateChangeLog.debug("DIR* FSDirectory.renameTo: " + src + " to "
+                + dst);
       }
-      // Check write access to ancestor of dst
-      fsd.checkPermission(pc, dstIIP, false, FsAction.WRITE, null, null, null,
-          false);
-    }
+      final long mtime = Time.now();
+      final RenameResult result;
 
-    if (NameNode.stateChangeLog.isDebugEnabled()) {
-      NameNode.stateChangeLog.debug("DIR* FSDirectory.renameTo: " + src + " to "
-          + dst);
-    }
-    final long mtime = Time.now();
-    final RenameResult result;
+      result = unprotectedRenameTo(fsd, srcIIP, dstIIP, mtime,
+              collectedBlocks, options);
+      if (result.filesDeleted) {
+        FSDirDeleteOp.incrDeletedFileCount(1);
+      }
 
-    result = unprotectedRenameTo(fsd, srcIIP, dstIIP, mtime,
-        collectedBlocks, options);
-    if (result.filesDeleted) {
-     FSDirDeleteOp.incrDeletedFileCount(1);
+      fsd.getEditLog().logRename(
+              srcIIP.getPath(), dstIIP.getPath(), mtime, logRetryCache, options);
+      return result;
     }
-
-    fsd.getEditLog().logRename(
-        srcIIP.getPath(), dstIIP.getPath(), mtime, logRetryCache, options);
-    return result;
   }
 
   /**
@@ -338,8 +338,8 @@ class FSDirRenameOp {
     try (InodePathPair inodePathPair =
         fsd.lockInodePathPair(src, FSDirectory.LockMode.WRITE, dst, FSDirectory.LockMode.READ)) {
       BlocksMapUpdateInfo collectedBlocks = new BlocksMapUpdateInfo();
-      final INodesInPath srcIIP = fsd.getINodesInPath(src, DirOp.WRITE_LINK);
-      final INodesInPath dstIIP = fsd.getINodesInPath(dst, DirOp.WRITE_LINK);
+      INodesInPath srcIIP = inodePathPair.getFirst();
+      INodesInPath dstIIP = inodePathPair.getSecond();
       unprotectedRenameTo(fsd, srcIIP, dstIIP, timestamp,
           collectedBlocks, options);
       if (!collectedBlocks.getToDeleteList().isEmpty()) {
