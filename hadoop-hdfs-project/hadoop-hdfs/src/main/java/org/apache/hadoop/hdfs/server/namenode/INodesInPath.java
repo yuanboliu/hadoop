@@ -423,6 +423,10 @@ public class INodesInPath implements Closeable {
     return path[path.length - 1];
   }
 
+  byte[] getLocalNameByInodesSize() {
+    return path[mLockList.mInodes.size()];
+  }
+
   public byte[][] getPathComponents() {
     return path;
   }
@@ -633,6 +637,14 @@ public class INodesInPath implements Closeable {
       throw new FileNotFoundException(ExceptionMessage.PATH_DOES_NOT_EXIST.getMessage(getPath()));
     }
     return inode;
+  }
+
+  /**
+   * @return the target inode
+   */
+  public synchronized INode getLastLockListInode() {
+    List<INode> inodeList = mLockList.getInodes();
+    return inodeList.get(length() - 1);
   }
 
   /**
