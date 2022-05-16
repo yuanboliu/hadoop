@@ -330,7 +330,6 @@ public class EncryptionZoneManager {
    * Called while holding the FSDirectory lock.
    */
   void removeEncryptionZone(Long inodeId) {
-    assert dir.hasWriteLock();
     if (hasCreatedEncryptionZone()) {
       if (encryptionZones.remove(inodeId) == null
           || !getReencryptionStatus().hasRunningZone(inodeId)) {
