@@ -102,7 +102,7 @@ class FSDirDeleteOp {
       throw new InvalidPathException(src);
     }
 
-    try(INodesInPath iip = fsd.lockInodePath(pc, src, FSDirectory.LockMode.WRITE)) {
+    try (INodesInPath iip = fsd.lockInodePath(pc, src, FSDirectory.LockMode.WRITE)) {
       if (fsd.isPermissionEnabled()) {
         fsd.checkPermission(pc, iip, false, null, FsAction.WRITE, null,
             FsAction.ALL, true);

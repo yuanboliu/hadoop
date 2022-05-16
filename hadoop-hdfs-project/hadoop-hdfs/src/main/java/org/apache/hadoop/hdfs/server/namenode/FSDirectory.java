@@ -2102,8 +2102,7 @@ public class FSDirectory implements Closeable {
           throws InvalidPathException {
     TraversalResult traversalResult =
             traverseToInode(INode.getPathComponents(path), lockMode, null);
-    return new MutableLockedInodePath(path,
-            traversalResult.getInodeLockList(), lockMode);
+    return new MutableLockedInodePath(path, traversalResult.getInodeLockList(), lockMode);
   }
 
   /**
