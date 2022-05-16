@@ -2078,6 +2078,9 @@ public class FSDirectory implements Closeable {
   INodeAttributes getAttributes(INodesInPath iip)
       throws IOException {
     INode node = iip.getLastINode();
+    if (node == null) {
+      throw new FileNotFoundException("can not find " + iip.getPath());
+    }
     int snapshot = iip.getPathSnapshotId();
     INodeAttributes nodeAttrs = node.getSnapshotINode(snapshot);
     UserGroupInformation ugi = NameNode.getRemoteUser();

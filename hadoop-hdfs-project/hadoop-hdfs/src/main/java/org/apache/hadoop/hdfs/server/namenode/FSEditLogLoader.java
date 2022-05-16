@@ -988,11 +988,12 @@ public class FSEditLogLoader {
     }
     case OP_SET_XATTR: {
       SetXAttrOp setXAttrOp = (SetXAttrOp) op;
-      INodesInPath iip = fsDir.getINodesInPath(setXAttrOp.src, DirOp.WRITE);
-      FSDirXAttrOp.unprotectedSetXAttrs(fsDir, iip,
-                                        setXAttrOp.xAttrs,
-                                        EnumSet.of(XAttrSetFlag.CREATE,
-                                                   XAttrSetFlag.REPLACE));
+      try (INodesInPath iip = fsDir.lockInodePath(setXAttrOp.src, DirOp.WRITE, FSDirectory.LockMode.WRITE)) {
+        FSDirXAttrOp.unprotectedSetXAttrs(fsDir, iip,
+            setXAttrOp.xAttrs,
+            EnumSet.of(XAttrSetFlag.CREATE,
+                XAttrSetFlag.REPLACE));
+      }
       if (toAddRetryCache) {
         fsNamesys.addCacheEntry(setXAttrOp.rpcClientId, setXAttrOp.rpcCallId);
       }
@@ -1000,9 +1001,10 @@ public class FSEditLogLoader {
     }
     case OP_REMOVE_XATTR: {
       RemoveXAttrOp removeXAttrOp = (RemoveXAttrOp) op;
-      INodesInPath iip = fsDir.getINodesInPath(removeXAttrOp.src, DirOp.WRITE);
-      FSDirXAttrOp.unprotectedRemoveXAttrs(fsDir, iip,
-                                           removeXAttrOp.xAttrs);
+      try (INodesInPath iip = fsDir.lockInodePath(removeXAttrOp.src, DirOp.WRITE, FSDirectory.LockMode.WRITE)) {
+        FSDirXAttrOp.unprotectedRemoveXAttrs(fsDir, iip,
+            removeXAttrOp.xAttrs);
+      }
       if (toAddRetryCache) {
         fsNamesys.addCacheEntry(removeXAttrOp.rpcClientId,
             removeXAttrOp.rpcCallId);
