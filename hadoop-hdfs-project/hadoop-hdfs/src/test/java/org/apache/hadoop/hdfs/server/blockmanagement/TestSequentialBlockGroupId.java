@@ -21,6 +21,7 @@ import static org.apache.hadoop.hdfs.server.common.HdfsServerConstants.BLOCK_GRO
 import static org.apache.hadoop.hdfs.server.common.HdfsServerConstants.MAX_BLOCKS_IN_GROUP;
 import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.CoreMatchers.not;
+import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertThat;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.spy;
@@ -229,5 +230,20 @@ public class TestSequentialBlockGroupId {
         assertThat("BlockGrpId mismatches!", blockId1, is(not(blockId2)));
       }
     }
+  }
+
+  @Test
+  public void testSkipTo() {
+    long currentValue = 5L;
+    long newValue = 6L;
+
+    // new value is greater than current value
+    blockGrpIdGenerator.setCurrentValue(currentValue);
+    blockGrpIdGenerator.skipTo(newValue);
+    assertEquals(newValue, blockGrpIdGenerator.getCurrentValue());
+
+    // new value is smaller than current value
+    blockGrpIdGenerator.skipTo(newValue - 1);
+    assertEquals(newValue, blockGrpIdGenerator.getCurrentValue());
   }
 }
