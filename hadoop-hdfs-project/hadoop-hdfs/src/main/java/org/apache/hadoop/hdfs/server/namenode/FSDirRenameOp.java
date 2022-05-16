@@ -554,9 +554,8 @@ class FSDirRenameOp {
       throw new FileAlreadyExistsException(error);
     }
     if (dstInode.isDirectory()) {
-      final ReadOnlyList<INode> children = dstInode.asDirectory()
-          .getChildrenList(Snapshot.CURRENT_STATE_ID);
-      if (!children.isEmpty()) {
+      int childrenSize = dstInode.asDirectory().getChildrenNum(Snapshot.CURRENT_STATE_ID);
+      if (childrenSize != 0) {
         error = "rename destination directory is not empty: " + dst;
         NameNode.stateChangeLog.warn("DIR* FSDirectory.unprotectedRenameTo: "
             + error);

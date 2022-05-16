@@ -20,10 +20,12 @@ package org.apache.hadoop.hdfs.server.namenode;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Stack;
 
 import com.google.common.base.Preconditions;
+import org.apache.hadoop.hdfs.server.namenode.snapshot.Snapshot;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.apache.hadoop.fs.FSExceptionMessages;
@@ -338,8 +340,8 @@ public class FSPermissionChecker implements AccessControlEnforcer {
     for(directories.push(inode.asDirectory()); !directories.isEmpty(); ) {
       INodeDirectory d = directories.pop();
       int level = levels.pop();
-      ReadOnlyList<INode> cList = d.getChildrenList(snapshotId);
-      if (!(cList.isEmpty() && ignoreEmptyDir)) {
+      int childrenNum = d.getChildrenNum(snapshotId);
+      if (!(childrenNum == 0 && ignoreEmptyDir)) {
         //TODO have to figure this out with inodeattribute provider
         INodeAttributes inodeAttr =
             getINodeAttrs(components, pathIdx, d, snapshotId);
@@ -358,7 +360,9 @@ public class FSPermissionChecker implements AccessControlEnforcer {
         }
 
         if (inodeAttr.getFsPermission().getStickyBit()) {
-          for (INode child : cList) {
+          Iterator<INode> childrenIter = d.getChildrenIterator(Snapshot.CURRENT_STATE_ID);
+          while (childrenIter.hasNext()) {
+            INode child = childrenIter.next();
             INodeAttributes childInodeAttr =
                 getINodeAttrs(components, pathIdx, child, snapshotId);
             if (isStickyBitViolated(inodeAttr, childInodeAttr)) {
@@ -381,7 +385,9 @@ public class FSPermissionChecker implements AccessControlEnforcer {
         }
       }
 
-      for(INode child : cList) {
+      Iterator<INode> childrenIter = d.getChildrenIterator(Snapshot.CURRENT_STATE_ID);
+      while (childrenIter.hasNext()) {
+        INode child = childrenIter.next();
         if (child.isDirectory()) {
           directories.push(child.asDirectory());
           levels.push(level + 1);

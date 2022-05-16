@@ -390,9 +390,10 @@ public class DirectorySnapshottableFeature extends DirectoryWithSnapshotFeature 
           diffReport.addDirDiff(dir, relativePath, diff);
         }
       }
-      ReadOnlyList<INode> children = dir.getChildrenList(earlierSnapshot
+      Iterator<INode> childrenIter = dir.getChildrenIterator(earlierSnapshot
           .getId());
-      for (INode child : children) {
+      while (childrenIter.hasNext()) {
+        INode child = childrenIter.next();
         final byte[] name = child.getLocalNameBytes();
         boolean toProcess = !diff.containsDeleted(name);
         if (!toProcess && child instanceof INodeReference.WithName) {
@@ -465,9 +466,10 @@ public class DirectorySnapshottableFeature extends DirectoryWithSnapshotFeature 
         }
       }
 
-      ReadOnlyList<INode> children = dir.getChildrenList(earlier.getId());
       boolean iterate = false;
-      for (INode child : children) {
+      Iterator<INode> childrenIter = dir.getChildrenIterator(earlier.getId());
+      while (childrenIter.hasNext()) {
+        INode child = childrenIter.next();
         final byte[] name = child.getLocalNameBytes();
         if (!processFlag && !iterate && !Arrays.equals(resume[level], name)) {
           continue;

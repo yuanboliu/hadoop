@@ -33,6 +33,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.HashMap;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
@@ -1325,7 +1326,7 @@ public class FSImageFormat {
 
     /**
      * Save children INodes.
-     * @param children The list of children INodes
+     * @param current The current node
      * @param out The DataOutputStream to write
      * @param inSnapshot Whether the parent directory or its ancestor is in
      *                   the deleted list of some snapshot (caused by rename or
@@ -1333,13 +1334,15 @@ public class FSImageFormat {
      * @param counter Counter to increment for namenode startup progress
      * @return Number of children that are directory
      */
-    private int saveChildren(ReadOnlyList<INode> children,
+    private int saveChildren(INodeDirectory current,
         DataOutputStream out, boolean inSnapshot, Counter counter)
         throws IOException {
       // Write normal children INode.
-      out.writeInt(children.size());
+      out.writeInt(current.getChildrenNum(Snapshot.CURRENT_STATE_ID));
       int dirNum = 0;
-      for(INode child : children) {
+      Iterator<INode> childrenIter = current.getChildrenIterator(Snapshot.CURRENT_STATE_ID);
+      while (childrenIter.hasNext()) {
+        INode child = childrenIter.next();
         // print all children first
         // TODO: for HDFS-5428, we cannot change the format/content of fsimage
         // here, thus even if the parent directory is in snapshot, we still
@@ -1382,8 +1385,6 @@ public class FSImageFormat {
         return;
       }
 
-      final ReadOnlyList<INode> children = current
-          .getChildrenList(Snapshot.CURRENT_STATE_ID);
       int dirNum = 0;
       List<INodeDirectory> snapshotDirs = null;
       DirectoryWithSnapshotFeature sf = current.getDirectoryWithSnapshotFeature();
@@ -1402,7 +1403,7 @@ public class FSImageFormat {
       }
 
       // 3. Write children INode
-      dirNum += saveChildren(children, out, inSnapshot, counter);
+      dirNum += saveChildren(current, out, inSnapshot, counter);
 
       // 4. Write DirectoryDiff lists, if there is any.
       SnapshotFSImageFormat.saveDirectoryDiffList(current, out, referenceMap);
@@ -1410,7 +1411,9 @@ public class FSImageFormat {
       // Write sub-tree of sub-directories, including possible snapshots of
       // deleted sub-directories
       out.writeInt(dirNum); // the number of sub-directories
-      for(INode child : children) {
+      Iterator<INode> childrenIter = current.getChildrenIterator(Snapshot.CURRENT_STATE_ID);
+      while (childrenIter.hasNext()) {
+        INode child = childrenIter.next();
         if(!child.isDirectory()) {
           continue;
         }

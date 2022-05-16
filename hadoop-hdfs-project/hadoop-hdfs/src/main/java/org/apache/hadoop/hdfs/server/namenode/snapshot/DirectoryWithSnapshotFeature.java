@@ -144,7 +144,7 @@ public class DirectoryWithSnapshotFeature implements INode.Feature {
     public DirectoryDiff(int snapshotId, INodeDirectory dir,
         ChildrenDiff diff) {
       super(snapshotId, null, null);
-      this.childrenSize = dir.getChildrenList(Snapshot.CURRENT_STATE_ID).size();
+      this.childrenSize = dir.getChildrenNum(Snapshot.CURRENT_STATE_ID);
       this.diff = diff;
     }
     /** Constructor used by FSImage loading */
@@ -423,7 +423,9 @@ public class DirectoryWithSnapshotFeature implements INode.Feature {
           priorDiff.diff.destroyCreatedList(reclaimContext, dir);
         }
       }
-      for (INode child : inode.asDirectory().getChildrenList(prior)) {
+      Iterator<INode> childrenIter = inode.asDirectory().getChildrenIterator(prior);
+      while (childrenIter.hasNext()) {
+        INode child = childrenIter.next();
         if (excludedNodes != null && excludedNodes.containsKey(child)) {
           continue;
         }
@@ -479,7 +481,9 @@ public class DirectoryWithSnapshotFeature implements INode.Feature {
           }
         }
 
-        for (INode child : dir.getChildrenList(prior)) {
+        Iterator<INode> childrenIter = dir.getChildrenIterator(prior);
+        while (childrenIter.hasNext()) {
+          INode child = childrenIter.next();
           if (priorChildrenDiff != null && priorChildrenDiff.getDeleted(
               child.getLocalNameBytes()) != null) {
             continue;

@@ -508,13 +508,13 @@ public class CacheManager {
       requestedBytes = file.computeFileSize();
     } else if (node.isDirectory()) {
       INodeDirectory dir = node.asDirectory();
-      ReadOnlyList<INode> children = dir
-          .getChildrenList(Snapshot.CURRENT_STATE_ID);
-      requestedFiles = children.size();
-      for (INode child : children) {
+      Iterator<INode> childrenIter = dir.getChildrenIterator(Snapshot.CURRENT_STATE_ID);
+      while (childrenIter.hasNext()) {
+        INode child = childrenIter.next();
         if (child.isFile()) {
           requestedBytes += child.asFile().computeFileSize();
         }
+        requestedFiles++;
       }
     }
     return new CacheDirectiveStats.Builder()

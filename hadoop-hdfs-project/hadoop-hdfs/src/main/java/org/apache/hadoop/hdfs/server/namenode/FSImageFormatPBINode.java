@@ -523,9 +523,9 @@ public final class FSImageFormatPBINode {
     void serializeINodeDirectorySection(OutputStream out) throws IOException {
       FSDirectory dir = fsn.getFSDirectory();
       Iterator<INodeWithAdditionalFields> iter = dir.getINodeMap()
-          .getMapIterator();
+              .getMapIterator();
       final ArrayList<INodeReference> refList = parent.getSaverContext()
-          .getRefList();
+              .getRefList();
       int i = 0;
       while (iter.hasNext()) {
         INodeWithAdditionalFields n = iter.next();
@@ -533,32 +533,32 @@ public final class FSImageFormatPBINode {
           continue;
         }
 
-        ReadOnlyList<INode> children = n.asDirectory().getChildrenList(
-            Snapshot.CURRENT_STATE_ID);
-        if (children.size() > 0) {
-          INodeDirectorySection.DirEntry.Builder b = INodeDirectorySection.
-              DirEntry.newBuilder().setParent(n.getId());
-          for (INode inode : children) {
-            // Error if the child inode doesn't exist in inodeMap
-            if (dir.getInode(inode.getId()) == null) {
-              FSImage.LOG.error(
-                  "FSImageFormatPBINode#serializeINodeDirectorySection: " +
-                      "Dangling child pointer found. Missing INode in " +
-                      "inodeMap: id=" + inode.getId() +
-                      "; path=" + inode.getFullPathName() +
-                      "; parent=" + (inode.getParent() == null ? "null" :
-                      inode.getParent().getFullPathName()));
-              ++numImageErrors;
-            }
-            if (!inode.isReference()) {
-              // Serialization must ensure that children are in order, related
-              // to HDFS-13693
-              b.addChildren(inode.getId());
-            } else {
-              refList.add(inode.asReference());
-              b.addRefChildren(refList.size() - 1);
-            }
+        INodeDirectorySection.DirEntry.Builder b = INodeDirectorySection.
+                DirEntry.newBuilder().setParent(n.getId());
+        Iterator<INode> childrenIter = n.asDirectory().getChildrenIterator(Snapshot.CURRENT_STATE_ID);
+        int childrenSize = 0;
+        while (childrenIter.hasNext()) {
+          childrenSize++;
+          INode inode = childrenIter.next();
+          // Error if the child inode doesn't exist in inodeMap
+          if (dir.getInode(inode.getId()) == null) {
+            FSImage.LOG.error(
+                    "FSImageFormatPBINode#serializeINodeDirectorySection: " +
+                            "Dangling child pointer found. Missing INode in " +
+                            "inodeMap: id=" + inode.getId() +
+                            "; path=" + inode.getFullPathName() +
+                            "; parent=" + (inode.getParent() == null ? "null" :
+                            inode.getParent().getFullPathName()));
+            ++numImageErrors;
           }
+          if (!inode.isReference()) {
+            b.addChildren(inode.getId());
+          } else {
+            refList.add(inode.asReference());
+            b.addRefChildren(refList.size() - 1);
+          }
+        }
+        if (childrenSize > 0) {
           INodeDirectorySection.DirEntry e = b.build();
           e.writeDelimitedTo(out);
         }
@@ -569,7 +569,7 @@ public final class FSImageFormatPBINode {
         }
       }
       parent.commitSection(summary,
-          FSImageFormatProtobuf.SectionName.INODE_DIR);
+              FSImageFormatProtobuf.SectionName.INODE_DIR);
     }
 
     void serializeINodeSection(OutputStream out) throws IOException {

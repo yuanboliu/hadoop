@@ -485,6 +485,16 @@ public class INodeDirectory extends INodeWithAdditionalFields
     return children == null ? 0 : children.size();
   }
 
+  // TODO(runzhiwang): Consider snapshot
+  public Iterator<INode> getChildrenIterator(final int snapshotId) {
+    DirectoryWithSnapshotFeature sf;
+    if (snapshotId == Snapshot.CURRENT_STATE_ID
+            || (sf = this.getDirectoryWithSnapshotFeature()) == null) {
+      return children == null ? Collections.emptyIterator() : children.iterator();
+    }
+    return sf.getChildrenList(this, snapshotId).iterator();
+  }
+
   private ReadOnlyList<INode> getCurrentChildrenList() {
     if (children != null) {
       List<INode> nodes = IteratorUtils.toList(children.iterator());
@@ -600,8 +610,9 @@ public class INodeDirectory extends INodeWithAdditionalFields
     // given snapshot
     if (sf != null && lastSnapshotId != Snapshot.CURRENT_STATE_ID
         && !(useCache && isQuotaSet())) {
-      ReadOnlyList<INode> childrenList = getChildrenList(lastSnapshotId);
-      for (INode child : childrenList) {
+      Iterator<INode> childrenIter = getChildrenIterator(lastSnapshotId);
+      while (childrenIter.hasNext()) {
+        INode child = childrenIter.next();
         final byte childPolicyId = child.getStoragePolicyIDForQuota(
             blockStoragePolicyId);
         counts.add(child.computeQuotaUsage(bsps, childPolicyId, useCache,
@@ -610,7 +621,7 @@ public class INodeDirectory extends INodeWithAdditionalFields
       counts.addNameSpace(1);
       return counts;
     }
-    
+
     // compute the quota usage in the scope of the current directory tree
     final DirectoryWithQuotaFeature q = getDirectoryWithQuotaFeature();
     if (useCache && q != null && q.isQuotaSet()) { // use the cached quota
@@ -677,11 +688,11 @@ public class INodeDirectory extends INodeWithAdditionalFields
       throws AccessControlException{
     // throws exception if failing the permission check
     summary.checkPermission(this, snapshotId, FsAction.READ_EXECUTE);
-    ReadOnlyList<INode> childrenList = getChildrenList(snapshotId);
     // Explicit traversing is done to enable repositioning after relinquishing
     // and reacquiring locks.
-    for (int i = 0;  i < childrenList.size(); i++) {
-      INode child = childrenList.get(i);
+    Iterator<INode> childrenIter = getChildrenIterator(snapshotId);
+    while (childrenIter.hasNext()) {
+      INode child = childrenIter.next();
       byte[] childName = child.getLocalNameBytes();
 
       long lastYieldCount = summary.getYieldCount();
@@ -698,11 +709,6 @@ public class INodeDirectory extends INodeWithAdditionalFields
         // Stop further counting and return whatever we have so far.
         break;
       }
-      // Obtain the children list again since it may have been modified.
-      childrenList = getChildrenList(snapshotId);
-      // Reposition in case the children list is changed. Decrement by 1
-      // since it will be incremented when loops.
-      i = nextChild(childrenList, childName) - 1;
     }
 
     // Increment the directory count for this directory.
@@ -790,7 +796,9 @@ public class INodeDirectory extends INodeWithAdditionalFields
     // DirectoryWithSnapshotFeature)
     int s = snapshot != Snapshot.CURRENT_STATE_ID
         && prior != Snapshot.NO_SNAPSHOT_ID ? prior : snapshot;
-    for (INode child : getChildrenList(s)) {
+    Iterator<INode> childrenIter = getChildrenIterator(s);
+    while (childrenIter.hasNext()) {
+      INode child = childrenIter.next();
       if (snapshot == Snapshot.CURRENT_STATE_ID || excludedNodes == null ||
           !excludedNodes.containsKey(child)) {
         child.cleanSubtree(reclaimContext, snapshot, prior);
@@ -806,7 +814,9 @@ public class INodeDirectory extends INodeWithAdditionalFields
     if (sf != null) {
       sf.clear(reclaimContext, this);
     }
-    for (INode child : getChildrenList(Snapshot.CURRENT_STATE_ID)) {
+    Iterator<INode> childrenIter = getChildrenIterator(Snapshot.CURRENT_STATE_ID);
+    while (childrenIter.hasNext()) {
+      INode child = childrenIter.next();
       child.destroyAndCollectBlocks(reclaimContext);
     }
     if (getAclFeature() != null) {
@@ -874,14 +884,14 @@ public class INodeDirectory extends INodeWithAdditionalFields
    *            \- file3   (INodeFile@78392d6)
    *          \- z_file4   (INodeFile@45848712)
    */
-  static final String DUMPTREE_EXCEPT_LAST_ITEM = "+-"; 
+  static final String DUMPTREE_EXCEPT_LAST_ITEM = "+-";
   static final String DUMPTREE_LAST_ITEM = "\\-";
   @VisibleForTesting
   @Override
   public void dumpTreeRecursively(PrintWriter out, StringBuilder prefix,
       final int snapshot) {
     super.dumpTreeRecursively(out, prefix, snapshot);
-    out.print(", childrenSize=" + getChildrenList(snapshot).size());
+    out.print(", childrenSize=" + getChildrenNum(snapshot));
     final DirectoryWithQuotaFeature q = getDirectoryWithQuotaFeature();
     if (q != null) {
       out.print(", " + q);
@@ -904,8 +914,8 @@ public class INodeDirectory extends INodeWithAdditionalFields
     }
     out.println();
     dumpTreeRecursively(out, prefix, new Iterable<SnapshotAndINode>() {
-      final Iterator<INode> i = getChildrenList(snapshot).iterator();
-      
+      final Iterator<INode> i = getChildrenIterator(snapshot);
+
       @Override
       public Iterator<SnapshotAndINode> iterator() {
         return new Iterator<SnapshotAndINode>() {
@@ -963,6 +973,11 @@ public class INodeDirectory extends INodeWithAdditionalFields
   }
 
   public final int getChildrenNum(final int snapshotId) {
-    return getChildrenList(snapshotId).size();
+    DirectoryWithSnapshotFeature sf;
+    if (snapshotId == Snapshot.CURRENT_STATE_ID
+        || (sf = this.getDirectoryWithSnapshotFeature()) == null) {
+      return children == null ? 0 : children.size();
+    }
+    return sf.getChildrenList(this, snapshotId).size();
   }
 }

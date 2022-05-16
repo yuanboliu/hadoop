@@ -342,10 +342,10 @@ public class CacheReplicationMonitor extends Thread implements Closeable {
               path);
         } else if (node.isDirectory()) {
           INodeDirectory dir = node.asDirectory();
-          ReadOnlyList<INode> children = dir
-              .getChildrenList(Snapshot.CURRENT_STATE_ID);
+          Iterator<INode> childrenIter = dir.getChildrenIterator(Snapshot.CURRENT_STATE_ID);
+          while (childrenIter.hasNext()) {
+            INode child = childrenIter.next();
           // TODO(sammichen): Handle child is deleted during access case
-          for (INode child : children) {
             if (child.isFile()) {
               rescanFile(directive, child.asFile());
             }

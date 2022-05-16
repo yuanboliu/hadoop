@@ -38,6 +38,7 @@ import org.apache.hadoop.util.ChunkedArrayList;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Iterator;
 import java.util.List;
 
 class FSDirSnapshotOp {
@@ -303,7 +304,9 @@ class FSDirSnapshotOp {
           }
         }
       }
-      for (INode child : targetDir.getChildrenList(Snapshot.CURRENT_STATE_ID)) {
+      Iterator<INode> childrenIter = targetDir.getChildrenIterator(Snapshot.CURRENT_STATE_ID);
+      while (childrenIter.hasNext()) {
+        INode child = childrenIter.next();
         checkSnapshot(child, snapshottableDirs);
       }
     }
