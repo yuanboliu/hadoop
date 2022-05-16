@@ -407,7 +407,8 @@ public class FSEditLogLoader {
       // 3. OP_ADD to open file for append (old append)
 
       // See if the file already exists (persistBlocks call)
-      try (INodesInPath iip = fsDir.lockInodePath(path, FSDirectory.LockMode.WRITE)) {
+      try (INodesInPath iip = fsDir.lockInodePath(
+          path, DirOp.WRITE, FSDirectory.LockMode.WRITE)) {
         INodeFile oldFile = INodeFile.valueOf(iip.getLastINode(), path, true);
         if (oldFile != null && addCloseOp.overwrite) {
           // This is OP_ADD with overwrite

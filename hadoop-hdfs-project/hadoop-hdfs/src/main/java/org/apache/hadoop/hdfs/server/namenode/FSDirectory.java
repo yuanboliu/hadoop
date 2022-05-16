@@ -71,7 +71,6 @@ import org.apache.hadoop.util.Time;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import javax.annotation.concurrent.GuardedBy;
 import java.io.Closeable;
 import java.io.FileNotFoundException;
 import java.io.IOException;
@@ -1806,7 +1805,7 @@ public class FSDirectory implements Closeable {
    * @throws ParentNotDirectoryException
    * @throws AccessControlException
    *
-   * @deprecated Use {@link #lockInodePath(String, LockMode)} instead.
+   * @deprecated Use {@link #lockInodePath(String, DirOp, LockMode)} instead.
    */
   @Deprecated
   public INodesInPath getINodesInPath(String src, DirOp dirOp)
@@ -1824,7 +1823,7 @@ public class FSDirectory implements Closeable {
    * @throws AccessControlException
    * @throws ParentNotDirectoryException
    *
-   * @deprecated Use {@link #lockInodePath(byte[][], LockMode)} instead.
+   * @deprecated Use {@link #lockInodePath(byte[][], DirOp, LockMode)} instead.
    */
   @Deprecated
   public INodesInPath getINodesInPath(byte[][] components, DirOp dirOp)
@@ -2097,7 +2096,7 @@ public class FSDirectory implements Closeable {
           String descendantUri) throws InvalidPathException {
     InodeLockList descendantLockList = lockDescendant(inodePath, lockMode, descendantUri);
     return new MutableLockedInodePath(descendantUri,
-            new CompositeInodeLockList(inodePath.getLockList(), descendantLockList), lockMode);
+            new CompositeInodeLockList(inodePath.getLockList(), descendantLockList), lockMode, inodePath.isRaw());
   }
 
   private InodeLockList lockDescendant(INodesInPath inodePath, LockMode lockMode,
@@ -2132,12 +2131,10 @@ public class FSDirectory implements Closeable {
    * @return the {@link INodesInPath} representing the locked path of inodes
    * @throws InvalidPathException if the path is invalid
    */
-  public INodesInPath lockInodePath(String path, LockMode lockMode)
-          throws InvalidPathException {
-    TraversalResult traversalResult =
-            traverseToInode(INode.getPathComponents(path), lockMode, null);
-    return new MutableLockedInodePath(path,
-            traversalResult.getInodeLockList(), lockMode);
+  public INodesInPath lockInodePath(String path, DirOp dirOp, LockMode lockMode)
+          throws InvalidPathException, UnresolvedPathException,
+          ParentNotDirectoryException, AccessControlException {
+    return lockInodePath(INode.getPathComponents(path), dirOp, lockMode);
   }
 
   /**
@@ -2150,19 +2147,62 @@ public class FSDirectory implements Closeable {
    * @return the {@link INodesInPath} representing the locked path of inodes
    * @throws InvalidPathException if the path is invalid
    */
-  public INodesInPath lockInodePath(FSPermissionChecker pc, String path, LockMode lockMode)
-          throws InvalidPathException {
+  public INodesInPath lockInodePath(FSPermissionChecker pc, String path,
+          DirOp dirOp, LockMode lockMode)
+          throws InvalidPathException, AccessControlException,
+          FileNotFoundException, ParentNotDirectoryException,
+          UnresolvedPathException {
+    boolean isCreate = (dirOp == DirOp.CREATE || dirOp == DirOp.CREATE_LINK);
+    // prevent creation of new invalid paths
+    if (isCreate && !DFSUtil.isValidName(path)) {
+      throw new InvalidPathException("Invalid file name: " + path);
+    }
+    byte[][] components = INode.getPathComponents(path);
+    boolean isRaw = isReservedRawName(components);
+    if (isPermissionEnabled && pc != null && isRaw) {
+      switch(dirOp) {
+        case READ_LINK:
+        case READ:
+          break;
+        default:
+          pc.checkSuperuserPrivilege();
+          break;
+      }
+    }
+    components = resolveComponents(components, this);
     TraversalResult traversalResult =
-            traverseToInode(INode.getPathComponents(path), lockMode, null);
-    return new MutableLockedInodePath(path, traversalResult.getInodeLockList(), lockMode);
+            traverseToInode(components, lockMode, null);
+    MutableLockedInodePath iip = new MutableLockedInodePath(path,
+            traversalResult.getInodeLockList(), lockMode, isRaw);
+    try {
+      checkTraverse(pc, iip, dirOp);
+    } catch (ParentNotDirectoryException pnde) {
+      iip.close();
+      if (!isCreate) {
+        throw new AccessControlException(pnde.getMessage());
+      }
+      throw pnde;
+    } catch (Throwable e) {
+      iip.close();
+      throw e;
+    }
+    return iip;
   }
 
-  public INodesInPath lockInodePath(byte[][] path, LockMode lockMode)
-          throws InvalidPathException {
+  public INodesInPath lockInodePath(byte[][] path, DirOp dirOp, LockMode lockMode)
+          throws InvalidPathException, ParentNotDirectoryException,
+          UnresolvedPathException, AccessControlException {
     TraversalResult traversalResult =
             traverseToInode(path, lockMode, null);
-    return new MutableLockedInodePath(
+    MutableLockedInodePath iip = new MutableLockedInodePath(
             traversalResult.getInodeLockList(), path, lockMode);
+    try {
+      checkTraverse(null, iip, dirOp);
+    } catch (Throwable e) {
+      iip.close();
+      throw e;
+    }
+    return iip;
   }
 
   /**

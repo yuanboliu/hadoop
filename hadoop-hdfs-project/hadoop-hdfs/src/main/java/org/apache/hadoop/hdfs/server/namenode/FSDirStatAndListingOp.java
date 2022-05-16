@@ -100,8 +100,9 @@ class FSDirStatAndListingOp {
   static HdfsFileStatus getFileInfo(FSDirectory fsd, FSPermissionChecker pc,
       String srcArg, boolean resolveLink, boolean needLocation,
       boolean needBlockToken) throws IOException {
-    try (INodesInPath iip = fsd.lockFullInodePath(pc, srcArg, FSDirectory.LockMode.READ)) {
-      DirOp dirOp = resolveLink ? DirOp.READ : DirOp.READ_LINK;
+    DirOp dirOp = resolveLink ? DirOp.READ : DirOp.READ_LINK;
+    try (INodesInPath iip = fsd.lockInodePath(pc, srcArg, dirOp,
+        FSDirectory.LockMode.READ)) {
       if (pc.isSuperUser()) {
         // superuser can only get an ACE if an existing ancestor is a file.
         // right or (almost certainly) wrong, current fs contracts expect
@@ -115,7 +116,7 @@ class FSDirStatAndListingOp {
         fsd.resolvePath(pc, srcArg, dirOp);
       }
       return getFileInfo(fsd, iip, needLocation, needBlockToken);
-    } catch (FileNotFoundException | InvalidPathException e) {
+    } catch (InvalidPathException e) {
       return null;
     }
   }

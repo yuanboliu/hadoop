@@ -330,7 +330,8 @@ class FSDirWriteFileOp {
   static INodesInPath resolvePathForStartFile(FSDirectory dir,
       FSPermissionChecker pc, String src, EnumSet<CreateFlag> flag,
       boolean createParent) throws IOException {
-    INodesInPath iip = dir.lockInodePath(src, FSDirectory.LockMode.WRITE);
+    INodesInPath iip = dir.lockInodePath(pc, src, DirOp.CREATE,
+        FSDirectory.LockMode.WRITE);
     try {
       if (dir.isPermissionEnabled()) {
         dir.checkAncestorAccess(pc, iip, FsAction.WRITE);

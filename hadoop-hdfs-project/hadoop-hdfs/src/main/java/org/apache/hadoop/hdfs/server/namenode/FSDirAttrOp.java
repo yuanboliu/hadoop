@@ -97,7 +97,8 @@ public class FSDirAttrOp {
   static FileStatus setTimes(
       FSDirectory fsd, FSPermissionChecker pc, String src, long mtime,
       long atime) throws IOException {
-    try (INodesInPath iip = fsd.lockInodePath(pc, src, FSDirectory.LockMode.WRITE)) {
+    try (INodesInPath iip = fsd.lockInodePath(pc, src,
+        DirOp.WRITE, FSDirectory.LockMode.WRITE)) {
       // Write access is required to set access and modification times
       if (fsd.isPermissionEnabled()) {
         fsd.checkPathAccess(pc, iip, FsAction.WRITE);

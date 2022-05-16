@@ -352,23 +352,23 @@ public class INodesInPath implements Closeable {
   }
 
   INodesInPath(InodeLockList lockList, byte[][] pathComponents,
-      FSDirectory.LockMode lockMode) {
+      FSDirectory.LockMode lockMode, boolean isRaw) {
     Preconditions.checkArgument(!lockList.isEmpty());
     path = pathComponents;
     mLockList = lockList;
     mLockMode = lockMode;
+    this.isRaw = isRaw;
 
     // TODO(baoloongmao): fix snapshot and raw future.
     this.isSnapshot = false;
     this.snapshotId = CURRENT_STATE_ID;
-    this.isRaw = false;
     inodes = null;
   }
 
   INodesInPath(String uri, InodeLockList lockList,
-      FSDirectory.LockMode lockMode)
+      FSDirectory.LockMode lockMode, boolean isRaw)
       throws InvalidPathException {
-    this(lockList, INode.getPathComponents(uri), lockMode);
+    this(lockList, INode.getPathComponents(uri), lockMode, isRaw);
   }
 
   /**
@@ -473,10 +473,19 @@ public class INodesInPath implements Closeable {
     return inodes.length;
   }
 
-  public synchronized INode[] getINodesArray() {
-    INode[] retArr = new INode[mLockList.mInodes.size()];
-    retArr = mLockList.mInodes.toArray(retArr);
+  private INode[] getINodesArrayDeprecated() {
+    INode[] retArr = new INode[inodes.length];
+    System.arraycopy(inodes, 0, retArr, 0, inodes.length);
     return retArr;
+  }
+
+  public synchronized INode[] getINodesArray() {
+    if (inodes != null) {
+      return getINodesArrayDeprecated();
+    }
+    INode[] retArr = new INode[path.length];
+    List<INode> inodeList = mLockList.mInodes;
+    return inodeList.toArray(retArr);
   }
 
   /**
@@ -809,7 +818,7 @@ public class INodesInPath implements Closeable {
         "Trying to create TempPathForChild for a file inode");
     return new MutableLockedInodePath(new Path(getPath(), childName).toString(),
         new CompositeInodeLockList(mLockList),
-        mLockMode);
+        mLockMode, false);
   }
 
   /**

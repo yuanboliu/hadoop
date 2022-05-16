@@ -20,6 +20,8 @@ package org.apache.hadoop.hdfs.server.namenode;
 import com.google.common.base.Preconditions;
 import org.apache.hadoop.fs.FileAlreadyExistsException;
 import org.apache.hadoop.fs.FileStatus;
+import org.apache.hadoop.fs.ParentNotDirectoryException;
+import org.apache.hadoop.fs.UnresolvedLinkException;
 import org.apache.hadoop.fs.permission.AclEntry;
 import org.apache.hadoop.fs.permission.FsAction;
 import org.apache.hadoop.fs.permission.FsPermission;
@@ -27,6 +29,7 @@ import org.apache.hadoop.fs.permission.PermissionStatus;
 import org.apache.hadoop.hdfs.DFSUtil;
 import org.apache.hadoop.hdfs.protocol.AclException;
 import org.apache.hadoop.hdfs.protocol.QuotaExceededException;
+import org.apache.hadoop.security.AccessControlException;
 
 import java.io.IOException;
 import java.util.List;
@@ -43,7 +46,7 @@ class FSDirMkdirOp {
       NameNode.stateChangeLog.debug("DIR* NameSystem.mkdirs: " + src);
     }
     try (INodesInPath iip =
-        fsd.lockInodePath(src, FSDirectory.LockMode.WRITE)){
+        fsd.lockInodePath(pc, src, FSDirectory.DirOp.CREATE, FSDirectory.LockMode.WRITE)) {
       final INode lastINode = iip.getLastINode();
       if (lastINode != null && lastINode.isFile()) {
         throw new FileAlreadyExistsException("Path is not a directory: " + src);
@@ -143,9 +146,12 @@ class FSDirMkdirOp {
 
   static void mkdirForEditLog(FSDirectory fsd, long inodeId, String src,
       PermissionStatus permissions, List<AclEntry> aclEntries, long timestamp)
-      throws QuotaExceededException, AclException, FileAlreadyExistsException {
+      throws QuotaExceededException, UnresolvedLinkException, AclException,
+      FileAlreadyExistsException, ParentNotDirectoryException,
+      AccessControlException {
     try (INodesInPath existing =
-        fsd.lockInodePath(src, FSDirectory.LockMode.WRITE)) {
+        fsd.lockInodePath(src, FSDirectory.DirOp.WRITE_LINK,
+            FSDirectory.LockMode.WRITE)) {
       final byte[] localName = existing.getLocalNameByInodesSize();
       Preconditions.checkState(existing.getLastLockListInode() != null);
       unprotectedMkdir(fsd, inodeId, existing, localName, permissions, aclEntries,

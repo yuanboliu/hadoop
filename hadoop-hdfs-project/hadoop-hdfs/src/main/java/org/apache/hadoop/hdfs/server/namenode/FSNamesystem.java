@@ -8030,7 +8030,8 @@ public class FSNamesystem implements Namesystem, FSNamesystemMBean,
     final String operationName = "checkAccess";
     checkOperation(OperationCategory.READ);
     final FSPermissionChecker pc = getPermissionChecker();
-    try (INodesInPath iip = dir.lockInodePath(pc, src, FSDirectory.LockMode.READ)) {
+    try (INodesInPath iip = dir.lockInodePath(pc, src,
+        DirOp.READ, FSDirectory.LockMode.READ)) {
       checkOperation(OperationCategory.READ);
       src = iip.getPath();
       INode inode = iip.getLastINode();

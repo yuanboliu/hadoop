@@ -38,9 +38,15 @@ public class MutableLockedInodePath extends INodesInPath {
    */
   // TODO(gpang): restructure class hierarchy, rename class
   public MutableLockedInodePath(String uri, InodeLockList lockList,
+      FSDirectory.LockMode lockMode, boolean isRaw)
+      throws InvalidPathException {
+    super(uri, lockList, lockMode, isRaw);
+  }
+
+  public MutableLockedInodePath(String uri, InodeLockList lockList,
       FSDirectory.LockMode lockMode)
       throws InvalidPathException {
-    super(uri, lockList, lockMode);
+    super(uri, lockList, lockMode, false);
   }
 
   /**
@@ -52,7 +58,7 @@ public class MutableLockedInodePath extends INodesInPath {
    */
   public MutableLockedInodePath(InodeLockList lockList,
       byte[][] pathComponents, FSDirectory.LockMode lockMode) {
-    super(lockList, pathComponents, lockMode);
+    super(lockList, pathComponents, lockMode, false);
   }
 
   /**
