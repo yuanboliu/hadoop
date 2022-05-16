@@ -1171,12 +1171,7 @@ public class FSDirectory implements Closeable {
                         FsPermission modes)
       throws QuotaExceededException, UnresolvedLinkException {
     cacheName(child);
-    writeLock();
-    try {
-      return addLastINode(existing, child, modes, true);
-    } finally {
-      writeUnlock();
-    }
+    return addLastINode(existing, child, modes, true);
   }
 
   /**
