@@ -2038,7 +2038,7 @@ public class FSNamesystem implements Namesystem, FSNamesystemMBean,
         boolean updateAccessTime =
             now > inode.getAccessTime() + dir.getAccessTimePrecision();
         if (!isInSafeMode() && updateAccessTime) {
-          if (!inode.isDeleted()) {
+          if (!inode.isINodeDeleted()) {
             src = inode.getFullPathName();
             final INodesInPath iip = dir.resolvePath(pc, src, DirOp.READ);
             boolean changed = FSDirAttrOp.setTimes(dir, iip, -1, now, false);

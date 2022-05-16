@@ -17,6 +17,8 @@
  */
 package org.apache.hadoop.hdfs.server.namenode;
 
+import org.apache.hadoop.hdfs.server.lock.exception.ExceptionMessage;
+import org.apache.hadoop.hdfs.server.lock.util.io.PathUtils;
 import org.apache.hadoop.hdfs.server.namenode.snapshot.Snapshot;
 import org.apache.hadoop.util.StringUtils;
 
@@ -2014,6 +2016,367 @@ public class FSDirectory implements Closeable {
       nodeAttrs = ap.getAttributes(components, nodeAttrs);
     }
     return nodeAttrs;
+  }
+
+  /**
+   * Locks from a specific point in the tree to the descendant, and return a lockedInodePath.
+   *
+   * @param inodePath the root to start locking
+   * @param lockMode the lock type to use
+   * @param descendantUri the path to the descendant that we are locking
+   * @return  an {@link InodeLockList} representing the list of descendants that got locked as
+   * a result of this call.
+   * @throws InvalidPathException
+   */
+  public LockedInodePath lockDescendantPath(LockedInodePath inodePath, LockMode lockMode,
+          Path descendantUri) throws InvalidPathException {
+    InodeLockList descendantLockList = lockDescendant(inodePath, lockMode, descendantUri);
+    return new MutableLockedInodePath(descendantUri,
+            new CompositeInodeLockList(inodePath.mLockList, descendantLockList), lockMode);
+  }
+
+  private InodeLockList lockDescendant(LockedInodePath inodePath, LockMode lockMode,
+          Path descendantUri) throws InvalidPathException {
+    // Check if the descendant is really the descendant of inodePath
+    if (!PathUtils.hasPrefix(descendantUri.toString(), inodePath.getUri().toString())
+            || descendantUri.equals(inodePath.getUri())) {
+      throw new InvalidPathException(descendantUri + " is not a valid descendant of "
+              + inodePath.getUri());
+    }
+
+    List<INode> inodeList = new ArrayList<>(inodePath.getInodeList());
+    // Lock from inodePath to the descendant
+    InodeLockList lockList = new InodeLockList();
+    TraversalResult traversalResult = traverseToInodeInternal(
+            PathUtils.getPathComponents(descendantUri.toString()),
+            inodeList, lockList, lockMode, null);
+    if (traversalResult.mFound) {
+      return traversalResult.mLockList;
+    } else {
+      throw new InvalidPathException(descendantUri
+              + " path not found in traversal starting from " + inodePath.getUri() + ".");
+    }
+  }
+
+
+  /**
+   * Locks existing inodes on the specified path, in the specified {@link LockMode}. The target
+   * inode is not required to exist.
+   *
+   * @param path the path to lock
+   * @param lockMode the {@link LockMode} to lock the inodes with
+   * @return the {@link LockedInodePath} representing the locked path of inodes
+   * @throws InvalidPathException if the path is invalid
+   */
+  public LockedInodePath lockInodePath(Path path, LockMode lockMode)
+          throws InvalidPathException {
+    TraversalResult traversalResult =
+            traverseToInode(PathUtils.getPathComponents(path.toString()), lockMode, null);
+    return new MutableLockedInodePath(path,
+            traversalResult.getInodeLockList(), lockMode);
+  }
+
+
+  /**
+   * Returns the lock mode for a particular index into the path components.
+   *
+   * @param index the index into the path components
+   * @param length the length of path components
+   * @param lockMode the specified {@link LockMode}
+   * @param lockHints the list of lock hints for each index; this can be null, or incomplete
+   * @return the {@link LockMode} to lock this particular inode at this index with
+   */
+  private LockMode getLockModeForComponent(int index, int length, LockMode lockMode,
+          List<LockMode> lockHints) {
+    if (lockHints != null && index < lockHints.size()) {
+      // Use the lock hint if it exists.
+      return lockHints.get(index);
+    }
+    if (lockMode == LockMode.READ) {
+      return LockMode.READ;
+    }
+    boolean isTarget = (index == length - 1);
+    boolean isTargetOrParent = (index >= length - 2);
+
+    if (isTargetOrParent && lockMode == LockMode.WRITE_PARENT
+            || isTarget && lockMode == LockMode.WRITE) {
+      return LockMode.WRITE;
+    }
+    return LockMode.READ;
+  }
+
+  /**
+   * Lock from a specific poiint in the tree to the immediate child, and return a lockedInodePath.
+   *
+   * @param inodePath the root to start locking
+   * @param lockMode the lock type to use
+   * @param childInode the inode of the child that we are locking
+   * @param pathComponents the array of pre-parsed path components, or null to parse pathComponents
+   *                       from the uri
+   * @return an {@link InodeLockList} representing the list of descendants that got locked as
+   * a result of this call.
+   * @throws InvalidPathException if the path is invalid
+   * @throws FileNotFoundException if the inode does not exist
+   */
+  public LockedInodePath lockChildPath(LockedInodePath inodePath, LockMode lockMode,
+          INode childInode, String[] pathComponents)
+          throws FileNotFoundException, InvalidPathException {
+    InodeLockList inodeLockList = new InodeLockList();
+
+    if (lockMode == LockMode.READ) {
+      inodeLockList.lockReadAndCheckParent(childInode, inodePath.getInode());
+    } else {
+      inodeLockList.lockWriteAndCheckParent(childInode, inodePath.getInode());
+    }
+
+    if (pathComponents == null) {
+      return new MutableLockedInodePath(new Path(inodePath.getUri(), childInode.getLocalName()),
+              new CompositeInodeLockList(inodePath.mLockList, inodeLockList), lockMode);
+    } else {
+      return new MutableLockedInodePath(new Path(inodePath.getUri(), childInode.getLocalName()),
+              new CompositeInodeLockList(inodePath.mLockList, inodeLockList), pathComponents, lockMode);
+    }
+  }
+
+  /**
+   * Locks all descendants of a particular {@link LockedInodePath}. Any directory inode
+   * precedes its descendants in the list.
+   *
+   * @param inodePath the root {@link LockedInodePath} to retrieve all descendants from
+   * @param lockMode the lock type to use
+   * @return an {@link InodeLockList} representing the list of all descendants
+   */
+  public LockedInodePathList lockDescendants(LockedInodePath inodePath, LockMode lockMode) {
+    List<LockedInodePath> inodePathList = new ArrayList<>();
+    lockDescendantsInternal(inodePath, lockMode, inodePathList);
+    return new LockedInodePathList(inodePathList);
+  }
+
+  private void lockDescendantsInternal(LockedInodePath inodePath, LockMode lockMode,
+          List<LockedInodePath> inodePathList) {
+    INode inode = inodePath.getInodeOrNull();
+    if (inode == null || !inode.isDirectory()) {
+      return;
+    }
+    INodeDirectory inodeDirectory = (INodeDirectory) inode;
+    for (INode child : inodeDirectory.getChildrenList(Snapshot.CURRENT_STATE_ID)) {
+      LockedInodePath lockedDescendantPath;
+      try {
+        lockedDescendantPath =
+                inodePath.createTempPathForExistingChild(child, inodePath.getLockMode());
+        inodePathList.add(lockedDescendantPath);
+      } catch (InvalidPathException | FileNotFoundException e) {
+        // INode is no longer a child, continue.
+        continue;
+      }
+      if (child.isDirectory()) {
+        lockDescendantsInternal(lockedDescendantPath, lockMode, inodePathList);
+      }
+    }
+  }
+
+  /**
+   * Traverses the tree to find the given path components. Hints for the lock mode at each path
+   * component can be specified.
+   *
+   * @param pathComponents the components of the path to traverse
+   * @param lockMode the {@link LockMode} for the path
+   * @param lockHints optional {@link List} to specify the lock type for each path component; this
+   *                  can be shorter than pathComponents
+   * @return the {@link TraversalResult} for this traversal
+   * @throws InvalidPathException if the path is invalid
+   */
+  private TraversalResult traverseToInode(String[] pathComponents, LockMode lockMode,
+          List<LockMode> lockHints)
+          throws InvalidPathException {
+    List<INode> inodes = new ArrayList<>();
+    InodeLockList lockList = new InodeLockList();
+
+    // This must be set to true before returning a valid value, otherwise all the inodes will be
+    // unlocked.
+    boolean valid = false;
+    try {
+      if (pathComponents == null) {
+        throw new InvalidPathException(
+                ExceptionMessage.PATH_COMPONENTS_INVALID.getMessage("null"));
+      } else if (pathComponents.length == 0) {
+        throw new InvalidPathException(
+                ExceptionMessage.PATH_COMPONENTS_INVALID.getMessage("empty"));
+      } else if (pathComponents.length == 1) {
+        if (pathComponents[0].equals("")) {
+          if (getLockModeForComponent(0, pathComponents.length, lockMode, lockHints)
+                  == LockMode.READ) {
+            lockList.lockRead(rootDir);
+          } else {
+            lockList.lockWrite(rootDir);
+          }
+          inodes.add(rootDir);
+          valid = true;
+          return TraversalResult.createFoundResult(inodes, lockList);
+        } else {
+          throw new InvalidPathException(
+                  ExceptionMessage.PATH_COMPONENTS_INVALID_START.getMessage(pathComponents[0]));
+        }
+      }
+
+      if (getLockModeForComponent(0, pathComponents.length, lockMode, lockHints) == LockMode.READ) {
+        lockList.lockRead(rootDir);
+      } else {
+        lockList.lockWrite(rootDir);
+      }
+      inodes.add(rootDir);
+      TraversalResult result =
+              traverseToInodeInternal(pathComponents, inodes, lockList, lockMode,
+                      lockHints);
+      valid = true;
+      return result;
+    } finally {
+      if (!valid) {
+        lockList.close();
+      }
+    }
+  }
+
+  /**
+   * Traverses the tree to find the rest of the given {@link LockedInodePath}. Hints for the lock
+   * mode at each path.
+   *
+   * @param inodePath the {@link LockedInodePath} to start the traversal from
+   * @param lockMode the {@link LockMode} for the path
+   * @return the {@link TraversalResult} for this traversal
+   * @throws InvalidPathException if the path is invalid
+   */
+  private TraversalResult traverseToInode(LockedInodePath inodePath, LockMode lockMode)
+          throws InvalidPathException {
+    // the inodePath is guaranteed to already include at least the root inode.
+    if (!(inodePath instanceof MutableLockedInodePath)) {
+      throw new InvalidPathException(
+              ExceptionMessage.NOT_MUTABLE_INODE_PATH.getMessage(inodePath.getUri()));
+    }
+    MutableLockedInodePath extensibleInodePath = (MutableLockedInodePath) inodePath;
+    List<INode> inodes = extensibleInodePath.getInodeList();
+    InodeLockList lockList = extensibleInodePath.getLockList();
+    return traverseToInodeInternal(extensibleInodePath.getPathComponents(), inodes,
+            lockList, lockMode, null);
+  }
+
+  /**
+   * Traverse the tree to find the rest of the given {@link LockedInodePath}. Hints for the lock
+   * mode at each path.
+   *
+   * @param pathComponents components of the path that are are traversing towards
+   * @param inodes inodes that are already locked and will no longer require locking,
+   *               modified in the method to return all inode along the path
+   * @param lockList lockList containing all locked inodes, modified in the method
+   * @param lockMode the {@link LockMode} for the path
+   * @param lockHints list of lock hints for locking the path, must be null or its size must match
+   *                  the size of pathComponents
+   * @return the result of the traversal
+   * @throws InvalidPathException
+   */
+  private TraversalResult traverseToInodeInternal(String[] pathComponents, List<INode> inodes,
+          InodeLockList lockList, LockMode lockMode,
+          List<LockMode> lockHints)
+          throws InvalidPathException {
+    INode current = inodes.get(inodes.size() - 1);
+    for (int i = inodes.size(); i < pathComponents.length; i++) {
+      INode next = ((INodeDirectory) current).getChild(
+              pathComponents[i].getBytes(), CURRENT_STATE_ID);
+      if (next == null) {
+        // The user might want to create the nonexistent directories, so return the traversal
+        // result current inode with the last INode taken, and the index of the first path
+        // component that couldn't be found.
+        return TraversalResult.createNotFoundResult(i, inodes, lockList);
+      }
+      // Lock the existing next inode before proceeding.
+      if (getLockModeForComponent(i, pathComponents.length, lockMode, lockHints)
+              == LockMode.READ) {
+        lockList.lockReadAndCheckNameAndParent(next, current, pathComponents[i]);
+      } else {
+        lockList.lockWriteAndCheckNameAndParent(next, current, pathComponents[i]);
+      }
+      if (next.isFile()) {
+        // The inode can't have any children. If this is the last path component, we're good.
+        // Otherwise, we can't traverse further, so we clean up and throw an exception.
+        if (i == pathComponents.length - 1) {
+          inodes.add(next);
+          return TraversalResult.createFoundResult(inodes, lockList);
+        } else {
+          throw new InvalidPathException(
+                  "Traversal failed. Component " + i + "(" + next.getLocalName() + ") is a file");
+        }
+      } else {
+        inodes.add(next);
+        current = next;
+      }
+    }
+    return TraversalResult.createFoundResult(inodes, lockList);
+  }
+
+  private LockingScheme createLockingScheme(Path path,
+          FSDirectory.LockMode desiredLockMode) {
+    return new LockingScheme(path, desiredLockMode);
+  }
+
+  private static final class TraversalResult {
+    /** True if the traversal found the target inode, false otherwise. */
+    private final boolean mFound;
+
+    /** The list of all inodes encountered during the traversal. */
+    private final List<INode> mInodes;
+
+    /** The {@link InodeLockList} managing the locks for the inodes. */
+    private final InodeLockList mLockList;
+
+    static TraversalResult createFoundResult(List<INode> inodes,
+            InodeLockList lockList) {
+      return new TraversalResult(true, inodes, lockList);
+    }
+
+    static TraversalResult createNotFoundResult(int index,
+            List<INode> inodes, InodeLockList lockList) {
+      return new TraversalResult(false, inodes, lockList);
+    }
+
+    private TraversalResult(boolean found,
+            List<INode> inodes, InodeLockList lockList) {
+      mFound = found;
+      mInodes = inodes;
+      mLockList = lockList;
+    }
+
+    /**
+     * @return true if target inode was found, false otherwise
+     */
+    boolean isFound() {
+      return mFound;
+    }
+
+    /**
+     * @return the list of all inodes encountered during the traversal
+     */
+    List<INode> getInodes() {
+      return mInodes;
+    }
+
+    /**
+     * @return the {@link InodeLockList} managing the locks for all the inodes
+     */
+    InodeLockList getInodeLockList() {
+      return mLockList;
+    }
+  }
+
+  /**
+   * The type of lock to lock inode paths with.
+   */
+  public enum LockMode {
+    /** Read lock the entire path. */
+    READ,
+    /** Read lock the entire path, but write lock the target inode. */
+    WRITE,
+    /** Read lock the entire path, but write lock the target inode and the parent of the target. */
+    WRITE_PARENT,
   }
 
 }
