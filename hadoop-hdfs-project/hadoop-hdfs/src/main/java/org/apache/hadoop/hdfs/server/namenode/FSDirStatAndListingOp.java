@@ -390,9 +390,30 @@ class FSDirStatAndListingOp {
     if (child != null) {
       name = child.getLocalNameBytes();
       // have to do this for EC and EZ lookups...
-      iip = iip.createTempPathForExistingChild(child, FSDirectory.LockMode.READ);
+      try (INodesInPath childIip =
+               fsd.lockChildPath(iip, FSDirectory.LockMode.READ, child, null)) {
+        return createFileStatus(
+            fsd,
+            childIip,
+            storagePolicy,
+            needLocation,
+            needBlockToken,
+            name);
+      }
+    } else {
+      return createFileStatus(
+          fsd,
+          iip,
+          storagePolicy,
+          needLocation,
+          needBlockToken,
+          name);
     }
+  }
 
+  private static HdfsFileStatus createFileStatus(
+      FSDirectory fsd, INodesInPath iip, byte storagePolicy,
+      boolean needLocation, boolean needBlockToken, byte[] name) throws IOException {
     long size = 0;     // length is zero for directories
     short replication = 0;
     long blocksize = 0;
