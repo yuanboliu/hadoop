@@ -317,34 +317,50 @@ class FSDirWriteFileOp {
     return clientNode;
   }
 
+  /**
+   * Ensure close the INodesInPath
+   * @param dir
+   * @param pc
+   * @param src
+   * @param flag
+   * @param createParent
+   * @return
+   * @throws IOException
+   */
   static INodesInPath resolvePathForStartFile(FSDirectory dir,
       FSPermissionChecker pc, String src, EnumSet<CreateFlag> flag,
       boolean createParent) throws IOException {
-    INodesInPath iip = dir.resolvePath(pc, src, DirOp.CREATE);
-    if (dir.isPermissionEnabled()) {
-      dir.checkAncestorAccess(pc, iip, FsAction.WRITE);
+    INodesInPath iip = dir.lockInodePath(src, FSDirectory.LockMode.WRITE);
+    try {
+      if (dir.isPermissionEnabled()) {
+        dir.checkAncestorAccess(pc, iip, FsAction.WRITE);
+      }
+      INode inode = iip.getLastINode();
+      if (inode != null) {
+        // Verify that the destination does not exist as a directory already.
+        if (inode.isDirectory()) {
+          throw new FileAlreadyExistsException(iip.getPath() +
+              " already exists as a directory");
+        }
+        // Verifies it's indeed a file and perms allow overwrite
+        INodeFile.valueOf(inode, src);
+        if (dir.isPermissionEnabled() && flag.contains(CreateFlag.OVERWRITE)) {
+          dir.checkPathAccess(pc, iip, FsAction.WRITE);
+        }
+      } else {
+        if (!createParent) {
+          dir.verifyParentDir(iip);
+        }
+        if (!flag.contains(CreateFlag.CREATE)) {
+          throw new FileNotFoundException(
+              "Can't overwrite non-existent " + src);
+        }
+      }
+      return iip;
+    } catch (Throwable e) {
+      iip.close();
+      throw e;
     }
-    INode inode = iip.getLastINode();
-    if (inode != null) {
-      // Verify that the destination does not exist as a directory already.
-      if (inode.isDirectory()) {
-        throw new FileAlreadyExistsException(iip.getPath() +
-            " already exists as a directory");
-      }
-      // Verifies it's indeed a file and perms allow overwrite
-      INodeFile.valueOf(inode, src);
-      if (dir.isPermissionEnabled() && flag.contains(CreateFlag.OVERWRITE)) {
-        dir.checkPathAccess(pc, iip, FsAction.WRITE);
-      }
-    } else {
-      if (!createParent) {
-        dir.verifyParentDir(iip);
-      }
-      if (!flag.contains(CreateFlag.CREATE)) {
-        throw new FileNotFoundException("Can't overwrite non-existent " + src);
-      }
-    }
-    return iip;
   }
 
 
@@ -379,7 +395,7 @@ class FSDirWriteFileOp {
         long ret = FSDirDeleteOp.delete(fsd, iip, toRemoveBlocks,
                                         toRemoveINodes, toRemoveUCFiles, now());
         if (ret >= 0) {
-          iip = INodesInPath.replace(iip, iip.length() - 1, null);
+          iip.unlockLast();
           FSDirDeleteOp.incrDeletedFileCount(ret);
           fsn.removeLeasesAndINodes(toRemoveUCFiles, toRemoveINodes, true);
         }

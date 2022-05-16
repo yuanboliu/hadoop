@@ -466,7 +466,7 @@ class BlockManagerSafeMode {
    * If safe mode is not currently on, this is a no-op.
    */
   synchronized void decrementSafeBlockCount(BlockInfo b) {
-    assert namesystem.hasWriteLock();
+    assert namesystem.hasReadLock();
     if (status == BMSafeModeStatus.OFF) {
       return;
     }

@@ -723,6 +723,20 @@ public class FSDirectory implements Closeable {
     return INodesInPath.resolve(rootDir, components, isRaw);
   }
 
+  /**
+   *
+   * @param pc
+   * @param src
+   * @param fileId
+   * @return
+   * @throws UnresolvedLinkException
+   * @throws FileNotFoundException
+   * @throws AccessControlException
+   * @throws ParentNotDirectoryException
+   *
+   * @deprecated Use {@link #lockFullInodePath(String, long, LockMode)} instead.
+   * // TODO(baoloongmao): bring pc back
+   */
   @Deprecated
   INodesInPath resolvePath(FSPermissionChecker pc, String src, long fileId)
       throws UnresolvedLinkException, FileNotFoundException,
@@ -1302,8 +1316,8 @@ public class FSDirectory implements Closeable {
   @VisibleForTesting
   public INodesInPath addLastINode(INodesInPath existing, INode inode,
       FsPermission modes, boolean checkQuota) throws QuotaExceededException {
-    assert existing.getLastINode() != null &&
-        existing.getLastINode().isDirectory();
+    assert existing.getLastExistingInode() != null &&
+        existing.getLastExistingInode().isDirectory();
 
     final int pos = existing.length();
     // Disallow creation of /.reserved. This may be created when loading
@@ -1338,18 +1352,41 @@ public class FSDirectory implements Closeable {
     updateCount(existing, pos, counts, checkQuota);
 
     boolean isRename = (inode.getParent() != null);
+    // Lock the newly created inode before subsequent operations, and add it to the lock group.
+    existing.getLockList().lockWriteAndCheckParent(inode, parent);
     final boolean added = parent.addChild(inode, true,
         existing.getLatestSnapshotId());
     if (!added) {
-      updateCountNoQuotaCheck(existing, pos, counts.negation());
-      return null;
+
+      // The inode couldn't be added, so we will not add it to the tree and it should soon be
+      // garbage collected. We mark it deleted as a precautionary measure in case something
+      // manages to get a reference the inode.
+      inode.setDeleted(true);
+      existing.unlockLast();
+
+      int i = 0;
+      while (true) {
+        if (i > 1000) {
+          updateCountNoQuotaCheck(existing, pos, counts.negation());
+          return null;
+        }
+        i++;
+        INode child = parent.getChild(inode.getLocalNameBytes(), CURRENT_STATE_ID);
+        existing.getLockList().lockWriteAndCheckNameAndParent(child, parent, inode.getLocalNameBytes());
+        if (child != parent.getChild(inode.getLocalNameBytes(), CURRENT_STATE_ID)) {
+          // The locked child has changed, so unlock and try again.
+          existing.unlockLast();
+          continue;
+        }
+        break;
+      }
     } else {
       if (!isRename) {
         copyINodeDefaultAcl(inode, modes);
       }
       addToInodeMap(inode);
     }
-    return INodesInPath.append(existing, inode, inode.getLocalNameBytes());
+    return existing;
   }
 
   INodesInPath addLastINodeNoQuotaCheck(INodesInPath existing, INode i) {
@@ -1768,6 +1805,8 @@ public class FSDirectory implements Closeable {
    * @throws UnresolvedLinkException
    * @throws ParentNotDirectoryException
    * @throws AccessControlException
+   *
+   * @deprecated Use {@link #lockInodePath(String, LockMode)} instead.
    */
   @Deprecated
   public INodesInPath getINodesInPath(String src, DirOp dirOp)
@@ -1776,6 +1815,17 @@ public class FSDirectory implements Closeable {
     return getINodesInPath(INode.getPathComponents(src), dirOp);
   }
 
+  /**
+   *
+   * @param components
+   * @param dirOp
+   * @return
+   * @throws UnresolvedLinkException
+   * @throws AccessControlException
+   * @throws ParentNotDirectoryException
+   *
+   * @deprecated Use {@link #lockInodePath(byte[][], LockMode)} instead.
+   */
   @Deprecated
   public INodesInPath getINodesInPath(byte[][] components, DirOp dirOp)
       throws UnresolvedLinkException, AccessControlException,
@@ -1788,7 +1838,9 @@ public class FSDirectory implements Closeable {
   /**
    * Get {@link INode} associated with the file / directory.
    * See {@link #getINode(String, DirOp)}
+   * @deprecated Use {@link #lockFullInodePath(String, LockMode)} instead.
    */
+  @Deprecated
   @VisibleForTesting // should be removed after a lot of tests are updated
   public INode getINode(String src) throws UnresolvedLinkException,
       AccessControlException, ParentNotDirectoryException {
@@ -2045,7 +2097,7 @@ public class FSDirectory implements Closeable {
           String descendantUri) throws InvalidPathException {
     InodeLockList descendantLockList = lockDescendant(inodePath, lockMode, descendantUri);
     return new MutableLockedInodePath(descendantUri,
-            new CompositeInodeLockList(inodePath.mLockList, descendantLockList), lockMode);
+            new CompositeInodeLockList(inodePath.getLockList(), descendantLockList), lockMode);
   }
 
   private InodeLockList lockDescendant(INodesInPath inodePath, LockMode lockMode,
@@ -2103,6 +2155,14 @@ public class FSDirectory implements Closeable {
     TraversalResult traversalResult =
             traverseToInode(INode.getPathComponents(path), lockMode, null);
     return new MutableLockedInodePath(path, traversalResult.getInodeLockList(), lockMode);
+  }
+
+  public INodesInPath lockInodePath(byte[][] path, LockMode lockMode)
+          throws InvalidPathException {
+    TraversalResult traversalResult =
+            traverseToInode(path, lockMode, null);
+    return new MutableLockedInodePath(
+            traversalResult.getInodeLockList(), path, lockMode);
   }
 
   /**
@@ -2396,10 +2456,10 @@ public class FSDirectory implements Closeable {
 
     if (pathComponents == null) {
       return new MutableLockedInodePath(new Path(inodePath.getPath(), childInode.getLocalName()).toString(),
-              new CompositeInodeLockList(inodePath.mLockList, inodeLockList), lockMode);
+              new CompositeInodeLockList(inodePath.getLockList(), inodeLockList), lockMode);
     } else {
       return new MutableLockedInodePath(
-              new CompositeInodeLockList(inodePath.mLockList, inodeLockList), pathComponents, lockMode);
+              new CompositeInodeLockList(inodePath.getLockList(), inodeLockList), pathComponents, lockMode);
     }
   }
 

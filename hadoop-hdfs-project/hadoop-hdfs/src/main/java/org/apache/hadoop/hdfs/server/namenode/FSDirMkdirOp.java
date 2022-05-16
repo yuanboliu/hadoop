@@ -128,7 +128,7 @@ class FSDirMkdirOp {
       // Ensure that the user can traversal the path by adding implicit
       // u+wx permission to all ancestor directories.
       PermissionStatus basePerm = inheritPerms
-          ? existing.getLastINode().getPermissionStatus()
+          ? existing.getLastExistingInode().getPermissionStatus()
           : perm;
       perm = addImplicitUwx(basePerm, perm);
       // create all the missing directories.
@@ -197,37 +197,12 @@ class FSDirMkdirOp {
       throw new FileAlreadyExistsException("Parent path is not a directory: " +
           parent.getPath() + " " + DFSUtil.bytes2String(name));
     }
-    INode lastExistingInode = parent.getLastLockListInode();
 
     final INodeDirectory dir = new INodeDirectory(inodeId, name, permission,
         timestamp);
-    dir.setParent(parent.getLastLockListInode().asDirectory());
-    // Lock the newly created inode before subsequent operations, and add it to the lock group.
-    parent.mLockList.lockWriteAndCheckParent(dir, parent.getLastLockListInode());
-    if (!lastExistingInode.asDirectory().addChild(dir)) {
-
-      // The inode couldn't be added, so we will not add it to the tree and it should soon be
-      // garbage collected. We mark it deleted as a precautionary measure in case something
-      // manages to get a reference the inode.
-      dir.setDeleted(true);
-      parent.unlockLast();
-
-      int i=0;
-      while (true) {
-        if (i > 1000) {
-          throw new FileAlreadyExistsException("Directory "+ DFSUtil.bytes2String(name) +
-              " already exists and cannot get locked child during 1000 attempts.");
-        }
-        i++;
-        INode child = lastExistingInode.asDirectory().getChild(name, CURRENT_STATE_ID);
-        parent.mLockList.lockWriteAndCheckNameAndParent(child, lastExistingInode, name);
-        if (child != lastExistingInode.asDirectory().getChild(name, CURRENT_STATE_ID)) {
-          // The locked child has changed, so unlock and try again.
-          parent.unlockLast();
-          continue;
-        }
-        break;
-      }
+    if (fsd.addLastINode(parent, dir, permission.getPermission(), true) == null) {
+      throw new IllegalStateException("Directory "+ DFSUtil.bytes2String(name) +
+          " already exists and cannot get locked child during 1000 attempts.");
     }
 
     if (parent != null && aclEntries != null) {
@@ -236,4 +211,3 @@ class FSDirMkdirOp {
     return parent;
   }
 }
-

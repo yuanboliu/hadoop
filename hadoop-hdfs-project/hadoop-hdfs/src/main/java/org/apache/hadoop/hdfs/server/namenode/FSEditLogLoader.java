@@ -219,6 +219,7 @@ public class FSEditLogLoader {
 
     fsNamesys.writeLock();
     FSDirectory fsDir = fsNamesys.dir;
+    // TODO(baoloongmao): remove this writeLock.
     fsDir.writeLock();
 
     long recentOpcodeOffsets[] = new long[4];
@@ -406,73 +407,74 @@ public class FSEditLogLoader {
       // 3. OP_ADD to open file for append (old append)
 
       // See if the file already exists (persistBlocks call)
-      INodesInPath iip = fsDir.getINodesInPath(path, DirOp.WRITE);
-      INodeFile oldFile = INodeFile.valueOf(iip.getLastINode(), path, true);
-      if (oldFile != null && addCloseOp.overwrite) {
-        // This is OP_ADD with overwrite
-        FSDirDeleteOp.deleteForEditLog(fsDir, iip, addCloseOp.mtime);
-        iip = INodesInPath.replace(iip, iip.length() - 1, null);
-        oldFile = null;
-      }
-      INodeFile newFile = oldFile;
-      if (oldFile == null) { // this is OP_ADD on a new file (case 1)
-        // versions > 0 support per file replication
-        // get name and replication
-        final short replication = fsNamesys.getBlockManager()
-            .adjustReplication(addCloseOp.replication);
-        assert addCloseOp.blocks.length == 0;
-
-        // add to the file tree
-        inodeId = getAndUpdateLastInodeId(addCloseOp.inodeId, logVersion, lastInodeId);
-        newFile = FSDirWriteFileOp.addFileForEditLog(fsDir, inodeId,
-            iip.getExistingINodes(), iip.getLastLocalName(),
-            addCloseOp.permissions, addCloseOp.aclEntries,
-            addCloseOp.xAttrs, replication, addCloseOp.mtime,
-            addCloseOp.atime, addCloseOp.blockSize, true,
-            addCloseOp.clientName, addCloseOp.clientMachine,
-            addCloseOp.storagePolicyId, addCloseOp.erasureCodingPolicyId);
-        assert newFile != null;
-        iip = INodesInPath.replace(iip, iip.length() - 1, newFile);
-        fsNamesys.leaseManager.addLease(addCloseOp.clientName, newFile.getId());
-
-        // add the op into retry cache if necessary
-        if (toAddRetryCache) {
-          HdfsFileStatus stat =
-              FSDirStatAndListingOp.createFileStatusForEditLog(fsDir, iip);
-          fsNamesys.addCacheEntryWithPayload(addCloseOp.rpcClientId,
-              addCloseOp.rpcCallId, stat);
+      try (INodesInPath iip = fsDir.lockInodePath(path, FSDirectory.LockMode.WRITE)) {
+        INodeFile oldFile = INodeFile.valueOf(iip.getLastINode(), path, true);
+        if (oldFile != null && addCloseOp.overwrite) {
+          // This is OP_ADD with overwrite
+          FSDirDeleteOp.deleteForEditLog(fsDir, iip, addCloseOp.mtime);
+          iip.unlockLast();
+          oldFile = null;
         }
-      } else { // This is OP_ADD on an existing file (old append)
-        if (!oldFile.isUnderConstruction()) {
-          // This is case 3: a call to append() on an already-closed file.
-          if (FSNamesystem.LOG.isDebugEnabled()) {
-            FSNamesystem.LOG.debug("Reopening an already-closed file " +
-                "for append");
-          }
-          LocatedBlock lb = FSDirAppendOp.prepareFileForAppend(fsNamesys, iip,
-              addCloseOp.clientName, addCloseOp.clientMachine, false, false,
-              false);
+        INodeFile newFile = oldFile;
+        if (oldFile == null) { // this is OP_ADD on a new file (case 1)
+          // versions > 0 support per file replication
+          // get name and replication
+          final short replication = fsNamesys.getBlockManager()
+                  .adjustReplication(addCloseOp.replication);
+          assert addCloseOp.blocks.length == 0;
+
+          // add to the file tree
+          inodeId = getAndUpdateLastInodeId(addCloseOp.inodeId, logVersion, lastInodeId);
+          newFile = FSDirWriteFileOp.addFileForEditLog(fsDir, inodeId,
+                  iip.getExistingINodes(), iip.getLastLocalName(),
+                  addCloseOp.permissions, addCloseOp.aclEntries,
+                  addCloseOp.xAttrs, replication, addCloseOp.mtime,
+                  addCloseOp.atime, addCloseOp.blockSize, true,
+                  addCloseOp.clientName, addCloseOp.clientMachine,
+                  addCloseOp.storagePolicyId, addCloseOp.erasureCodingPolicyId);
+          assert newFile != null;
+          iip.getLockList().lockWrite(newFile);
+          fsNamesys.leaseManager.addLease(addCloseOp.clientName, newFile.getId());
+
           // add the op into retry cache if necessary
           if (toAddRetryCache) {
             HdfsFileStatus stat =
-                FSDirStatAndListingOp.createFileStatusForEditLog(fsDir, iip);
+                    FSDirStatAndListingOp.createFileStatusForEditLog(fsDir, iip);
             fsNamesys.addCacheEntryWithPayload(addCloseOp.rpcClientId,
-                addCloseOp.rpcCallId, new LastBlockWithStatus(lb, stat));
+                    addCloseOp.rpcCallId, stat);
+          }
+        } else { // This is OP_ADD on an existing file (old append)
+          if (!oldFile.isUnderConstruction()) {
+            // This is case 3: a call to append() on an already-closed file.
+            if (FSNamesystem.LOG.isDebugEnabled()) {
+              FSNamesystem.LOG.debug("Reopening an already-closed file " +
+                      "for append");
+            }
+            LocatedBlock lb = FSDirAppendOp.prepareFileForAppend(fsNamesys, iip,
+                    addCloseOp.clientName, addCloseOp.clientMachine, false, false,
+                    false);
+            // add the op into retry cache if necessary
+            if (toAddRetryCache) {
+              HdfsFileStatus stat =
+                      FSDirStatAndListingOp.createFileStatusForEditLog(fsDir, iip);
+              fsNamesys.addCacheEntryWithPayload(addCloseOp.rpcClientId,
+                      addCloseOp.rpcCallId, new LastBlockWithStatus(lb, stat));
+            }
           }
         }
+        // Fall-through for case 2.
+        // Regardless of whether it's a new file or an updated file,
+        // update the block list.
+
+        // Update the salient file attributes.
+        newFile.setAccessTime(addCloseOp.atime, Snapshot.CURRENT_STATE_ID, false);
+        newFile.setModificationTime(addCloseOp.mtime, Snapshot.CURRENT_STATE_ID);
+        ErasureCodingPolicy ecPolicy =
+                FSDirErasureCodingOp.unprotectedGetErasureCodingPolicy(
+                        fsDir.getFSNamesystem(), iip);
+        updateBlocks(fsDir, addCloseOp, iip, newFile, ecPolicy);
+        break;
       }
-      // Fall-through for case 2.
-      // Regardless of whether it's a new file or an updated file,
-      // update the block list.
-      
-      // Update the salient file attributes.
-      newFile.setAccessTime(addCloseOp.atime, Snapshot.CURRENT_STATE_ID, false);
-      newFile.setModificationTime(addCloseOp.mtime, Snapshot.CURRENT_STATE_ID);
-      ErasureCodingPolicy ecPolicy =
-          FSDirErasureCodingOp.unprotectedGetErasureCodingPolicy(
-              fsDir.getFSNamesystem(), iip);
-      updateBlocks(fsDir, addCloseOp, iip, newFile, ecPolicy);
-      break;
     }
     case OP_CLOSE: {
       AddCloseOp addCloseOp = (AddCloseOp)op;

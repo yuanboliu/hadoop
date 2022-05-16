@@ -2512,7 +2512,6 @@ public class FSNamesystem implements Namesystem, FSNamesystemMBean,
           "ecPolicyName are exclusive parameters. Set both is not allowed!");
     }
 
-    INodesInPath iip = null;
     boolean skipSync = true; // until we do something that might create edits
     HdfsFileStatus stat = null;
     BlocksMapUpdateInfo toRemoveBlocks = null;
@@ -2520,13 +2519,10 @@ public class FSNamesystem implements Namesystem, FSNamesystemMBean,
     checkOperation(OperationCategory.WRITE);
     final FSPermissionChecker pc = getPermissionChecker();
     readLock();
-    try {
+    try (INodesInPath iip = FSDirWriteFileOp.resolvePathForStartFile(
+        dir, pc, src, flag, createParent)) {
       checkOperation(OperationCategory.WRITE);
       checkNameNodeSafeMode("Cannot create file" + src);
-
-      iip = FSDirWriteFileOp.resolvePathForStartFile(
-          dir, pc, src, flag, createParent);
-
 
       if (blockSize < minBlockSize) {
         throw new IOException("Specified block size is less than configured" +
@@ -2560,8 +2556,6 @@ public class FSNamesystem implements Namesystem, FSNamesystemMBean,
         // and/or EZ has not mutated
         if (ezInfo != null) {
           checkOperation(OperationCategory.WRITE);
-          iip = FSDirWriteFileOp.resolvePathForStartFile(
-              dir, pc, iip.getPath(), flag, createParent);
           feInfo = FSDirEncryptionZoneOp.getFileEncryptionInfo(
               dir, iip, ezInfo);
         }

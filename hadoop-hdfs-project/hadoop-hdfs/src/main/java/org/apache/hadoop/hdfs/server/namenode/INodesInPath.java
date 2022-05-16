@@ -118,6 +118,13 @@ public class INodesInPath implements Closeable {
     return resolve(rootDir, paths);
   }
 
+  /**
+   * @param components
+   * @return
+   *
+   * @deprecated Use
+   * {@link FSDirectory#lockInodePath(byte[][], FSDirectory.LockMode)} instead.
+   */
   @Deprecated
   static INodesInPath fromComponents(byte[][] components) {
     return new INodesInPath(new INode[components.length], components);
@@ -256,6 +263,9 @@ public class INodesInPath implements Closeable {
    * @param pos the position of the replacement
    * @param inode the new inode
    * @return a new INodesInPath instance
+   *
+   * @Deprecated use {@link #unlockLast()} instead, when remove last.
+   * use {@link InodeLockList#lockWrite(INode) instead.
    */
   @Deprecated
   public static INodesInPath replace(INodesInPath iip, int pos, INode inode) {
@@ -274,6 +284,8 @@ public class INodesInPath implements Closeable {
   /**
    * Extend a given INodesInPath with a child INode. The child INode will be
    * appended to the end of the new INodesInPath.
+   *
+   * @Deprecated use {@link InodeLockList#lockWrite(INode) instead.
    */
   @Deprecated
   public static INodesInPath append(INodesInPath iip, INode child,
@@ -318,7 +330,7 @@ public class INodesInPath implements Closeable {
    */
   private final int snapshotId;
 
-  protected final InodeLockList mLockList;
+  private final InodeLockList mLockList;
   protected FSDirectory.LockMode mLockMode;
 
   @Deprecated
@@ -402,7 +414,6 @@ public class INodesInPath implements Closeable {
    * @return the i-th inode if i >= 0;
    *         otherwise, i < 0, return the (length + i)-th inode.
    */
-  @Deprecated
   public INode getINode(int i) {
     if (inodes == null) {
       return mLockList.mInodes.get((i < 0) ? mLockList.mInodes.size() + i : i);
@@ -410,11 +421,12 @@ public class INodesInPath implements Closeable {
     return inodes[(i < 0) ? inodes.length + i : i];
   }
 
-  /** @return the last inode. */
-  @Deprecated
+  /**
+   * @return the last inode.
+   **/
   public INode getLastINode() {
     if (inodes == null) {
-      return getLastExistingInode();
+      return getLastInodeOrNull();
     }
     return getINode(-1);
   }
@@ -451,7 +463,6 @@ public class INodesInPath implements Closeable {
     return DFSUtil.byteArray2PathString(path, 0, pos + 1); // it's a length...
   }
 
-  @Deprecated
   public int length() {
     if (inodes == null) {
       if (mLockList != null && mLockList.mInodes != null) {
@@ -706,10 +717,15 @@ public class INodesInPath implements Closeable {
   /**
    * @return the last existing inode on the inode path
    */
-  public synchronized INode getLastExistingInode() {
+  @Nullable
+  public synchronized INode getLastInodeOrNull() {
     if (path.length > mLockList.getInodes().size()) {
       return null;
     }
+    return getLastExistingInode();
+  }
+
+  public synchronized INode getLastExistingInode() {
     return mLockList.getInodes().get(mLockList.getInodes().size() - 1);
   }
 
@@ -835,4 +851,7 @@ public class INodesInPath implements Closeable {
     mLockList.unlockLast();
   }
 
+  protected synchronized InodeLockList getLockList() {
+    return mLockList;
+  }
 }

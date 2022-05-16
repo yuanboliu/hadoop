@@ -67,8 +67,4 @@ public class MutableLockedInodePath extends INodesInPath {
                                 InodeLockList descendants) throws InvalidPathException {
     super(descendantUri, lockedInodePath, descendants);
   }
-
-  public synchronized InodeLockList getLockList() {
-    return mLockList;
-  }
 }
