@@ -72,13 +72,15 @@ class FSDirStatAndListingOp {
         }
       }
     }
-
-    if (fsd.isPermissionEnabled()) {
-      if (iip.getLastINode() != null && iip.getLastINode().isDirectory()) {
-        fsd.checkPathAccess(pc, iip, FsAction.READ_EXECUTE);
+    try (INodesInPath lockedInodePath =
+            fsd.lockFullInodePath(srcArg, FSDirectory.LockMode.READ)) {
+      if (fsd.isPermissionEnabled()) {
+        if (iip.getLastINode() != null && iip.getLastINode().isDirectory()) {
+          fsd.checkPathAccess(pc, iip, FsAction.READ_EXECUTE);
+        }
       }
+      return getListing(fsd, lockedInodePath, startAfter, needLocation);
     }
-    return getListing(fsd, iip, startAfter, needLocation);
   }
 
   /**
@@ -97,21 +99,22 @@ class FSDirStatAndListingOp {
   static HdfsFileStatus getFileInfo(FSDirectory fsd, FSPermissionChecker pc,
       String srcArg, boolean resolveLink, boolean needLocation,
       boolean needBlockToken) throws IOException {
-    DirOp dirOp = resolveLink ? DirOp.READ : DirOp.READ_LINK;
-    final INodesInPath iip;
-    if (pc.isSuperUser()) {
-      // superuser can only get an ACE if an existing ancestor is a file.
-      // right or (almost certainly) wrong, current fs contracts expect
-      // superuser to receive null instead.
-      try {
-        iip = fsd.resolvePath(pc, srcArg, dirOp);
-      } catch (AccessControlException ace) {
-        return null;
+    try (INodesInPath iip = fsd.lockFullInodePath(srcArg, FSDirectory.LockMode.READ)) {
+      DirOp dirOp = resolveLink ? DirOp.READ : DirOp.READ_LINK;
+      if (pc.isSuperUser()) {
+        // superuser can only get an ACE if an existing ancestor is a file.
+        // right or (almost certainly) wrong, current fs contracts expect
+        // superuser to receive null instead.
+        try {
+          fsd.resolvePath(pc, srcArg, dirOp);
+        } catch (AccessControlException ace) {
+          return null;
+        }
+      } else {
+        fsd.resolvePath(pc, srcArg, dirOp);
       }
-    } else {
-      iip = fsd.resolvePath(pc, srcArg, dirOp);
+      return getFileInfo(fsd, iip, needLocation, needBlockToken);
     }
-    return getFileInfo(fsd, iip, needLocation, needBlockToken);
   }
 
   /**
@@ -217,66 +220,61 @@ class FSDirStatAndListingOp {
       return getReservedListing(fsd);
     }
 
-    fsd.readLock();
-    try {
-      if (iip.isDotSnapshotDir()) {
-        return getSnapshotsListing(fsd, iip, startAfter);
-      }
-      final int snapshot = iip.getPathSnapshotId();
-      final INode targetNode = iip.getLastINode();
-      if (targetNode == null) {
-        return null;
-      }
-
-      byte parentStoragePolicy = targetNode.getStoragePolicyID();
-
-      if (!targetNode.isDirectory()) {
-        // return the file's status. note that the iip already includes the
-        // target INode
-        return new DirectoryListing(
-            new HdfsFileStatus[]{ createFileStatus(
-                fsd, iip, null, parentStoragePolicy, needLocation, false)
-            }, 0);
-      }
-
-      final INodeDirectory dirInode = targetNode.asDirectory();
-      final ReadOnlyList<INode> contents = dirInode.getChildrenList(snapshot);
-      int startChild = INodeDirectory.nextChild(contents, startAfter);
-      int totalNumChildren = contents.size();
-      int numOfListing = Math.min(totalNumChildren - startChild,
-          fsd.getLsLimit());
-      int locationBudget = fsd.getLsLimit();
-      int listingCnt = 0;
-      HdfsFileStatus listing[] = new HdfsFileStatus[numOfListing];
-      for (int i = 0; i < numOfListing && locationBudget > 0; i++) {
-        INode child = contents.get(startChild+i);
-        byte childStoragePolicy =
-            !child.isSymlink()
-                ? getStoragePolicyID(child.getLocalStoragePolicyID(),
-                    parentStoragePolicy)
-            : parentStoragePolicy;
-        listing[i] = createFileStatus(fsd, iip, child, childStoragePolicy,
-            needLocation, false);
-        listingCnt++;
-        if (listing[i] instanceof HdfsLocatedFileStatus) {
-            // Once we  hit lsLimit locations, stop.
-            // This helps to prevent excessively large response payloads.
-            // Approximate #locations with locatedBlockCount() * repl_factor
-            LocatedBlocks blks =
-                ((HdfsLocatedFileStatus)listing[i]).getLocatedBlocks();
-            locationBudget -= (blks == null) ? 0 :
-               blks.locatedBlockCount() * listing[i].getReplication();
-        }
-      }
-      // truncate return array if necessary
-      if (listingCnt < numOfListing) {
-          listing = Arrays.copyOf(listing, listingCnt);
-      }
-      return new DirectoryListing(
-          listing, totalNumChildren-startChild-listingCnt);
-    } finally {
-      fsd.readUnlock();
+    if (iip.isDotSnapshotDir()) {
+      return getSnapshotsListing(fsd, iip, startAfter);
     }
+    final int snapshot = iip.getPathSnapshotId();
+    final INode targetNode = iip.getLastINode();
+    if (targetNode == null) {
+      return null;
+    }
+
+    byte parentStoragePolicy = targetNode.getStoragePolicyID();
+
+    if (!targetNode.isDirectory()) {
+      // return the file's status. note that the iip already includes the
+      // target INode
+      return new DirectoryListing(
+          new HdfsFileStatus[]{ createFileStatus(
+              fsd, iip, null, parentStoragePolicy, needLocation, false)
+          }, 0);
+    }
+
+    final INodeDirectory dirInode = targetNode.asDirectory();
+    final ReadOnlyList<INode> contents = dirInode.getChildrenList(snapshot);
+    int startChild = INodeDirectory.nextChild(contents, startAfter);
+    int totalNumChildren = contents.size();
+    int numOfListing = Math.min(totalNumChildren - startChild,
+        fsd.getLsLimit());
+    int locationBudget = fsd.getLsLimit();
+    int listingCnt = 0;
+    HdfsFileStatus listing[] = new HdfsFileStatus[numOfListing];
+    for (int i = 0; i < numOfListing && locationBudget > 0; i++) {
+      INode child = contents.get(startChild+i);
+      byte childStoragePolicy =
+          !child.isSymlink()
+              ? getStoragePolicyID(child.getLocalStoragePolicyID(),
+                  parentStoragePolicy)
+          : parentStoragePolicy;
+      listing[i] = createFileStatus(fsd, iip, child, childStoragePolicy,
+          needLocation, false);
+      listingCnt++;
+      if (listing[i] instanceof HdfsLocatedFileStatus) {
+          // Once we  hit lsLimit locations, stop.
+          // This helps to prevent excessively large response payloads.
+          // Approximate #locations with locatedBlockCount() * repl_factor
+          LocatedBlocks blks =
+              ((HdfsLocatedFileStatus)listing[i]).getLocatedBlocks();
+          locationBudget -= (blks == null) ? 0 :
+             blks.locatedBlockCount() * listing[i].getReplication();
+      }
+    }
+    // truncate return array if necessary
+    if (listingCnt < numOfListing) {
+        listing = Arrays.copyOf(listing, listingCnt);
+    }
+    return new DirectoryListing(
+        listing, totalNumChildren-startChild-listingCnt);
   }
 
   /**
@@ -334,40 +332,30 @@ class FSDirStatAndListingOp {
   static HdfsFileStatus getFileInfo(FSDirectory fsd, INodesInPath iip,
       boolean includeStoragePolicy, boolean needLocation,
       boolean needBlockToken) throws IOException {
-    fsd.readLock();
-    try {
-      final INode node = iip.getLastINode();
-      if (node == null) {
-        return null;
-      }
-      byte policy = (includeStoragePolicy && !node.isSymlink())
-          ? node.getStoragePolicyID()
-          : HdfsConstants.BLOCK_STORAGE_POLICY_ID_UNSPECIFIED;
-      return createFileStatus(fsd, iip, null, policy, needLocation,
-          needBlockToken);
-    } finally {
-      fsd.readUnlock();
+    final INode node = iip.getLastINode();
+    if (node == null) {
+      return null;
     }
+    byte policy = (includeStoragePolicy && !node.isSymlink())
+        ? node.getStoragePolicyID()
+        : HdfsConstants.BLOCK_STORAGE_POLICY_ID_UNSPECIFIED;
+    return createFileStatus(fsd, iip, null, policy, needLocation,
+        needBlockToken);
   }
 
   static HdfsFileStatus getFileInfo(FSDirectory fsd, INodesInPath iip,
       boolean needLocation, boolean needBlockToken) throws IOException {
-    fsd.readLock();
-    try {
-      HdfsFileStatus status = null;
-      if (FSDirectory.isExactReservedName(iip.getPathComponents())) {
-        status = FSDirectory.DOT_RESERVED_STATUS;
-      } else if (iip.isDotSnapshotDir()) {
-        if (fsd.getINode4DotSnapshot(iip) != null) {
-          status = FSDirectory.DOT_SNAPSHOT_DIR_STATUS;
-        }
-      } else {
-        status = getFileInfo(fsd, iip, true, needLocation, needBlockToken);
+    HdfsFileStatus status = null;
+    if (FSDirectory.isExactReservedName(iip.getPathComponents())) {
+      status = FSDirectory.DOT_RESERVED_STATUS;
+    } else if (iip.isDotSnapshotDir()) {
+      if (fsd.getINode4DotSnapshot(iip) != null) {
+        status = FSDirectory.DOT_SNAPSHOT_DIR_STATUS;
       }
-      return status;
-    } finally {
-      fsd.readUnlock();
+    } else {
+      status = getFileInfo(fsd, iip, true, needLocation, needBlockToken);
     }
+    return status;
   }
 
   /**
@@ -397,13 +385,12 @@ class FSDirStatAndListingOp {
   private static HdfsFileStatus createFileStatus(
       FSDirectory fsd, INodesInPath iip, INode child, byte storagePolicy,
       boolean needLocation, boolean needBlockToken) throws IOException {
-    assert fsd.hasReadLock();
     // only directory listing sets the status name.
     byte[] name = HdfsFileStatus.EMPTY_NAME;
     if (child != null) {
       name = child.getLocalNameBytes();
       // have to do this for EC and EZ lookups...
-      iip = INodesInPath.append(iip, child, name);
+      iip = iip.createTempPathForExistingChild(child, FSDirectory.LockMode.READ);
     }
 
     long size = 0;     // length is zero for directories
@@ -415,7 +402,6 @@ class FSDirStatAndListingOp {
 
     final boolean isEncrypted = FSDirEncryptionZoneOp.isInAnEZ(fsd, iip);
     FileEncryptionInfo feInfo = null;
-
     final ErasureCodingPolicy ecPolicy = FSDirErasureCodingOp
         .unprotectedGetErasureCodingPolicy(fsd.getFSNamesystem(), iip);
     final boolean isErasureCoded = (ecPolicy != null);

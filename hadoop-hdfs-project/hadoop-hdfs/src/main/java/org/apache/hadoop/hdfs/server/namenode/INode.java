@@ -21,6 +21,7 @@ import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Maps;
+import java.util.Arrays;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 import org.apache.hadoop.classification.InterfaceAudience;
 import org.apache.hadoop.fs.ContentSummary;
@@ -950,10 +951,10 @@ public abstract class INode implements INodeAttributes, Diff.Element<byte[]> {
    * @param name the expected name of the inode to be locked
    * @throws InvalidPathException if the parent and/or name is not as expected
    */
-  public void lockReadAndCheckNameAndParent(INode parent, String name) throws
+  public void lockReadAndCheckNameAndParent(INode parent, byte[] name) throws
           InvalidPathException {
     lockReadAndCheckParent(parent);
-    if (!getLocalName().equals(name)) {
+    if (!Arrays.equals(getLocalNameBytes(), name)) {
       unlockRead();
       throw new InvalidPathException(ExceptionMessage.PATH_INVALID_CONCURRENT_RENAME.getMessage());
     }
@@ -1018,10 +1019,10 @@ public abstract class INode implements INodeAttributes, Diff.Element<byte[]> {
    * @param name the expected name of the inode to be locked
    * @throws InvalidPathException if the parent and/or name is not as expected
    */
-  public void lockWriteAndCheckNameAndParent(INode parent, String name)
+  public void lockWriteAndCheckNameAndParent(INode parent, byte[] name)
       throws InvalidPathException {
     lockWriteAndCheckParent(parent);
-    if (!getLocalName().equals(name)) {
+    if (!Arrays.equals(getLocalNameBytes(), name)) {
       unlockWrite();
       throw new InvalidPathException(ExceptionMessage.PATH_INVALID_CONCURRENT_RENAME.getMessage());
     }

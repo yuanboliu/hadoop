@@ -19,16 +19,15 @@
 package org.apache.hadoop.hdfs.server.namenode;
 
 import org.apache.hadoop.fs.InvalidPathException;
-import org.apache.hadoop.fs.Path;
 
 import javax.annotation.concurrent.ThreadSafe;
 
 /**
- * This class represents an {@link LockedInodePath}, where the list of inodes can be extended to
+ * This class represents an {@link INodesInPath}, where the list of inodes can be extended to
  * gather additional inodes along the path.
  */
 @ThreadSafe
-public class MutableLockedInodePath extends LockedInodePath {
+public class MutableLockedInodePath extends INodesInPath {
   /**
    * Creates an instance of {@link MutableLockedInodePath}.
    *
@@ -38,7 +37,7 @@ public class MutableLockedInodePath extends LockedInodePath {
    * @throws InvalidPathException if the path passed is invalid
    */
   // TODO(gpang): restructure class hierarchy, rename class
-  public MutableLockedInodePath(Path uri, InodeLockList lockList,
+  public MutableLockedInodePath(String uri, InodeLockList lockList,
       FSDirectory.LockMode lockMode)
       throws InvalidPathException {
     super(uri, lockList, lockMode);
@@ -47,14 +46,13 @@ public class MutableLockedInodePath extends LockedInodePath {
   /**
    * Creates an instance of {@link MutableLockedInodePath}.
    *
-   * @param uri the URI
    * @param lockList the lock list of the inodes
    * @param pathComponents the array of path components
    * @param lockMode the lock mode for the path
    */
-  public MutableLockedInodePath(Path uri, InodeLockList lockList, String[] pathComponents,
-      FSDirectory.LockMode lockMode) {
-    super(uri, lockList, pathComponents, lockMode);
+  public MutableLockedInodePath(InodeLockList lockList,
+      byte[][] pathComponents, FSDirectory.LockMode lockMode) {
+    super(lockList, pathComponents, lockMode);
   }
 
   /**
@@ -65,13 +63,9 @@ public class MutableLockedInodePath extends LockedInodePath {
    * @param descendants Locked descendants
    * @throws InvalidPathException if the path passed is invalid
    */
-  public MutableLockedInodePath(Path descendantUri, LockedInodePath lockedInodePath,
+  public MutableLockedInodePath(String descendantUri, INodesInPath lockedInodePath,
                                 InodeLockList descendants) throws InvalidPathException {
     super(descendantUri, lockedInodePath, descendants);
-  }
-
-  public synchronized String[] getPathComponents() {
-    return mPathComponents;
   }
 
   public synchronized InodeLockList getLockList() {

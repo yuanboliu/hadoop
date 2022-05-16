@@ -17,8 +17,14 @@
  */
 package org.apache.hadoop.hdfs.server.namenode;
 
+import java.io.Closeable;
+import java.io.FileNotFoundException;
 import java.util.Arrays;
+import java.util.List;
 
+import org.apache.hadoop.fs.InvalidPathException;
+import org.apache.hadoop.fs.Path;
+import org.apache.hadoop.hdfs.server.lock.exception.ExceptionMessage;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.apache.hadoop.hdfs.DFSUtil;
@@ -29,13 +35,17 @@ import org.apache.hadoop.hdfs.server.namenode.snapshot.Snapshot;
 
 import com.google.common.base.Preconditions;
 
+import javax.annotation.Nullable;
+import javax.annotation.concurrent.ThreadSafe;
+
 import static org.apache.hadoop.hdfs.server.namenode.snapshot.Snapshot.CURRENT_STATE_ID;
 import static org.apache.hadoop.hdfs.server.namenode.snapshot.Snapshot.ID_INTEGER_COMPARATOR;
 
 /**
  * Contains INodes information resolved from a given path.
  */
-public class INodesInPath {
+@ThreadSafe
+public class INodesInPath implements Closeable {
   public static final Logger LOG = LoggerFactory.getLogger(INodesInPath.class);
 
   /**
@@ -278,6 +288,7 @@ public class INodesInPath {
   /**
    * Array with the specified number of INodes resolved for a given path.
    */
+  @Deprecated
   private final INode[] inodes;
   /**
    * true if this path corresponds to a snapshot
@@ -298,6 +309,9 @@ public class INodesInPath {
    */
   private final int snapshotId;
 
+  protected final InodeLockList mLockList;
+  protected FSDirectory.LockMode mLockMode;
+
   private INodesInPath(INode[] inodes, byte[][] path, boolean isRaw,
       boolean isSnapshot,int snapshotId) {
     Preconditions.checkArgument(inodes != null && path != null);
@@ -306,10 +320,54 @@ public class INodesInPath {
     this.isRaw = isRaw;
     this.isSnapshot = isSnapshot;
     this.snapshotId = snapshotId;
+
+    mLockList = null;
   }
 
   private INodesInPath(INode[] inodes, byte[][] path) {
     this(inodes, path, false, false, CURRENT_STATE_ID);
+  }
+
+  INodesInPath(InodeLockList lockList, byte[][] pathComponents,
+      FSDirectory.LockMode lockMode) {
+    Preconditions.checkArgument(!lockList.isEmpty());
+    path = pathComponents;
+    mLockList = lockList;
+    mLockMode = lockMode;
+
+    // TODO(baoloongmao): fix snapshot and raw future.
+    this.isSnapshot = false;
+    this.snapshotId = CURRENT_STATE_ID;
+    this.isRaw = false;
+    inodes = null;
+  }
+
+  INodesInPath(String uri, InodeLockList lockList,
+      FSDirectory.LockMode lockMode)
+      throws InvalidPathException {
+    this(lockList, INode.getPathComponents(uri), lockMode);
+  }
+
+  /**
+   * Creates a new instance of {@link INodesInPath}, that is the descendant of an existing
+   * lockedInodePath.
+   *
+   * @param descendantUri the uri of the descendant
+   * @param lockedInodePath the lockedInodePath that is the parent of the descendant
+   * @param lockList the lockList which contains all the locks from the parent (not including)
+   *                to the descendant.
+   */
+  INodesInPath(String descendantUri, INodesInPath lockedInodePath,
+      InodeLockList lockList) throws InvalidPathException {
+    path = INode.getPathComponents(descendantUri);
+    mLockList = new CompositeInodeLockList(lockedInodePath.mLockList, lockList);
+    mLockMode = lockedInodePath.getLockMode();
+
+    // TODO(baoloongmao): fix snapshot and raw future.
+    this.isSnapshot = false;
+    this.snapshotId = CURRENT_STATE_ID;
+    this.isRaw = false;
+    inodes = null;
   }
 
   /**
@@ -328,6 +386,7 @@ public class INodesInPath {
     return isSnapshot ? snapshotId : CURRENT_STATE_ID;
   }
 
+
   /**
    * @return the i-th inode if i >= 0;
    *         otherwise, i < 0, return the (length + i)-th inode.
@@ -338,6 +397,9 @@ public class INodesInPath {
 
   /** @return the last inode. */
   public INode getLastINode() {
+    if (inodes == null) {
+      return getLastExistingInode();
+    }
     return getINode(-1);
   }
 
@@ -354,7 +416,7 @@ public class INodesInPath {
   }
 
   /** @return the full path in string form */
-  public String getPath() {
+  public synchronized String getPath() {
     if (pathname == null) {
       pathname = DFSUtil.byteArray2PathString(path);
     }
@@ -370,6 +432,9 @@ public class INodesInPath {
   }
 
   public int length() {
+    if (inodes == null) {
+      return -1;
+    }
     return inodes.length;
   }
 
@@ -525,4 +590,203 @@ public class INodesInPath {
           + ", this=" + toString(false));
     }
   }
+
+
+  /**
+   * @return the target inode
+   * @throws FileNotFoundException if the target inode does not exist
+   */
+  public synchronized INode getInode() throws FileNotFoundException {
+    INode inode = getInodeOrNull();
+    if (inode == null) {
+      throw new FileNotFoundException(ExceptionMessage.PATH_DOES_NOT_EXIST.getMessage(getPath()));
+    }
+    return inode;
+  }
+
+  /**
+   * @return the target inode, or null if it does not exist
+   */
+  @Nullable
+  public synchronized INode getInodeOrNull() {
+    if (!fullPathExists()) {
+      return null;
+    }
+    List<INode> inodeList = mLockList.getInodes();
+    return inodeList.get(inodeList.size() - 1);
+  }
+
+  /**
+   * @return the target inode as an {@link INodeFile}
+   * @throws FileNotFoundException if the target inode does not exist, or it is not a file
+   */
+  public synchronized  INodeFile getInodeFile() throws
+      FileNotFoundException {
+    INode inode = getInode();
+    if (!inode.isFile()) {
+      throw new FileNotFoundException(ExceptionMessage.PATH_MUST_BE_FILE.getMessage(getPath()));
+    }
+    return (INodeFile) inode;
+  }
+
+  /**
+   * @return the parent of the target inode
+   * @throws InvalidPathException if the parent inode is not a directory
+   * @throws FileNotFoundException if the parent of the target does not exist
+   */
+  public synchronized INodeDirectory getParentInodeDirectory()
+      throws InvalidPathException, FileNotFoundException {
+    INode inode = getParentInodeOrNull();
+    if (inode == null) {
+      throw new FileNotFoundException(
+          ExceptionMessage.PATH_DOES_NOT_EXIST.getMessage(new Path(getPath()).getParent()));
+    }
+    if (!inode.isDirectory()) {
+      throw new InvalidPathException(
+          ExceptionMessage.PATH_MUST_HAVE_VALID_PARENT.getMessage(getPath()));
+    }
+    return (INodeDirectory) inode;
+  }
+
+  /**
+   * @return the parent of the target inode, or null if the parent does not exist
+   */
+  @Nullable
+  public synchronized INode getParentInodeOrNull() {
+    if (path.length < 2 || mLockList.getInodes().size() < (path.length - 1)) {
+      // The path is only the root, or the list of inodes is not long enough to contain the parent
+      return null;
+    }
+    return mLockList.getInodes().get(path.length - 2);
+  }
+
+  /**
+   * @return the last existing inode on the inode path
+   */
+  public synchronized INode getLastExistingInode() {
+    return mLockList.getInodes().get(mLockList.getInodes().size() - 1);
+  }
+
+  /**
+   * @return a copy of the list of existing inodes, from the root
+   */
+  public synchronized List<INode> getInodeList() {
+    return mLockList.getInodes();
+  }
+
+  /**
+   * @return true if the entire path of inodes exists, false otherwise
+   */
+  public synchronized boolean fullPathExists() {
+    return mLockList.getInodes().size() == path.length;
+  }
+
+  /**
+   * @return the {@link FSDirectory.LockMode} of this path
+   */
+  public synchronized FSDirectory.LockMode getLockMode() {
+    return mLockMode;
+  }
+
+  @Override
+  public synchronized void close() {
+    mLockList.close();
+  }
+
+  /**
+   * Downgrades the last inode that was locked, if the inode was previously WRITE locked. If the
+   * inode was previously READ locked, no additional locking will occur.
+   */
+  public synchronized void downgradeLast() {
+    mLockList.downgradeLast();
+  }
+
+  /**
+   * Downgrades the last inode that was locked, according to the specified {@link LockingScheme}.
+   * If the locking scheme initially desired the READ lock, the downgrade will occur. Otherwise,
+   * downgrade will not be performed.
+   *
+   * @param lockingScheme the locking scheme to inspect
+   */
+  public synchronized void downgradeLastWithScheme(LockingScheme lockingScheme) {
+    // Need to downgrade if the locking scheme initially desired the READ lock.
+    if (lockingScheme.getMode() == FSDirectory.LockMode.READ) {
+      downgradeLast();
+      mLockMode = FSDirectory.LockMode.READ;
+    }
+  }
+
+  /**
+   * Returns the closest ancestor of the target inode (last inode in the full path).
+   *
+   * @return the closest ancestor inode
+   * @throws FileNotFoundException if an ancestor does not exist
+   */
+  public synchronized INode getAncestorInode() throws FileNotFoundException {
+    int ancestorIndex = path.length - 2;
+    if (ancestorIndex < 0) {
+      throw new FileNotFoundException(ExceptionMessage.PATH_DOES_NOT_EXIST.getMessage(getPath()));
+    }
+    ancestorIndex = Math.min(ancestorIndex, mLockList.getInodes().size() - 1);
+    return mLockList.getInodes().get(ancestorIndex);
+  }
+
+  /**
+   * Constructs a temporary {@link INodesInPath} from an existing {@link INodesInPath}, for
+   * a direct child of the existing path. The child does not exist yet, this method simply adds
+   * the child to the path.
+   *
+   * @param childName the name of the direct child
+   * @return a {@link INodesInPath} for the direct child
+   * @throws InvalidPathException if the path is invalid
+   */
+  public synchronized INodesInPath createTempPathForChild(String childName)
+      throws InvalidPathException {
+    Preconditions.checkNotNull(getInodeOrNull());
+    Preconditions.checkState(getInodeOrNull().isDirectory(),
+        "Trying to create TempPathForChild for a file inode");
+    return new MutableLockedInodePath(new Path(getPath(), childName).toString(),
+        new CompositeInodeLockList(mLockList),
+        mLockMode);
+  }
+
+  /**
+   * Constructs a temporary {@link INodesInPath} from an existing {@link INodesInPath}, for
+   * a direct child of the existing path. The child must exist and this method will lock the child.
+   * A new {@link INodesInPath} object is returned. When the returned temporary path is closed,
+   * it does not close the existing path.
+   *
+   * @param child the inode of the direct child
+   * @param lockMode the desired locking mode for the child
+   * @return a {@link INodesInPath} for the direct child
+   * @throws InvalidPathException if the path is invalid
+   * @throws FileNotFoundException if the file does not exist
+   */
+  public synchronized INodesInPath createTempPathForExistingChild(
+      INode child, FSDirectory.LockMode lockMode)
+      throws InvalidPathException, FileNotFoundException {
+    InodeLockList lockList = new CompositeInodeLockList(mLockList);
+    INodesInPath lockedDescendantPath;
+    if (lockMode == FSDirectory.LockMode.READ) {
+      lockList.lockReadAndCheckParent(child, getInode());
+      lockedDescendantPath = new MutableLockedInodePath(
+          new Path(getPath(), child.getLocalName()).toString(), this, lockList);
+    } else {
+      lockList.lockWriteAndCheckParent(child, getInode());
+      lockedDescendantPath = new MutableLockedInodePath(
+          new Path(getPath(), child.getLocalName()).toString(), this, lockList);
+    }
+    return lockedDescendantPath;
+  }
+
+  /**
+   * Unlocks the last inode that was locked.
+   */
+  public synchronized void unlockLast() {
+    if (mLockList.getInodes().isEmpty()) {
+      return;
+    }
+    mLockList.unlockLast();
+  }
+
 }

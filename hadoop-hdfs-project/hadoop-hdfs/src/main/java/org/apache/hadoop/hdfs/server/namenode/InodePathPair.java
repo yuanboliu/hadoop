@@ -18,37 +18,25 @@
 
 package org.apache.hadoop.hdfs.server.namenode;
 
+import org.apache.commons.math3.util.Pair;
+
 import javax.annotation.concurrent.ThreadSafe;
-import java.util.List;
 
 /**
- * This class represents a list of locked inodePaths.
+ * This class represents a pair of {@link INodesInPath}s. This is threadsafe, since the
+ * elements cannot set once the pair is constructed.
  */
 @ThreadSafe
-public class LockedInodePathList implements AutoCloseable {
-  private final List<INodesInPath> mInodePathList;
+public final class InodePathPair extends Pair<INodesInPath, INodesInPath>
+    implements AutoCloseable {
 
-  /**
-   * Creates a new instance of {@link LockedInodePathList}.
-   *
-   * @param inodePathList the list to be closed
-   */
-  public LockedInodePathList(List<INodesInPath> inodePathList) {
-    mInodePathList = inodePathList;
-  }
-
-  /**
-   * get the associated inodePathList.
-   * @return the list of inodePaths
-   */
-  public List<INodesInPath> getInodePathList() {
-    return mInodePathList;
+  InodePathPair(INodesInPath inodePath1, INodesInPath inodePath2) {
+    super(inodePath1, inodePath2);
   }
 
   @Override
-  public void close() {
-    for (INodesInPath lockedInodePath: mInodePathList) {
-      lockedInodePath.close();
-    }
+  public synchronized void close() {
+    getFirst().close();
+    getSecond().close();
   }
 }
