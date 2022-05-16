@@ -675,9 +675,11 @@ class FSDirWriteFileOp {
                                         src + " for " + holder);
     }
     checkBlock(fsn, last);
-    INodesInPath iip = fsn.dir.resolvePath(pc, src, fileId);
-    return completeFileInternal(fsn, iip, holder,
-        ExtendedBlock.getLocalBlock(last), fileId);
+    try (INodesInPath iip = fsn.dir.lockFullInodePath(src,
+        fileId, FSDirectory.LockMode.WRITE)) {
+      return completeFileInternal(fsn, iip, holder,
+          ExtendedBlock.getLocalBlock(last), fileId);
+    }
   }
 
   private static boolean completeFileInternal(

@@ -44,6 +44,7 @@ public enum ExceptionMessage {
   PATH_INVALID_CONCURRENT_RENAME("Path is no longer valid, possibly due to a concurrent rename."),
   PATH_INVALID_CONCURRENT_DELETE("Path is no longer valid, possibly due to a concurrent delete."),
   PATH_MUST_HAVE_VALID_PARENT("{0} does not have a valid parent"),
+  INODE_DOES_NOT_EXIST("inodeId {0,number,#} does not exist"),
 
   // SEMICOLON! minimize merge conflicts by putting it on its own line
   ;

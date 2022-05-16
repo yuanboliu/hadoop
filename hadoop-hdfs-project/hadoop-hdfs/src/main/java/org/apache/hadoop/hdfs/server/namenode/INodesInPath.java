@@ -457,8 +457,7 @@ public class INodesInPath implements Closeable {
     return inodes.length;
   }
 
-  @Deprecated
-  public INode[] getINodesArray() {
+  public synchronized INode[] getINodesArray() {
     INode[] retArr = new INode[mLockList.mInodes.size()];
     retArr = mLockList.mInodes.toArray(retArr);
     return retArr;

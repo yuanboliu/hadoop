@@ -71,6 +71,7 @@ import org.apache.hadoop.util.Time;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import javax.annotation.concurrent.GuardedBy;
 import java.io.Closeable;
 import java.io.FileNotFoundException;
 import java.io.IOException;
@@ -152,6 +153,8 @@ public class FSDirectory implements Closeable {
         .isdir(true)
         .build();
 
+  private static final int PATH_TRAVERSAL_RETRIES = 1000;
+
   INodeDirectory rootDir;
   private final FSNamesystem namesystem;
   private volatile boolean skipQuotaCheck = false; //skip while consuming edits
@@ -160,6 +163,7 @@ public class FSDirectory implements Closeable {
   private final int lsLimit;  // max list limit
   private final int contentCountLimit; // max content summary counts per run
   private final long contentSleepMicroSec;
+
   private final INodeMap inodeMap; // Synchronized by dirLock
   private long yieldCount = 0; // keep track of lock yield count.
   private int quotaInitThreads;
@@ -1426,6 +1430,8 @@ public class FSDirectory implements Closeable {
   }
 
   public INodeMap getINodeMap() {
+    // TODO(baoloongmao): make this thread-safe,
+    //  do not export the inodeMap out of this class.
     return inodeMap;
   }
 
@@ -1509,7 +1515,7 @@ public class FSDirectory implements Closeable {
       }
     }
   }
-  
+
   /**
    * Get the inode from inodeMap based on its inode id.
    * @param id The given id
@@ -1567,12 +1573,12 @@ public class FSDirectory implements Closeable {
       inode.setLocalName(name.getBytes());
     }
   }
-  
+
   void shutdown() {
     nameCache.reset();
     inodeMap.clear();
   }
-  
+
   /**
    * Given an INode get all the path complents leading to it from the root.
    * If an Inode corresponding to C is given in /A/B/C, the returned
@@ -1760,12 +1766,14 @@ public class FSDirectory implements Closeable {
    * @throws ParentNotDirectoryException
    * @throws AccessControlException
    */
+  @Deprecated
   public INodesInPath getINodesInPath(String src, DirOp dirOp)
       throws UnresolvedLinkException, AccessControlException,
       ParentNotDirectoryException {
     return getINodesInPath(INode.getPathComponents(src), dirOp);
   }
 
+  @Deprecated
   public INodesInPath getINodesInPath(byte[][] components, DirOp dirOp)
       throws UnresolvedLinkException, AccessControlException,
       ParentNotDirectoryException {
@@ -2060,7 +2068,6 @@ public class FSDirectory implements Closeable {
     }
   }
 
-
   /**
    * Locks existing inodes on the specified path, in the specified {@link LockMode}. The target
    * inode is not required to exist.
@@ -2173,7 +2180,6 @@ public class FSDirectory implements Closeable {
     return LockMode.READ;
   }
 
-
   /**
    * Locks existing inodes on the specified path, in the specified {@link LockMode}. The target
    * inode must exist.
@@ -2197,6 +2203,74 @@ public class FSDirectory implements Closeable {
   }
 
   /**
+   * Locks existing inodes on the path to the inode specified by an id, in the specified
+   * {@link LockMode}. The target inode must exist. This may require multiple traversals of the
+   * tree, so may be inefficient.
+   *
+   * @param id the inode id
+   * @param lockMode the {@link LockMode} to lock the inodes with
+   * @return the {@link INodesInPath} representing the locked path of inodes
+   * @throws FileNotFoundException if the target inode does not exist
+   */
+  public INodesInPath lockFullInodePath(long id, LockMode lockMode)
+      throws FileNotFoundException {
+    int count = 0;
+    while (true) {
+      INode inode = getInode(id);
+      if (inode == null) {
+        throw new FileNotFoundException(ExceptionMessage.INODE_DOES_NOT_EXIST.getMessage(id));
+      }
+      // Compute the path given the target inode.
+      StringBuilder builder = new StringBuilder();
+      computePathForInode(inode, builder);
+      String path = builder.toString();
+      boolean valid = false;
+      INodesInPath inodePath = null;
+      try {
+        inodePath = lockFullInodePath(path, lockMode);
+        if (inodePath.getInode().getId() == id) {
+          // Set to true, so the path is not unlocked before returning.
+          valid = true;
+          return inodePath;
+        }
+        // The path does not end up at the target inode id. Repeat the traversal.
+      } catch (InvalidPathException e) {
+        // ignore and repeat the loop
+        LOG.warn("Inode lookup id {} computed path {} mismatch id. Repeating.", id, path);
+      } finally {
+        if (!valid && inodePath != null) {
+          inodePath.close();
+        }
+      }
+      count++;
+      if (count > PATH_TRAVERSAL_RETRIES) {
+        throw new FileNotFoundException(
+            ExceptionMessage.INODE_DOES_NOT_EXIST.getMessage(id));
+      }
+    }
+  }
+
+  INodesInPath lockFullInodePath(String src,
+      long fileId, LockMode lockMode)
+      throws InvalidPathException, FileNotFoundException {
+    // Older clients may not have given us an inode ID to work with.
+    // In this case, we have to try to resolve the path and hope it
+    // hasn't changed or been deleted since the file was opened for write.
+    INodesInPath iip;
+    if (fileId == HdfsConstants.GRANDFATHER_INODE_ID) {
+      iip = lockFullInodePath(src, lockMode);
+    } else {
+      INode inode = getInode(fileId);
+      if (inode == null) {
+        iip = lockFullInodePath(src, lockMode);
+      } else {
+        iip = lockFullInodePath(fileId, lockMode);
+      }
+    }
+    return iip;
+  }
+
+  /**
    * Attempts to extend an existing {@link INodesInPath} to reach the target inode (the last
    * inode for the full path). If the target inode does not exist, an exception will be thrown.
    *
@@ -2214,6 +2288,39 @@ public class FSDirectory implements Closeable {
     if (!traversalResult.isFound()) {
       throw new FileNotFoundException(
           ExceptionMessage.PATH_DOES_NOT_EXIST.getMessage(inodePath.getPath()));
+    }
+  }
+
+  /**
+   * Appends components of the path from a given inode.
+   *
+   * @param inode the {@link INode} to compute the path for
+   * @param builder a {@link StringBuilder} that is updated with the path components
+   * @throws FileNotFoundException if an inode in the path does not exist
+   */
+  private void computePathForInode(INode inode, StringBuilder builder)
+      throws FileNotFoundException {
+    inode.lockRead();
+    long id = inode.getId();
+    long parentId = inode.getParent().getId();
+    String name = inode.getLocalName();
+    inode.unlockRead();
+
+    if (isRootId(id)) {
+      builder.append(Path.SEPARATOR);
+    } else if (isRootId(parentId)) {
+      builder.append(Path.SEPARATOR);
+      builder.append(name);
+    } else {
+      INode parentInode = getInode(parentId);
+      if (parentInode == null) {
+        throw new FileNotFoundException(
+            ExceptionMessage.INODE_DOES_NOT_EXIST.getMessage(parentId));
+      }
+
+      computePathForInode(parentInode, builder);
+      builder.append(Path.SEPARATOR);
+      builder.append(name);
     }
   }
 
@@ -2285,6 +2392,14 @@ public class FSDirectory implements Closeable {
         lockDescendantsInternal(lockedDescendantPath, lockMode, inodePathList);
       }
     }
+  }
+
+  /**
+   * @param fileId the file id to check
+   * @return true if the given file id is the root id
+   */
+  public boolean isRootId(long fileId) {
+    return fileId == INodeId.ROOT_INODE_ID;
   }
 
   /**
