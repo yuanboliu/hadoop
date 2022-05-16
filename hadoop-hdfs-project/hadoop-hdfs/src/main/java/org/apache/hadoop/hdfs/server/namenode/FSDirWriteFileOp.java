@@ -685,7 +685,7 @@ class FSDirWriteFileOp {
                                         src + " for " + holder);
     }
     checkBlock(fsn, last);
-    try (INodesInPath iip = fsn.dir.lockFullInodePath(src,
+    try (INodesInPath iip = fsn.dir.lockInodePath(pc, src,
         fileId, FSDirectory.LockMode.WRITE)) {
       return completeFileInternal(fsn, iip, holder,
           ExtendedBlock.getLocalBlock(last), fileId);

@@ -786,7 +786,9 @@ public class INodesInPath implements Closeable {
 
   @Override
   public synchronized void close() {
-    mLockList.close();
+    if (mLockList != null) {
+      mLockList.close();
+    }
   }
 
   /**
