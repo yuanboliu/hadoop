@@ -21,11 +21,8 @@ import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Maps;
-import java.util.Arrays;
-import java.util.concurrent.locks.ReentrantReadWriteLock;
 import org.apache.hadoop.classification.InterfaceAudience;
 import org.apache.hadoop.fs.ContentSummary;
-import org.apache.hadoop.fs.InvalidPathException;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.fs.permission.FsPermission;
 import org.apache.hadoop.fs.permission.PermissionStatus;
@@ -35,7 +32,6 @@ import org.apache.hadoop.hdfs.protocol.HdfsConstants;
 import org.apache.hadoop.hdfs.server.blockmanagement.BlockInfo;
 import org.apache.hadoop.hdfs.server.blockmanagement.BlockStoragePolicySuite;
 import org.apache.hadoop.hdfs.server.blockmanagement.BlockUnderConstructionFeature;
-import org.apache.hadoop.hdfs.server.lock.exception.ExceptionMessage;
 import org.apache.hadoop.hdfs.server.namenode.INodeReference.DstReference;
 import org.apache.hadoop.hdfs.server.namenode.INodeReference.WithCount;
 import org.apache.hadoop.hdfs.server.namenode.INodeReference.WithName;
@@ -65,14 +61,10 @@ public abstract class INode implements INodeAttributes, Diff.Element<byte[]> {
   /** parent is either an {@link INodeDirectory} or an {@link INodeReference}.*/
   private INode parent = null;
 
-  // TODO(baoloongmao): maintain this by lockPool future
-  private final ReentrantReadWriteLock mLock;
-
   private boolean mDeleted;
 
   INode(INode parent) {
     this.parent = parent;
-    mLock = new ReentrantReadWriteLock();
     mDeleted = false;
   }
 
@@ -902,136 +894,6 @@ public abstract class INode implements INodeAttributes, Diff.Element<byte[]> {
     out.print(getParentString());
     out.print(", " + getPermissionStatus(snapshotId));
   }
-
-  /**
-   * Obtains a read lock on the inode. This call should only be used when locking the root or an
-   * inode by id and not path or parent.
-   */
-  public void lockRead() {
-    mLock.readLock().lock();
-  }
-
-  /**
-   * Obtains a write lock on the inode. This call should only be used when locking the root or an
-   * inode by id and not path or parent.
-   */
-  public void lockWrite() {
-    mLock.writeLock().lock();
-  }
-
-  /**
-   * Releases the read lock for this inode.
-   */
-  public void unlockRead() {
-    mLock.readLock().unlock();
-  }
-
-  /**
-   * Releases the write lock for this inode.
-   */
-  public void unlockWrite() {
-    mLock.writeLock().unlock();
-  }
-
-  /**
-   * @return returns true if the current thread holds a write lock on this inode, false otherwise
-   */
-  public boolean isWriteLocked() {
-    return mLock.isWriteLockedByCurrentThread();
-  }
-
-  public boolean isReadLocked() {
-    return isWriteLocked() || mLock.getReadHoldCount() > 0;
-  }
-
-  /**
-   * Obtains a read lock on the inode. Afterward, checks the inode state to ensure the full inode
-   * path is consistent with what the caller is expecting. If the state is inconsistent, an
-   * exception will be thrown and the lock will be released.
-   *
-   * NOTE: This method assumes that the inode path to the parent has been read locked.
-   *
-   * @param parent the expected parent inode
-   * @param name the expected name of the inode to be locked
-   * @throws InvalidPathException if the parent and/or name is not as expected
-   */
-  public void lockReadAndCheckNameAndParent(INode parent, byte[] name) throws
-          InvalidPathException {
-    lockReadAndCheckParent(parent);
-    if (!Arrays.equals(getLocalNameBytes(), name)) {
-      unlockRead();
-      throw new InvalidPathException(ExceptionMessage.PATH_INVALID_CONCURRENT_RENAME.getMessage());
-    }
-  }
-
-  /**
-   * Obtains a read lock on the inode. Afterward, checks the inode state:
-   *   - parent is consistent with what the caller is expecting
-   *   - the inode is not marked as deleted
-   * If the state is inconsistent, an exception will be thrown and the lock will be released.
-   *
-   * NOTE: This method assumes that the inode path to the parent has been read locked.
-   *
-   * @param parent the expected parent inode
-   * @throws InvalidPathException if the parent is not as expected
-   */
-  public void lockReadAndCheckParent(INode parent) throws InvalidPathException {
-    lockRead();
-    if (mDeleted) {
-      unlockRead();
-      throw new InvalidPathException(ExceptionMessage.PATH_INVALID_CONCURRENT_DELETE.getMessage());
-    }
-    if (parent != null && this.parent != null
-        && parent.getId() != this.parent.getId()) {
-      unlockRead();
-      throw new InvalidPathException(ExceptionMessage.PATH_INVALID_CONCURRENT_RENAME.getMessage());
-    }
-  }
-
-  /**
-   * Obtains a write lock on the inode. Afterward, checks the inode state:
-   *   - parent is consistent with what the caller is expecting
-   *   - the inode is not marked as deleted
-   * If the state is inconsistent, an exception will be thrown and the lock will be released.
-   *
-   * NOTE: This method assumes that the inode path to the parent has been read locked.
-   *
-   * @param parent the expected parent inode
-   * @throws InvalidPathException if the parent is not as expected
-   */
-  public void lockWriteAndCheckParent(INode parent) throws InvalidPathException {
-    lockWrite();
-    if (mDeleted) {
-      unlockWrite();
-      throw new InvalidPathException(ExceptionMessage.PATH_INVALID_CONCURRENT_DELETE.getMessage());
-    }
-    if (parent != null && this.parent != null
-        && parent.getId() != this.parent.getId()) {
-      unlockWrite();
-      throw new InvalidPathException(ExceptionMessage.PATH_INVALID_CONCURRENT_RENAME.getMessage());
-    }
-  }
-
-  /**
-   * Obtains a write lock on the inode. Afterward, checks the inode state to ensure the full inode
-   * path is consistent with what the caller is expecting. If the state is inconsistent, an
-   * exception will be thrown and the lock will be released.
-   *
-   * NOTE: This method assumes that the inode path to the parent has been read locked.
-   *
-   * @param parent the expected parent inode
-   * @param name the expected name of the inode to be locked
-   * @throws InvalidPathException if the parent and/or name is not as expected
-   */
-  public void lockWriteAndCheckNameAndParent(INode parent, byte[] name)
-      throws InvalidPathException {
-    lockWriteAndCheckParent(parent);
-    if (!Arrays.equals(getLocalNameBytes(), name)) {
-      unlockWrite();
-      throw new InvalidPathException(ExceptionMessage.PATH_INVALID_CONCURRENT_RENAME.getMessage());
-    }
-  }
-
 
   /**
    * @param deleted the deleted flag to use

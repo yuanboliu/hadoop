@@ -18,7 +18,7 @@
 package org.apache.hadoop.hdfs.server.lock.resource;
 
 import com.google.common.base.Preconditions;
-import org.apache.hadoop.hdfs.server.lock.concurrent.LockMode;
+import org.apache.hadoop.hdfs.server.namenode.FSDirectory.LockMode;
 
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 

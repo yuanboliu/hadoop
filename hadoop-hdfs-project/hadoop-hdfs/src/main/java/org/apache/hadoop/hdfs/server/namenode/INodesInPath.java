@@ -790,29 +790,6 @@ public class INodesInPath implements Closeable {
   }
 
   /**
-   * Downgrades the last inode that was locked, if the inode was previously WRITE locked. If the
-   * inode was previously READ locked, no additional locking will occur.
-   */
-  public synchronized void downgradeLast() {
-    mLockList.downgradeLast();
-  }
-
-  /**
-   * Downgrades the last inode that was locked, according to the specified {@link LockingScheme}.
-   * If the locking scheme initially desired the READ lock, the downgrade will occur. Otherwise,
-   * downgrade will not be performed.
-   *
-   * @param lockingScheme the locking scheme to inspect
-   */
-  public synchronized void downgradeLastWithScheme(LockingScheme lockingScheme) {
-    // Need to downgrade if the locking scheme initially desired the READ lock.
-    if (lockingScheme.getMode() == FSDirectory.LockMode.READ) {
-      downgradeLast();
-      mLockMode = FSDirectory.LockMode.READ;
-    }
-  }
-
-  /**
    * Returns the closest ancestor of the target inode (last inode in the full path).
    *
    * @return the closest ancestor inode

@@ -108,6 +108,7 @@ import org.apache.hadoop.hdfs.protocol.ZoneReencryptionStatus;
 import org.apache.hadoop.hdfs.protocol.SnapshotDiffReportListing;
 import org.apache.hadoop.hdfs.protocol.SnapshotDiffReport;
 import org.apache.hadoop.hdfs.server.common.ECTopologyVerifier;
+import org.apache.hadoop.hdfs.server.lock.resource.RWLockResource;
 import org.apache.hadoop.hdfs.server.namenode.metrics.ReplicatedBlocksMBean;
 import org.apache.hadoop.hdfs.server.protocol.SlowDiskReports;
 import static org.apache.hadoop.util.Time.now;
@@ -2612,23 +2613,19 @@ public class FSNamesystem implements Namesystem, FSNamesystemMBean,
     try {
       checkOperation(OperationCategory.WRITE);
       checkNameNodeSafeMode("Cannot recover the lease of " + src);
-      final INodesInPath iip = dir.resolvePath(pc, src, DirOp.WRITE);
-      src = iip.getPath();
-      final INodeFile inode = INodeFile.valueOf(iip.getLastINode(), src);
-      if (!inode.isUnderConstruction()) {
-        return true;
-      }
+      try (INodesInPath iip = dir.lockInodePath(pc, src, DirOp.WRITE, FSDirectory.LockMode.WRITE)) {
+        src = iip.getPath();
+        final INodeFile inode = INodeFile.valueOf(iip.getLastINode(), src);
+        if (!inode.isUnderConstruction()) {
+          return true;
+        }
 
-      inode.lockWrite();
-      try {
         if (isPermissionEnabled) {
           dir.checkPathAccess(pc, iip, FsAction.WRITE);
         }
 
         return recoverLeaseInternal(RecoverLeaseOp.RECOVER_LEASE,
             iip, src, holder, clientMachine, true);
-      } finally {
-        inode.unlockWrite();
       }
     } catch (StandbyException se) {
       skipSync = true;
@@ -3579,7 +3576,7 @@ public class FSNamesystem implements Namesystem, FSNamesystemMBean,
   private Lease reassignLease(Lease lease, String src, String newHolder,
       INodeFile pendingFile) {
     assert hasReadLock();
-    assert pendingFile.isWriteLocked();
+    assert dir.isInodeWriteLocked(pendingFile);
 
     if(newHolder == null)
       return lease;
@@ -3620,7 +3617,7 @@ public class FSNamesystem implements Namesystem, FSNamesystemMBean,
   void finalizeINodeFileUnderConstruction(String src, INodeFile pendingFile,
       int latestSnapshot, boolean allowCommittedBlock) throws IOException {
     assert hasReadLock();
-    assert pendingFile.isReadLocked();
+    assert dir.isInodeReadLocked(pendingFile);
     FileUnderConstructionFeature uc = pendingFile.getFileUnderConstructionFeature();
     if (uc == null) {
       throw new IOException("Cannot finalize file " + src
@@ -3686,12 +3683,6 @@ public class FSNamesystem implements Namesystem, FSNamesystemMBean,
     return getBlockCollection(b.getBlockCollectionId());
   }
 
-  INodeFile getBlockCollectionWithWriteLock(BlockInfo b) {
-    INode inode = getFSDirectory().getInodeWithWriteLock(
-            b.getBlockCollectionId());
-    return inode == null ? null : inode.asFile();
-  }
-
   @Override
   public INodeFile getBlockCollection(long id) {
     assert hasReadLock() : "Accessing INode id = " + id + " without read lock";
@@ -3755,9 +3746,16 @@ public class FSNamesystem implements Namesystem, FSNamesystemMBean,
             + " is null, likely because the file owning this block was"
             + " deleted and the block removal is delayed");
       }
-      INodeFile iFile = null;
-      try {
-        iFile = getBlockCollectionWithWriteLock(storedBlock);
+      INode inode = getFSDirectory().getInode(
+          storedBlock.getBlockCollectionId());
+      if (inode == null) {
+        throw new IOException("The file of " + storedBlock
+            + " is null, likely because the file owning this block was"
+            + " deleted and the block removal is delayed");
+      }
+      INodeFile iFile = inode.asFile();
+      try (RWLockResource lock = dir.lockWriteInode(iFile)) {
+
         src = iFile.getFullPathName();
         if (isFileDeleted(iFile)) {
           throw new FileNotFoundException("File not found: "
@@ -3848,10 +3846,6 @@ public class FSNamesystem implements Namesystem, FSNamesystemMBean,
         } else {
           // If this commit does not want to close the file, persist blocks
           FSDirWriteFileOp.persistBlocks(dir, src, iFile, false);
-        }
-      } finally {
-        if (iFile != null) {
-          iFile.unlockWrite();
         }
       }
       blockManager.successfulBlockRecovery(storedBlock);
@@ -4084,7 +4078,7 @@ public class FSNamesystem implements Namesystem, FSNamesystemMBean,
    */
   private void closeFile(String path, INodeFile file) {
     assert hasReadLock();
-    assert file.isWriteLocked();
+    assert dir.isInodeWriteLocked(file);
     // file is closed
     getEditLog().logCloseFile(path, file);
     NameNode.stateChangeLog.debug("closeFile: {} with {} blocks is persisted" +

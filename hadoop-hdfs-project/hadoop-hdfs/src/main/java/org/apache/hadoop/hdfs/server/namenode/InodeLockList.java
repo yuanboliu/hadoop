@@ -20,10 +20,15 @@ package org.apache.hadoop.hdfs.server.namenode;
 
 import com.google.common.collect.Lists;
 import org.apache.hadoop.fs.InvalidPathException;
+import org.apache.hadoop.hdfs.server.lock.resource.LockResource;
+import org.apache.hadoop.hdfs.server.lock.resource.RWLockResource;
+import org.apache.hadoop.hdfs.server.namenode.FSDirectory.LockMode;
 
 import javax.annotation.concurrent.ThreadSafe;
 import java.util.ArrayList;
+import java.util.LinkedList;
 import java.util.List;
+import java.util.concurrent.locks.Lock;
 
 /**
  * Manages the locks for a list of {@link INode}.
@@ -31,23 +36,37 @@ import java.util.List;
 @ThreadSafe
 public class InodeLockList implements AutoCloseable {
   protected List<INode> mInodes;
-  protected List<FSDirectory.LockMode> mLockModes;
-  public static final InodeLockList emptyInodeLockList = new InodeLockList();
+  /**
+   * Lock list.
+   * The locks always alternate between Inode lock and Edge lock.
+   * The first lock can be either Inode or Edge lock.
+   */
+  protected LinkedList<RWLockResource> mLocks;
+  /** Whether to use {@link Lock#tryLock()} or {@link Lock#lock()}. */
+  private final boolean mUseTryLock;
+  private final InodeLockManager mInodeLockManager;
+  public static final InodeLockList emptyInodeLockList =
+      new InodeLockList(null, false);
 
   /**
    * Creates a new instance of {@link InodeLockList}.
    */
-  public InodeLockList() {
+  public InodeLockList(InodeLockManager inodeLockManager, boolean useTryLock) {
     mInodes = new ArrayList<>();
-    mLockModes = new ArrayList<>();
+    mLocks = new LinkedList<>();
+    mInodeLockManager = inodeLockManager;
+    mUseTryLock = useTryLock;
   }
 
   /**
    * Creates a new instance of {@link InodeLockList}.
    */
-  public InodeLockList(List<INode> inodes, List<FSDirectory.LockMode> lockModes) {
+  public InodeLockList(List<INode> inodes, LinkedList<RWLockResource> locks,
+      InodeLockManager inodeLockManager, boolean useTryLock) {
     mInodes = inodes;
-    mLockModes = lockModes;
+    mLocks = locks;
+    mInodeLockManager = inodeLockManager;
+    mUseTryLock = useTryLock;
   }
 
   /**
@@ -57,20 +76,19 @@ public class InodeLockList implements AutoCloseable {
    * @param inode the inode to lock
    */
   public synchronized void lockRead(INode inode) {
-    inode.lockRead();
+    mLocks.add(mInodeLockManager.lockInode(inode, LockMode.READ, mUseTryLock));
     mInodes.add(inode);
-    mLockModes.add(FSDirectory.LockMode.READ);
   }
 
   InodeLockList getAncestorINodeLockListInPath(int length) {
     List<INode> inodes = new ArrayList<>();
-    List<FSDirectory.LockMode> lockModes = new ArrayList<>();
+    LinkedList<RWLockResource> locks = new LinkedList<>();
     for (int i = 0; i < length && i < mInodes.size(); i ++) {
       inodes.add(mInodes.get(i));
-      lockModes.add(mLockModes.get(i));
+      locks.add(mLocks.get(i));
     }
 
-    return new InodeLockList(inodes, lockModes);
+    return new InodeLockList(inodes, locks, mInodeLockManager, false);
   }
 
   /**
@@ -85,9 +103,8 @@ public class InodeLockList implements AutoCloseable {
    */
   public synchronized void lockReadAndCheckParent(INode inode, INode parent)
       throws InvalidPathException {
-    inode.lockReadAndCheckParent(parent);
+    mLocks.add(mInodeLockManager.lockReadAndCheckParent(inode, mUseTryLock, parent));
     mInodes.add(inode);
-    mLockModes.add(FSDirectory.LockMode.READ);
   }
 
   /**
@@ -103,9 +120,8 @@ public class InodeLockList implements AutoCloseable {
    */
   public synchronized void lockReadAndCheckNameAndParent(INode inode, INode parent, byte[] name)
       throws InvalidPathException {
-    inode.lockReadAndCheckNameAndParent(parent, name);
+    mLocks.add(mInodeLockManager.lockReadAndCheckNameAndParent(inode, mUseTryLock, parent, name));
     mInodes.add(inode);
-    mLockModes.add(FSDirectory.LockMode.READ);
   }
 
   /**
@@ -115,32 +131,8 @@ public class InodeLockList implements AutoCloseable {
     if (mInodes.isEmpty()) {
       return;
     }
-    INode inode = mInodes.remove(mInodes.size() - 1);
-    FSDirectory.LockMode lockMode = mLockModes.remove(mLockModes.size() - 1);
-    if (lockMode == FSDirectory.LockMode.READ) {
-      inode.unlockRead();
-    } else {
-      inode.unlockWrite();
-    }
-  }
-
-  /**
-   * Downgrades the last inode that was locked, if the inode was previously WRITE locked. If the
-   * inode was previously READ locked, no additional locking will occur.
-   */
-  public synchronized void downgradeLast() {
-    if (mInodes.isEmpty()) {
-      return;
-    }
-    if (mLockModes.get(mLockModes.size() - 1) != FSDirectory.LockMode.READ) {
-      // The last inode was previously WRITE locked, so downgrade the lock.
-      INode inode = mInodes.get(mInodes.size() - 1);
-      inode.lockRead();
-      inode.unlockWrite();
-      // Update the last lock mode to READ
-      mLockModes.remove(mLockModes.size() - 1);
-      mLockModes.add(FSDirectory.LockMode.READ);
-    }
+    mInodes.remove(mInodes.size() - 1);
+    mLocks.removeLast().close();
   }
 
   /**
@@ -150,9 +142,8 @@ public class InodeLockList implements AutoCloseable {
    * @param inode the inode to lock
    */
   public synchronized void lockWrite(INode inode) {
-    inode.lockWrite();
     mInodes.add(inode);
-    mLockModes.add(FSDirectory.LockMode.WRITE);
+    mLocks.add(mInodeLockManager.lockInode(inode, LockMode.WRITE, mUseTryLock));
   }
 
   /**
@@ -167,9 +158,8 @@ public class InodeLockList implements AutoCloseable {
    */
   public synchronized void lockWriteAndCheckParent(INode inode, INode parent)
       throws InvalidPathException {
-    inode.lockWriteAndCheckParent(parent);
     mInodes.add(inode);
-    mLockModes.add(FSDirectory.LockMode.WRITE);
+    mLocks.add(mInodeLockManager.lockWriteAndCheckParent(inode, mUseTryLock, parent));
   }
 
   /**
@@ -185,9 +175,9 @@ public class InodeLockList implements AutoCloseable {
    */
   public synchronized void lockWriteAndCheckNameAndParent(INode inode, INode parent, byte[] name)
       throws InvalidPathException {
-    inode.lockWriteAndCheckNameAndParent(parent, name);
+    mLocks.add(mInodeLockManager.lockWriteAndCheckNameAndParent(
+        inode, mUseTryLock, parent, name));
     mInodes.add(inode);
-    mLockModes.add(FSDirectory.LockMode.WRITE);
   }
 
   /**
@@ -208,16 +198,16 @@ public class InodeLockList implements AutoCloseable {
 
   @Override
   public synchronized void close() {
-    for (int i = mInodes.size() - 1; i >= 0; i--) {
-      INode inode = mInodes.get(i);
-      FSDirectory.LockMode lockMode = mLockModes.get(i);
-      if (lockMode == FSDirectory.LockMode.READ) {
-        inode.unlockRead();
-      } else {
-        inode.unlockWrite();
-      }
-    }
     mInodes.clear();
-    mLockModes.clear();
+    mLocks.forEach(LockResource::close);
+    mLocks.clear();
+  }
+
+  public InodeLockManager getInodeLockManager() {
+    return mInodeLockManager;
+  }
+
+  public boolean isUseTryLock() {
+    return mUseTryLock;
   }
 }

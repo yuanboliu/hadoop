@@ -18,6 +18,7 @@
 package org.apache.hadoop.hdfs.server.namenode;
 
 import org.apache.hadoop.hdfs.server.lock.exception.ExceptionMessage;
+import org.apache.hadoop.hdfs.server.lock.resource.RWLockResource;
 import org.apache.hadoop.hdfs.server.lock.util.io.PathUtils;
 import org.apache.hadoop.hdfs.server.namenode.snapshot.Snapshot;
 import org.apache.hadoop.util.StringUtils;
@@ -213,6 +214,9 @@ public class FSDirectory implements Closeable {
   // will be bypassed
   private HashSet<String> usersToBypassExtAttrProvider = null;
 
+  /** Manager for inode locking. */
+  private final InodeLockManager mInodeLockManager;
+
   public void setINodeAttributeProvider(INodeAttributeProvider provider) {
     attributeProvider = provider;
   }
@@ -266,6 +270,10 @@ public class FSDirectory implements Closeable {
    */
   private final NameCache<ByteArray> nameCache;
 
+  public RWLockResource lockWriteInode(INodeFile inode) {
+    return mInodeLockManager.lockInode(inode, LockMode.WRITE, false);
+  }
+
   // used to specify path resolution type. *_LINK will return symlinks instead
   // of throwing an unresolved exception
   public enum DirOp {
@@ -278,6 +286,7 @@ public class FSDirectory implements Closeable {
   };
 
   FSDirectory(FSNamesystem ns, Configuration conf) throws IOException {
+    mInodeLockManager = new InodeLockManager();
     this.inodeId = new INodeId();
     rootDir = createRoot(ns);
     inodeMap = INodeMap.newInstance(rootDir);
@@ -1567,24 +1576,6 @@ public class FSDirectory implements Closeable {
   public INode getInode(long id) {
     return inodeMap.get(id);
   }
-
-  /**
-   * Get the inode from inodeMap based on its inode id with inode write locked.
-   * @param id The given id
-   * @return The inode associated with the given id
-   */
-  public INode getInodeWithWriteLock(long id) {
-    readLock();
-    try {
-      INode inode = inodeMap.get(id);
-      if (inode != null) {
-        inode.lockWrite();
-      }
-      return inode;
-    } finally {
-      readUnlock();
-    }
-  }
   
   @VisibleForTesting
   int getInodeMapSize() {
@@ -2132,7 +2123,7 @@ public class FSDirectory implements Closeable {
 
     List<INode> inodeList = new ArrayList<>(inodePath.getInodeList());
     // Lock from inodePath to the descendant
-    InodeLockList lockList = new InodeLockList();
+    InodeLockList lockList = new InodeLockList(mInodeLockManager, false);
     TraversalResult traversalResult = traverseToInodeInternal(
             INode.getPathComponents(descendantUri),
             inodeList, lockList, lockMode, null);
@@ -2502,15 +2493,17 @@ public class FSDirectory implements Closeable {
    */
   private void computePathForInode(INode inode, StringBuilder builder)
       throws FileNotFoundException {
-    inode.lockRead();
-    long id = inode.getId();
-    long parentId = INVALID_INODE_ID;
-    if (inode.getParent() != null) {
-      parentId = inode.getParent().getId();
+    long id;
+    long parentId;
+    String name;
+    try (RWLockResource lock = mInodeLockManager.lockInode(inode, LockMode.READ, false)) {
+      id = inode.getId();
+      parentId = INVALID_INODE_ID;
+      if (inode.getParent() != null) {
+        parentId = inode.getParent().getId();
+      }
+      name = inode.getLocalName();
     }
-    String name = inode.getLocalName();
-    inode.unlockRead();
-
     if (isRootId(id)) {
       builder.append(Path.SEPARATOR);
     } else if (isRootId(parentId)) {
@@ -2519,7 +2512,7 @@ public class FSDirectory implements Closeable {
     } else {
       INode parentInode = getInode(parentId);
       if (parentInode == null) {
-        throw new FileNotFoundException(inode.getLocalName() + ": "
+        throw new FileNotFoundException(name + ": "
             + ExceptionMessage.INODE_DOES_NOT_EXIST.getMessage(parentId));
       }
 
@@ -2545,7 +2538,7 @@ public class FSDirectory implements Closeable {
   public INodesInPath lockChildPath(INodesInPath inodePath, LockMode lockMode,
           INode childInode, byte[][] pathComponents)
           throws FileNotFoundException, InvalidPathException {
-    InodeLockList inodeLockList = new InodeLockList();
+    InodeLockList inodeLockList = new InodeLockList(mInodeLockManager, false);
 
     if (lockMode == LockMode.READ) {
       inodeLockList.lockReadAndCheckParent(childInode, inodePath.getInode());
@@ -2622,7 +2615,7 @@ public class FSDirectory implements Closeable {
           List<LockMode> lockHints)
           throws InvalidPathException {
     List<INode> inodes = new ArrayList<>();
-    InodeLockList lockList = new InodeLockList();
+    InodeLockList lockList = new InodeLockList(mInodeLockManager, false);
 
     // This must be set to true before returning a valid value, otherwise all the inodes will be
     // unlocked.
@@ -2751,6 +2744,15 @@ public class FSDirectory implements Closeable {
   private LockingScheme createLockingScheme(Path path,
           FSDirectory.LockMode desiredLockMode) {
     return new LockingScheme(path, desiredLockMode);
+  }
+
+  public boolean isInodeReadLocked(INode inode) {
+    return isInodeWriteLocked(inode) ||
+        mInodeLockManager.inodeReadLockedByCurrentThread(inode.getId());
+  }
+
+  public boolean isInodeWriteLocked(INode inode) {
+    return mInodeLockManager.inodeWriteLockedByCurrentThread(inode.getId());
   }
 
   private static final class TraversalResult {

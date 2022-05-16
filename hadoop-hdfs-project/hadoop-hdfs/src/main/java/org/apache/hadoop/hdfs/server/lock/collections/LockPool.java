@@ -22,7 +22,7 @@ import com.google.common.base.MoreObjects;
 import com.google.common.base.Preconditions;
 
 import org.apache.hadoop.hdfs.server.lock.Constants;
-import org.apache.hadoop.hdfs.server.lock.concurrent.LockMode;
+import org.apache.hadoop.hdfs.server.namenode.FSDirectory.LockMode;
 import org.apache.hadoop.hdfs.server.lock.resource.LockResource;
 import org.apache.hadoop.hdfs.server.lock.resource.RWLockResource;
 import org.apache.hadoop.hdfs.server.lock.resource.RefCountLockResource;
