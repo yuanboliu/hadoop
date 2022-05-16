@@ -2420,8 +2420,8 @@ public class FSDirectory implements Closeable {
     } else {
       INode parentInode = getInode(parentId);
       if (parentInode == null) {
-        throw new FileNotFoundException(
-            ExceptionMessage.INODE_DOES_NOT_EXIST.getMessage(parentId));
+        throw new FileNotFoundException(inode.getLocalName() + ": "
+            + ExceptionMessage.INODE_DOES_NOT_EXIST.getMessage(parentId));
       }
 
       computePathForInode(parentInode, builder);

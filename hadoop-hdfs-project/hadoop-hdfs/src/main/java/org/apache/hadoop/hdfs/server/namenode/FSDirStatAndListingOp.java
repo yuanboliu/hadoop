@@ -23,6 +23,7 @@ import com.google.common.base.Preconditions;
 import org.apache.hadoop.fs.ContentSummary;
 import org.apache.hadoop.fs.DirectoryListingStartAfterNotFoundException;
 import org.apache.hadoop.fs.FileEncryptionInfo;
+import org.apache.hadoop.fs.InvalidPathException;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.fs.permission.FsAction;
 import org.apache.hadoop.fs.permission.FsPermission;
@@ -114,6 +115,8 @@ class FSDirStatAndListingOp {
         fsd.resolvePath(pc, srcArg, dirOp);
       }
       return getFileInfo(fsd, iip, needLocation, needBlockToken);
+    } catch (FileNotFoundException | InvalidPathException e) {
+      return null;
     }
   }
 
