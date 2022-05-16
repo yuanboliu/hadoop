@@ -331,7 +331,7 @@ class FSDirWriteFileOp {
       FSPermissionChecker pc, String src, EnumSet<CreateFlag> flag,
       boolean createParent) throws IOException {
     INodesInPath iip = dir.lockInodePath(pc, src, DirOp.CREATE,
-        FSDirectory.LockMode.WRITE);
+        FSDirectory.LockMode.WRITE_PARENT);
     try {
       if (dir.isPermissionEnabled()) {
         dir.checkAncestorAccess(pc, iip, FsAction.WRITE);
@@ -578,7 +578,8 @@ class FSDirWriteFileOp {
         blockType);
     newNode.setLocalName(localName);
     newNode.toUnderConstruction(clientName, clientMachine);
-    newiip = fsd.addINode(existing, newNode, permissions.getPermission());
+    newiip = fsd.
+        addINode(existing, newNode, permissions.getPermission());
     if (newiip == null) {
       NameNode.stateChangeLog.info("DIR* addFile: failed to add " +
           existing.getPath() + "/" + DFSUtil.bytes2String(localName));

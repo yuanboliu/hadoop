@@ -46,7 +46,8 @@ class FSDirMkdirOp {
       NameNode.stateChangeLog.debug("DIR* NameSystem.mkdirs: " + src);
     }
     try (INodesInPath iip =
-        fsd.lockInodePath(pc, src, FSDirectory.DirOp.CREATE, FSDirectory.LockMode.WRITE)) {
+        fsd.lockInodePath(pc, src, FSDirectory.DirOp.CREATE,
+            FSDirectory.LockMode.WRITE_PARENT)) {
       final INode lastINode = iip.getLastINode();
       if (lastINode != null && lastINode.isFile()) {
         throw new FileAlreadyExistsException("Path is not a directory: " + src);
