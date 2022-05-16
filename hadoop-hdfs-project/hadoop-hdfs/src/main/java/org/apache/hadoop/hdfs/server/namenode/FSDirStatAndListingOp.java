@@ -122,8 +122,10 @@ class FSDirStatAndListingOp {
    */
   static boolean isFileClosed(FSDirectory fsd, FSPermissionChecker pc,
       String src) throws IOException {
-    final INodesInPath iip = fsd.resolvePath(pc, src, DirOp.READ);
-    return !INodeFile.valueOf(iip.getLastINode(), src).isUnderConstruction();
+    try (INodesInPath iip =
+             fsd.lockFullInodePath(src, FSDirectory.LockMode.READ)) {
+      return !INodeFile.valueOf(iip.getLastINode(), src).isUnderConstruction();
+    }
   }
 
   static ContentSummary getContentSummary(
@@ -154,9 +156,8 @@ class FSDirStatAndListingOp {
     Preconditions.checkArgument(length >= 0,
         "Negative length is not supported. File: " + src);
     BlockManager bm = fsd.getBlockManager();
-    fsd.readLock();
-    try {
-      final INodesInPath iip = fsd.resolvePath(pc, src, DirOp.READ);
+    try (INodesInPath iip =
+             fsd.lockFullInodePath(src, FSDirectory.LockMode.READ)) {
       src = iip.getPath();
       final INodeFile inode = INodeFile.valueOf(iip.getLastINode(), src);
       if (fsd.isPermissionEnabled()) {
@@ -190,8 +191,6 @@ class FSDirStatAndListingOp {
           && !iip.isSnapshot()
           && now > inode.getAccessTime() + fsd.getAccessTimePrecision();
       return new GetBlockLocationsResult(updateAccessTime, blocks, iip);
-    } finally {
-      fsd.readUnlock();
     }
   }
 

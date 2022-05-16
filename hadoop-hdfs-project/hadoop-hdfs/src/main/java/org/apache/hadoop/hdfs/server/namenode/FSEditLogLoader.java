@@ -549,14 +549,15 @@ public class FSEditLogLoader {
         FSNamesystem.LOG.debug(op.opCode + ": " + path +
             " numblocks : " + updateOp.blocks.length);
       }
-      INodesInPath iip = fsDir.getINodesInPath(path, DirOp.READ);
-      INodeFile oldFile = INodeFile.valueOf(iip.getLastINode(), path);
-      // Update in-memory data structures
-      ErasureCodingPolicy ecPolicy =
-          FSDirErasureCodingOp.unprotectedGetErasureCodingPolicy(
-              fsDir.getFSNamesystem(), iip);
-      updateBlocks(fsDir, updateOp, iip, oldFile, ecPolicy);
-
+      try (INodesInPath iip =
+               fsDir.lockFullInodePath(path, FSDirectory.LockMode.READ)) {
+        INodeFile oldFile = INodeFile.valueOf(iip.getLastINode(), path);
+        // Update in-memory data structures
+        ErasureCodingPolicy ecPolicy =
+            FSDirErasureCodingOp.unprotectedGetErasureCodingPolicy(
+                fsDir.getFSNamesystem(), iip);
+        updateBlocks(fsDir, updateOp, iip, oldFile, ecPolicy);
+      }
       if (toAddRetryCache) {
         fsNamesys.addCacheEntry(updateOp.rpcClientId, updateOp.rpcCallId);
       }
@@ -569,14 +570,16 @@ public class FSEditLogLoader {
         FSNamesystem.LOG.debug(op.opCode + ": " + path +
             " new block id : " + addBlockOp.getLastBlock().getBlockId());
       }
-      INodesInPath iip = fsDir.getINodesInPath(path, DirOp.READ);
-      INodeFile oldFile = INodeFile.valueOf(iip.getLastINode(), path);
-      // add the new block to the INodeFile
-      ErasureCodingPolicy ecPolicy =
-          FSDirErasureCodingOp.unprotectedGetErasureCodingPolicy(
-              fsDir.getFSNamesystem(), iip);
-      addNewBlock(addBlockOp, oldFile, ecPolicy);
-      break;
+      try (INodesInPath iip =
+              fsDir.lockFullInodePath(path, FSDirectory.LockMode.WRITE)) {
+        INodeFile oldFile = INodeFile.valueOf(iip.getLastINode(), path);
+        // add the new block to the INodeFile
+        ErasureCodingPolicy ecPolicy =
+                FSDirErasureCodingOp.unprotectedGetErasureCodingPolicy(
+                        fsDir.getFSNamesystem(), iip);
+        addNewBlock(addBlockOp, oldFile, ecPolicy);
+        break;
+      }
     }
     case OP_SET_REPLICATION: {
       SetReplicationOp setReplicationOp = (SetReplicationOp)op;

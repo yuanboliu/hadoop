@@ -96,6 +96,7 @@ import static org.apache.hadoop.hdfs.DFSConfigKeys.DFS_STORAGE_POLICY_ENABLED_KE
 import static org.apache.hadoop.hdfs.server.common.HdfsServerConstants.CRYPTO_XATTR_ENCRYPTION_ZONE;
 import static org.apache.hadoop.hdfs.server.common.HdfsServerConstants.SECURITY_XATTR_UNREADABLE_BY_SUPERUSER;
 import static org.apache.hadoop.hdfs.server.common.HdfsServerConstants.XATTR_SATISFY_STORAGE_POLICY;
+import static org.apache.hadoop.hdfs.server.namenode.INodeId.INVALID_INODE_ID;
 import static org.apache.hadoop.hdfs.server.namenode.snapshot.Snapshot.CURRENT_STATE_ID;
 
 /**
@@ -2302,7 +2303,10 @@ public class FSDirectory implements Closeable {
       throws FileNotFoundException {
     inode.lockRead();
     long id = inode.getId();
-    long parentId = inode.getParent().getId();
+    long parentId = INVALID_INODE_ID;
+    if (inode.getParent() != null) {
+      parentId = inode.getParent().getId();
+    }
     String name = inode.getLocalName();
     inode.unlockRead();
 

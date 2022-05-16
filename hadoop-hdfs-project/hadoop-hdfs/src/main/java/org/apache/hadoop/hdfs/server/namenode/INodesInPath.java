@@ -88,6 +88,7 @@ public class INodesInPath implements Closeable {
    *
    * @param inode to construct from
    * @return INodesInPath
+   * @deprecated use {@link FSDirectory#lockFullInodePath(long, FSDirectory.LockMode)} instead.
    */
   @Deprecated
   static INodesInPath fromINode(INode inode) {
@@ -694,6 +695,9 @@ public class INodesInPath implements Closeable {
    * @return the last existing inode on the inode path
    */
   public synchronized INode getLastExistingInode() {
+    if (path.length > mLockList.getInodes().size()) {
+      return null;
+    }
     return mLockList.getInodes().get(mLockList.getInodes().size() - 1);
   }
 

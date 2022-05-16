@@ -227,42 +227,44 @@ class FSDirWriteFileOp {
     // Run the full analysis again, since things could have changed
     // while chooseTarget() was executing.
     LocatedBlock[] onRetryBlock = new LocatedBlock[1];
-    INodesInPath iip = fsn.dir.resolvePath(null, src, fileId);
-    FileState fileState = analyzeFileState(fsn, iip, fileId, clientName,
-                                           previous, onRetryBlock);
-    final INodeFile pendingFile = fileState.inode;
-    src = fileState.path;
+    try (INodesInPath iip =
+            fsn.dir.lockFullInodePath(src, fileId, FSDirectory.LockMode.WRITE)) {
+      FileState fileState = analyzeFileState(fsn, iip, fileId, clientName,
+              previous, onRetryBlock);
+      final INodeFile pendingFile = fileState.inode;
+      src = fileState.path;
 
-    if (onRetryBlock[0] != null) {
-      if (onRetryBlock[0].getLocations().length > 0) {
-        // This is a retry. Just return the last block if having locations.
-        return onRetryBlock[0];
-      } else {
-        // add new chosen targets to already allocated block and return
-        BlockInfo lastBlockInFile = pendingFile.getLastBlock();
-        lastBlockInFile.getUnderConstructionFeature().setExpectedLocations(
-            lastBlockInFile, targets, pendingFile.getBlockType());
-        offset = pendingFile.computeFileSize();
-        return makeLocatedBlock(fsn, lastBlockInFile, targets, offset);
+      if (onRetryBlock[0] != null) {
+        if (onRetryBlock[0].getLocations().length > 0) {
+          // This is a retry. Just return the last block if having locations.
+          return onRetryBlock[0];
+        } else {
+          // add new chosen targets to already allocated block and return
+          BlockInfo lastBlockInFile = pendingFile.getLastBlock();
+          lastBlockInFile.getUnderConstructionFeature().setExpectedLocations(
+                  lastBlockInFile, targets, pendingFile.getBlockType());
+          offset = pendingFile.computeFileSize();
+          return makeLocatedBlock(fsn, lastBlockInFile, targets, offset);
+        }
       }
+
+      // commit the last block and complete it if it has minimum replicas
+      fsn.commitOrCompleteLastBlock(pendingFile, fileState.iip,
+              ExtendedBlock.getLocalBlock(previous));
+
+      // allocate new block, record block locations in INode.
+      final BlockType blockType = pendingFile.getBlockType();
+      // allocate new block, record block locations in INode.
+      Block newBlock = fsn.createNewBlock(blockType);
+      INodesInPath inodesInPath = INodesInPath.fromINode(pendingFile);
+      saveAllocatedBlock(fsn, src, inodesInPath, newBlock, targets, blockType);
+
+      persistNewBlock(fsn, src, pendingFile);
+      offset = pendingFile.computeFileSize();
+
+      // Return located block
+      return makeLocatedBlock(fsn, fsn.getStoredBlock(newBlock), targets, offset);
     }
-
-    // commit the last block and complete it if it has minimum replicas
-    fsn.commitOrCompleteLastBlock(pendingFile, fileState.iip,
-                                  ExtendedBlock.getLocalBlock(previous));
-
-    // allocate new block, record block locations in INode.
-    final BlockType blockType = pendingFile.getBlockType();
-    // allocate new block, record block locations in INode.
-    Block newBlock = fsn.createNewBlock(blockType);
-    INodesInPath inodesInPath = INodesInPath.fromINode(pendingFile);
-    saveAllocatedBlock(fsn, src, inodesInPath, newBlock, targets, blockType);
-
-    persistNewBlock(fsn, src, pendingFile);
-    offset = pendingFile.computeFileSize();
-
-    // Return located block
-    return makeLocatedBlock(fsn, fsn.getStoredBlock(newBlock), targets, offset);
   }
 
   static DatanodeStorageInfo[] chooseTargetForNewBlock(
