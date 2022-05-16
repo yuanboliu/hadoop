@@ -160,7 +160,6 @@ class FSDirRenameOp {
   static INodesInPath unprotectedRenameTo(FSDirectory fsd,
       final INodesInPath srcIIP, final INodesInPath dstIIP, long timestamp)
       throws IOException {
-    assert fsd.hasWriteLock();
     final INode srcInode = srcIIP.getLastINode();
     List<INodeDirectory> snapshottableDirs = new ArrayList<>();
     try {

@@ -1004,7 +1004,6 @@ public class FSDirectory implements Closeable {
   void updateCount(INodesInPath iip, int numOfINodes,
                     QuotaCounts counts, boolean checkQuota)
                     throws QuotaExceededException {
-    assert hasWriteLock();
     if (!namesystem.isImageLoaded()) {
       //still initializing. do not check or update quotas.
       return;

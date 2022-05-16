@@ -476,7 +476,6 @@ public class EncryptionZoneManager {
    */
   void checkMoveValidity(INodesInPath srcIIP, INodesInPath dstIIP)
       throws IOException {
-    assert dir.hasReadLock();
     if (!hasCreatedEncryptionZone()) {
       return;
     }
