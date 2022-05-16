@@ -657,6 +657,7 @@ public class FSDirectory implements Closeable {
    * @throws ParentNotDirectoryException
    * @throws UnresolvedLinkException
    */
+  @Deprecated
   @VisibleForTesting
   public INodesInPath resolvePath(FSPermissionChecker pc, String src,
       DirOp dirOp) throws UnresolvedLinkException, FileNotFoundException,
@@ -715,6 +716,7 @@ public class FSDirectory implements Closeable {
     return INodesInPath.resolve(rootDir, components, isRaw);
   }
 
+  @Deprecated
   INodesInPath resolvePath(FSPermissionChecker pc, String src, long fileId)
       throws UnresolvedLinkException, FileNotFoundException,
       AccessControlException, ParentNotDirectoryException {
@@ -735,6 +737,7 @@ public class FSDirectory implements Closeable {
     return iip;
   }
 
+  @Deprecated
   // this method can be removed after IIP is used more extensively
   static String resolvePath(String src,
       FSDirectory fsd) throws FileNotFoundException {

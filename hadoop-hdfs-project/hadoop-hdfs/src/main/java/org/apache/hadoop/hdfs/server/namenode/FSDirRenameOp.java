@@ -54,12 +54,16 @@ class FSDirRenameOp {
           " to " + dst);
     }
 
-    // Rename does not operate on link targets
-    // Do not resolveLink when checking permissions of src and dst
-    INodesInPath srcIIP = fsd.resolvePath(pc, src, DirOp.WRITE_LINK);
-    INodesInPath dstIIP = fsd.resolvePath(pc, dst, DirOp.CREATE_LINK);
-    dstIIP = dstForRenameTo(srcIIP, dstIIP);
-    return renameTo(fsd, pc, srcIIP, dstIIP, logRetryCache);
+    try (InodePathPair inodePathPair =
+        fsd.lockInodePathPair(src, FSDirectory.LockMode.WRITE, dst, FSDirectory.LockMode.READ)) {
+      // Rename does not operate on link targets
+      // Do not resolveLink when checking permissions of src and dst
+      // TODO(runzhiwang): remove resolvePath
+      INodesInPath srcIIP = fsd.resolvePath(pc, src, DirOp.WRITE_LINK);
+      INodesInPath dstIIP = fsd.resolvePath(pc, dst, DirOp.CREATE_LINK);
+      dstIIP = dstForRenameTo(srcIIP, dstIIP);
+      return renameTo(fsd, pc, srcIIP, dstIIP, logRetryCache);
+    }
   }
 
   /**
@@ -115,13 +119,16 @@ class FSDirRenameOp {
   @Deprecated
   static INodesInPath renameForEditLog(FSDirectory fsd, String src, String dst,
       long timestamp) throws IOException {
-    final INodesInPath srcIIP = fsd.getINodesInPath(src, DirOp.WRITE_LINK);
-    INodesInPath dstIIP = fsd.getINodesInPath(dst, DirOp.WRITE_LINK);
-    // this is wrong but accidentally works.  the edit contains the full path
-    // so the following will do nothing, but shouldn't change due to backward
-    // compatibility when maybe full path wasn't logged.
-    dstIIP = dstForRenameTo(srcIIP, dstIIP);
-    return unprotectedRenameTo(fsd, srcIIP, dstIIP, timestamp);
+    try (InodePathPair inodePathPair =
+        fsd.lockInodePathPair(src, FSDirectory.LockMode.WRITE, dst, FSDirectory.LockMode.READ)) {
+      final INodesInPath srcIIP = fsd.getINodesInPath(src, DirOp.WRITE_LINK);
+      INodesInPath dstIIP = fsd.getINodesInPath(dst, DirOp.WRITE_LINK);
+      // this is wrong but accidentally works.  the edit contains the full path
+      // so the following will do nothing, but shouldn't change due to backward
+      // compatibility when maybe full path wasn't logged.
+      dstIIP = dstForRenameTo(srcIIP, dstIIP);
+      return unprotectedRenameTo(fsd, srcIIP, dstIIP, timestamp);
+    }
   }
 
   // if destination is a directory, append source child's name, else return
@@ -246,9 +253,13 @@ class FSDirRenameOp {
           " " + src + " to " + dst);
     }
 
-    BlocksMapUpdateInfo collectedBlocks = new BlocksMapUpdateInfo();
-    // returns resolved path
-    return renameTo(fsd, pc, src, dst, collectedBlocks, logRetryCache, options);
+    try (InodePathPair inodePathPair =
+        fsd.lockInodePathPair(src, FSDirectory.LockMode.WRITE, dst, FSDirectory.LockMode.READ)) {
+
+      BlocksMapUpdateInfo collectedBlocks = new BlocksMapUpdateInfo();
+      // returns resolved path
+      return renameTo(fsd, pc, src, dst, collectedBlocks, logRetryCache, options);
+    }
   }
 
   /**
@@ -295,17 +306,14 @@ class FSDirRenameOp {
           + dst);
     }
     final long mtime = Time.now();
-    fsd.writeLock();
     final RenameResult result;
-    try {
-      result = unprotectedRenameTo(fsd, srcIIP, dstIIP, mtime,
-          collectedBlocks, options);
-      if (result.filesDeleted) {
-        FSDirDeleteOp.incrDeletedFileCount(1);
-      }
-    } finally {
-      fsd.writeUnlock();
+
+    result = unprotectedRenameTo(fsd, srcIIP, dstIIP, mtime,
+        collectedBlocks, options);
+    if (result.filesDeleted) {
+     FSDirDeleteOp.incrDeletedFileCount(1);
     }
+
     fsd.getEditLog().logRename(
         srcIIP.getPath(), dstIIP.getPath(), mtime, logRetryCache, options);
     return result;
@@ -328,14 +336,17 @@ class FSDirRenameOp {
       FSDirectory fsd, String src, String dst, long timestamp,
       Options.Rename... options)
       throws IOException {
-    BlocksMapUpdateInfo collectedBlocks = new BlocksMapUpdateInfo();
-    final INodesInPath srcIIP = fsd.getINodesInPath(src, DirOp.WRITE_LINK);
-    final INodesInPath dstIIP = fsd.getINodesInPath(dst, DirOp.WRITE_LINK);
-    unprotectedRenameTo(fsd, srcIIP, dstIIP, timestamp,
-        collectedBlocks, options);
-    if (!collectedBlocks.getToDeleteList().isEmpty()) {
-      fsd.getFSNamesystem().getBlockManager()
-          .removeBlocksAndUpdateSafemodeTotal(collectedBlocks);
+    try (InodePathPair inodePathPair =
+        fsd.lockInodePathPair(src, FSDirectory.LockMode.WRITE, dst, FSDirectory.LockMode.READ)) {
+      BlocksMapUpdateInfo collectedBlocks = new BlocksMapUpdateInfo();
+      final INodesInPath srcIIP = fsd.getINodesInPath(src, DirOp.WRITE_LINK);
+      final INodesInPath dstIIP = fsd.getINodesInPath(dst, DirOp.WRITE_LINK);
+      unprotectedRenameTo(fsd, srcIIP, dstIIP, timestamp,
+          collectedBlocks, options);
+      if (!collectedBlocks.getToDeleteList().isEmpty()) {
+        fsd.getFSNamesystem().getBlockManager()
+            .removeBlocksAndUpdateSafemodeTotal(collectedBlocks);
+      }
     }
   }
 
@@ -356,7 +367,6 @@ class FSDirRenameOp {
       final INodesInPath srcIIP, final INodesInPath dstIIP, long timestamp,
       BlocksMapUpdateInfo collectedBlocks, Options.Rename... options)
       throws IOException {
-    assert fsd.hasWriteLock();
     boolean overwrite = options != null
         && Arrays.asList(options).contains(Options.Rename.OVERWRITE);
 
@@ -491,13 +501,7 @@ class FSDirRenameOp {
           srcIIP.getPath() + " to " + dstIIP.getPath());
     }
     final long mtime = Time.now();
-    INodesInPath renameIIP;
-    fsd.writeLock();
-    try {
-      renameIIP = unprotectedRenameTo(fsd, srcIIP, dstIIP, mtime);
-    } finally {
-      fsd.writeUnlock();
-    }
+    INodesInPath renameIIP = unprotectedRenameTo(fsd, srcIIP, dstIIP, mtime);
     if (renameIIP != null) {
       fsd.getEditLog().logRename(
           srcIIP.getPath(), dstIIP.getPath(), mtime, logRetryCache);
