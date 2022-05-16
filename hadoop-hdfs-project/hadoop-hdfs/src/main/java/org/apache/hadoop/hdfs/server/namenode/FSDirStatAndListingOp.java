@@ -139,7 +139,8 @@ class FSDirStatAndListingOp {
 
   static ContentSummary getContentSummary(
       FSDirectory fsd, FSPermissionChecker pc, String src) throws IOException {
-    try (INodesInPath iip = fsd.lockFullInodePath(pc, src, FSDirectory.LockMode.READ)) {
+    try (INodesInPath iip = fsd.lockInodePath(pc, src, DirOp.READ,
+        FSDirectory.LockMode.READ)) {
       if (fsd.isPermissionEnabled() &&
           fsd.isPermissionContentSummarySubAccess()) {
         fsd.checkPermission(pc, iip, false, null, null, null,
@@ -536,7 +537,7 @@ class FSDirStatAndListingOp {
       FSPermissionChecker pc, INodesInPath iip) throws IOException {
     fsd.readLock();
     try {
-      INode targetNode = iip.getLastExistingInode();
+      INode targetNode = iip.getLastINode();
       if (targetNode == null) {
         throw new FileNotFoundException("File does not exist: " + iip.getPath());
       }

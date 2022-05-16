@@ -2467,6 +2467,28 @@ public class FSDirectory implements Closeable {
     return iip;
   }
 
+  INodesInPath lockInodePath(FSPermissionChecker pc, String src,
+      long fileId, LockMode lockMode)
+      throws InvalidPathException, FileNotFoundException,
+      ParentNotDirectoryException, UnresolvedPathException,
+      AccessControlException {
+    // Older clients may not have given us an inode ID to work with.
+    // In this case, we have to try to resolve the path and hope it
+    // hasn't changed or been deleted since the file was opened for write.
+    INodesInPath iip;
+    if (fileId == HdfsConstants.GRANDFATHER_INODE_ID) {
+      iip = lockInodePath(pc, src, DirOp.WRITE, lockMode);
+    } else {
+      INode inode = getInode(fileId);
+      if (inode == null) {
+        iip = INodesInPath.fromComponents(INode.getPathComponents(src));
+      } else {
+        iip = lockFullInodePath(fileId, lockMode);
+      }
+    }
+    return iip;
+  }
+
   /**
    * Attempts to extend an existing {@link INodesInPath} to reach the target inode (the last
    * inode for the full path). If the target inode does not exist, an exception will be thrown.

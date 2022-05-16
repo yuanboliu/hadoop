@@ -2566,7 +2566,6 @@ public class FSNamesystem implements Namesystem, FSNamesystemMBean,
 
       skipSync = false; // following might generate edits
       toRemoveBlocks = new BlocksMapUpdateInfo();
-      dir.writeLock();
       try {
         stat = FSDirWriteFileOp.startFile(this, iip, permissions, holder,
             clientMachine, flag, createParent, replication, blockSize, feInfo,
@@ -2574,8 +2573,6 @@ public class FSNamesystem implements Namesystem, FSNamesystemMBean,
       } catch (IOException e) {
         skipSync = e instanceof StandbyException;
         throw e;
-      } finally {
-        dir.writeUnlock();
       }
     } finally {
       readUnlock("create");

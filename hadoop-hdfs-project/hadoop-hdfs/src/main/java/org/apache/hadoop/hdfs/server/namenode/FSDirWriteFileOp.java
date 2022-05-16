@@ -117,26 +117,22 @@ class FSDirWriteFileOp {
   static void abandonBlock(
       FSDirectory fsd, FSPermissionChecker pc, ExtendedBlock b, long fileId,
       String src, String holder) throws IOException {
-    final INodesInPath iip = fsd.resolvePath(pc, src, fileId);
-    src = iip.getPath();
-    FSNamesystem fsn = fsd.getFSNamesystem();
-    final INodeFile file = fsn.checkLease(iip, holder, fileId);
-    Preconditions.checkState(file.isUnderConstruction());
-    if (file.getBlockType() == BlockType.STRIPED) {
-      return; // do not abandon block for striped file
-    }
+    try (INodesInPath iip = fsd.lockInodePath(pc, src, fileId, FSDirectory.LockMode.WRITE)) {
+      src = iip.getPath();
+      FSNamesystem fsn = fsd.getFSNamesystem();
+      final INodeFile file = fsn.checkLease(iip, holder, fileId);
+      Preconditions.checkState(file.isUnderConstruction());
+      if (file.getBlockType() == BlockType.STRIPED) {
+        return; // do not abandon block for striped file
+      }
 
-    Block localBlock = ExtendedBlock.getLocalBlock(b);
-    fsd.writeLock();
-    try {
+      Block localBlock = ExtendedBlock.getLocalBlock(b);
       // Remove the block from the pending creates list
       if (!unprotectedRemoveBlock(fsd, src, iip, file, localBlock)) {
         return;
       }
-    } finally {
-      fsd.writeUnlock();
+      persistBlocks(fsd, src, file, false);
     }
-    persistBlocks(fsd, src, file, false);
   }
 
   static void checkBlock(FSNamesystem fsn, ExtendedBlock block)
@@ -509,50 +505,46 @@ class FSDirWriteFileOp {
   private static BlockInfo addBlock(FSDirectory fsd, String path,
       INodesInPath inodesInPath, Block block, DatanodeStorageInfo[] targets,
       BlockType blockType) throws IOException {
-    fsd.writeLock();
-    try {
-      final INodeFile fileINode = inodesInPath.getLastINode().asFile();
-      Preconditions.checkState(fileINode.isUnderConstruction());
 
-      // associate new last block for the file
-      final BlockInfo blockInfo;
-      if (blockType == BlockType.STRIPED) {
-        ErasureCodingPolicy ecPolicy =
-            FSDirErasureCodingOp.unprotectedGetErasureCodingPolicy(
-                fsd.getFSNamesystem(), inodesInPath);
-        short numDataUnits = (short) ecPolicy.getNumDataUnits();
-        short numParityUnits = (short) ecPolicy.getNumParityUnits();
-        short numLocations = (short) (numDataUnits + numParityUnits);
+    final INodeFile fileINode = inodesInPath.getLastINode().asFile();
+    Preconditions.checkState(fileINode.isUnderConstruction());
 
-        // check quota limits and updated space consumed
-        fsd.updateCount(inodesInPath, 0, fileINode.getPreferredBlockSize(),
-            numLocations, true);
-        blockInfo = new BlockInfoStriped(block, ecPolicy);
-        blockInfo.convertToBlockUnderConstruction(
-            HdfsServerConstants.BlockUCState.UNDER_CONSTRUCTION, targets);
-      } else {
-        // check quota limits and updated space consumed
-        fsd.updateCount(inodesInPath, 0, fileINode.getPreferredBlockSize(),
-            fileINode.getFileReplication(), true);
+    // associate new last block for the file
+    final BlockInfo blockInfo;
+    if (blockType == BlockType.STRIPED) {
+      ErasureCodingPolicy ecPolicy =
+          FSDirErasureCodingOp.unprotectedGetErasureCodingPolicy(
+              fsd.getFSNamesystem(), inodesInPath);
+      short numDataUnits = (short) ecPolicy.getNumDataUnits();
+      short numParityUnits = (short) ecPolicy.getNumParityUnits();
+      short numLocations = (short) (numDataUnits + numParityUnits);
 
-        short numLocations = fileINode.getFileReplication();
-        blockInfo = new BlockInfoContiguous(block, numLocations);
-        blockInfo.convertToBlockUnderConstruction(
-            HdfsServerConstants.BlockUCState.UNDER_CONSTRUCTION, targets);
-      }
-      fsd.getBlockManager().addBlockCollection(blockInfo, fileINode);
-      fileINode.addBlock(blockInfo);
+      // check quota limits and updated space consumed
+      fsd.updateCount(inodesInPath, 0, fileINode.getPreferredBlockSize(),
+          numLocations, true);
+      blockInfo = new BlockInfoStriped(block, ecPolicy);
+      blockInfo.convertToBlockUnderConstruction(
+          HdfsServerConstants.BlockUCState.UNDER_CONSTRUCTION, targets);
+    } else {
+      // check quota limits and updated space consumed
+      fsd.updateCount(inodesInPath, 0, fileINode.getPreferredBlockSize(),
+          fileINode.getFileReplication(), true);
 
-      if(NameNode.stateChangeLog.isDebugEnabled()) {
-        NameNode.stateChangeLog.debug("DIR* FSDirectory.addBlock: "
-            + path + " with " + block
-            + " block is added to the in-memory "
-            + "file system");
-      }
-      return blockInfo;
-    } finally {
-      fsd.writeUnlock();
+      short numLocations = fileINode.getFileReplication();
+      blockInfo = new BlockInfoContiguous(block, numLocations);
+      blockInfo.convertToBlockUnderConstruction(
+          HdfsServerConstants.BlockUCState.UNDER_CONSTRUCTION, targets);
     }
+    fsd.getBlockManager().addBlockCollection(blockInfo, fileINode);
+    fileINode.addBlock(blockInfo);
+
+    if(NameNode.stateChangeLog.isDebugEnabled()) {
+      NameNode.stateChangeLog.debug("DIR* FSDirectory.addBlock: "
+          + path + " with " + block
+          + " block is added to the in-memory "
+          + "file system");
+    }
+    return blockInfo;
   }
 
   /**
@@ -568,30 +560,25 @@ class FSDirWriteFileOp {
     Preconditions.checkNotNull(existing);
     long modTime = now();
     INodesInPath newiip;
-    fsd.writeLock();
-    try {
-      boolean isStriped = false;
-      ErasureCodingPolicy ecPolicy = null;
-      if (!shouldReplicate) {
-        ecPolicy = FSDirErasureCodingOp.getErasureCodingPolicy(
-            fsd.getFSNamesystem(), ecPolicyName, existing);
-        if (ecPolicy != null && (!ecPolicy.isReplicationPolicy())) {
-          isStriped = true;
-        }
+    boolean isStriped = false;
+    ErasureCodingPolicy ecPolicy = null;
+    if (!shouldReplicate) {
+      ecPolicy = FSDirErasureCodingOp.getErasureCodingPolicy(
+          fsd.getFSNamesystem(), ecPolicyName, existing);
+      if (ecPolicy != null && (!ecPolicy.isReplicationPolicy())) {
+        isStriped = true;
       }
-      final BlockType blockType = isStriped ?
-          BlockType.STRIPED : BlockType.CONTIGUOUS;
-      final Short replicationFactor = (!isStriped ? replication : null);
-      final Byte ecPolicyID = (isStriped ? ecPolicy.getId() : null);
-      INodeFile newNode = newINodeFile(fsd.allocateNewInodeId(), permissions,
-          modTime, modTime, replicationFactor, ecPolicyID, preferredBlockSize,
-          blockType);
-      newNode.setLocalName(localName);
-      newNode.toUnderConstruction(clientName, clientMachine);
-      newiip = fsd.addINode(existing, newNode, permissions.getPermission());
-    } finally {
-      fsd.writeUnlock();
     }
+    final BlockType blockType = isStriped ?
+        BlockType.STRIPED : BlockType.CONTIGUOUS;
+    final Short replicationFactor = (!isStriped ? replication : null);
+    final Byte ecPolicyID = (isStriped ? ecPolicy.getId() : null);
+    INodeFile newNode = newINodeFile(fsd.allocateNewInodeId(), permissions,
+        modTime, modTime, replicationFactor, ecPolicyID, preferredBlockSize,
+        blockType);
+    newNode.setLocalName(localName);
+    newNode.toUnderConstruction(clientName, clientMachine);
+    newiip = fsd.addINode(existing, newNode, permissions.getPermission());
     if (newiip == null) {
       NameNode.stateChangeLog.info("DIR* addFile: failed to add " +
           existing.getPath() + "/" + DFSUtil.bytes2String(localName));
