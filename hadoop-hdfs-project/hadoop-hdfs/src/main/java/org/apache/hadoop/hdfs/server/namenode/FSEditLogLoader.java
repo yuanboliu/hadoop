@@ -719,9 +719,10 @@ public class FSEditLogLoader {
       TimesOp timesOp = (TimesOp)op;
       final String src = renameReservedPathsOnUpgrade(
           timesOp.path, logVersion);
-      final INodesInPath iip = fsDir.getINodesInPath(src, DirOp.WRITE);
-      FSDirAttrOp.unprotectedSetTimes(fsDir, iip,
-          timesOp.mtime, timesOp.atime, true);
+      try (INodesInPath iip =
+          fsDir.lockFullInodePath(src, FSDirectory.LockMode.WRITE)) {
+        FSDirAttrOp.unprotectedSetTimes(fsDir, iip, timesOp.mtime, timesOp.atime, true);
+      }
       break;
     }
     case OP_SYMLINK: {
