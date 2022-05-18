@@ -1499,36 +1499,6 @@ public class TestFileCreation {
     return out.toByteArray();
   }
 
-  public static class CreateFileTask implements Runnable {
-    private String filePath;
-    private NamenodeProtocols nn;
-    private int count;
-
-    public CreateFileTask(NamenodeProtocols fs, String path, int count) {
-      this.nn = fs;
-      this.filePath = path;
-      this.count = count;
-    }
-
-    @Override
-    public void run() {
-      try {
-        for (int i = 0; i < count; i++) {
-          String fileName = filePath + i;
-          nn.create(fileName,
-              FsPermission.getDefault(), "clientName",
-              new EnumSetWritable<CreateFlag>(
-                  EnumSet.of(CreateFlag.CREATE, CreateFlag.OVERWRITE)), true,
-              (short)1, 4096, null, null, null);
-          nn.complete(fileName, "clientName", null,
-              HdfsConstants.GRANDFATHER_INODE_ID);
-        }
-      } catch (IOException e) {
-        e.printStackTrace();
-      }
-    }
-  }
-
   public static class VerifyFileTask implements Runnable {
     private String filePath;
     private NamenodeProtocols nn;
@@ -1572,8 +1542,8 @@ public class TestFileCreation {
       int filePerThreadCount = 10;
       Thread[] threads = new Thread[threadCount];
       for (int i = 0; i < threadCount; i++) {
-        threads[i] = new Thread(new CreateFileTask(nn, dirPath + "/" + i + "/",
-            filePerThreadCount));
+        threads[i] = new Thread(new CreateFileTask(nn, filePerThreadCount,
+                dirPath + "/" + i + "/"));
       }
       for (int i = 0; i < threadCount; i++) {
         threads[i].start();

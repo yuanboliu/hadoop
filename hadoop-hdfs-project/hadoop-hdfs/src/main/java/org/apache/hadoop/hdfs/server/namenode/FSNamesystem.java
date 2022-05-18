@@ -109,6 +109,7 @@ import org.apache.hadoop.hdfs.protocol.SnapshotDiffReportListing;
 import org.apache.hadoop.hdfs.protocol.SnapshotDiffReport;
 import org.apache.hadoop.hdfs.server.common.ECTopologyVerifier;
 import org.apache.hadoop.hdfs.server.lock.resource.RWLockResource;
+import org.apache.hadoop.hdfs.server.namenode.FSDirectory.LockMode;
 import org.apache.hadoop.hdfs.server.namenode.metrics.ReplicatedBlocksMBean;
 import org.apache.hadoop.hdfs.server.protocol.SlowDiskReports;
 import static org.apache.hadoop.util.Time.now;
@@ -3122,7 +3123,7 @@ public class FSNamesystem implements Namesystem, FSNamesystemMBean,
       logAuditEvent(false, operationName, src);
       throw e;
     } finally {
-      writeUnlock(operationName);
+      readUnlock(operationName);
     }
     getEditLog().logSync();
     logAuditEvent(true, operationName, src);
@@ -7611,8 +7612,7 @@ public class FSNamesystem implements Namesystem, FSNamesystemMBean,
           + " re-encryption on zone " + zone);
       List<XAttr> xattrs;
       dir.writeLock();
-      try {
-        final INodesInPath iip = dir.resolvePath(pc, zone, DirOp.WRITE);
+      try (INodesInPath iip = dir.lockInodePath(pc, zone, FSDirectory.DirOp.WRITE, LockMode.WRITE)) {
         if (iip.getLastINode() == null) {
           throw new FileNotFoundException(zone + " does not exist.");
         }

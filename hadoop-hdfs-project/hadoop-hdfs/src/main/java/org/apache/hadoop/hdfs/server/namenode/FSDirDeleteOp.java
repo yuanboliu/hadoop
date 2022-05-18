@@ -72,6 +72,7 @@ class FSDirDeleteOp {
       fsn.removeSnapshottableDirs(snapshottableDirs);
       fsd.updateCount(iip, context.quotaDelta(), false);
     }
+    NameNode.stateChangeLog.debug("DIR* FSDirectory.delete: finished, returning" + iip.getPath());
     return filesRemoved;
   }
 
@@ -193,6 +194,11 @@ class FSDirDeleteOp {
     }
     fsd.getEditLog().logDelete(iip.getPath(), mtime, logRetryCache);
     incrDeletedFileCount(filesRemoved);
+
+    if (NameNode.stateChangeLog.isDebugEnabled()) {
+      NameNode.stateChangeLog.debug(
+              "DIR* Namesystem.delete: " + iip.getPath() +" is removing lease");
+    }
 
     fsn.removeLeasesAndINodes(removedUCFiles, removedINodes, true);
 

@@ -1912,7 +1912,7 @@ public class BlockManager implements BlockStatsMXBean {
    */
   int computeBlockReconstructionWork(int blocksToProcess) {
     List<List<BlockInfo>> blocksToReconstruct = null;
-    namesystem.writeLock();
+    namesystem.readLock();
     try {
       boolean reset = false;
       if (replQueueResetToHeadThreshold > 0) {
@@ -1927,7 +1927,7 @@ public class BlockManager implements BlockStatsMXBean {
       blocksToReconstruct = neededReconstruction
           .chooseLowRedundancyBlocks(blocksToProcess, reset);
     } finally {
-      namesystem.writeUnlock();
+      namesystem.readUnlock();
     }
     return computeReconstructionWorkForBlocks(blocksToReconstruct);
   }
@@ -2499,7 +2499,7 @@ public class BlockManager implements BlockStatsMXBean {
 
   public void registerDatanode(DatanodeRegistration nodeReg)
       throws IOException {
-    assert namesystem.hasWriteLock();
+    assert namesystem.hasReadLock();
     datanodeManager.registerDatanode(nodeReg);
     bmSafeMode.checkSafeMode();
   }
@@ -2765,7 +2765,7 @@ public class BlockManager implements BlockStatsMXBean {
     if (getPostponedMisreplicatedBlocksCount() == 0) {
       return;
     }
-    namesystem.writeLock();
+    namesystem.readLock();
     long startTime = Time.monotonicNow();
     long startSize = postponedMisreplicatedBlocks.size();
     try {
@@ -2792,7 +2792,7 @@ public class BlockManager implements BlockStatsMXBean {
       postponedMisreplicatedBlocks.addAll(rescannedMisreplicatedBlocks);
       rescannedMisreplicatedBlocks.clear();
       long endSize = postponedMisreplicatedBlocks.size();
-      namesystem.writeUnlock();
+      namesystem.readUnlock();
       LOG.info("Rescan of postponedMisreplicatedBlocks completed in {}" +
           " msecs. {} blocks are left. {} blocks were removed.",
           (Time.monotonicNow() - startTime), endSize, (startSize - endSize));
@@ -3543,7 +3543,7 @@ public class BlockManager implements BlockStatsMXBean {
    * extra or low redundancy. Place it into the respective queue.
    */
   public void processMisReplicatedBlocks() {
-    assert namesystem.hasWriteLock();
+    assert namesystem.hasReadLock();
     stopReconstructionInitializer();
     neededReconstruction.clear();
     reconstructionQueuesInitializer = new Daemon() {
@@ -4460,7 +4460,7 @@ public class BlockManager implements BlockStatsMXBean {
   }
 
   public void removeBlock(BlockInfo block) {
-    assert namesystem.hasWriteLock();
+    assert namesystem.hasReadLock();
     // No need to ACK blocks that are being removed entirely
     // from the namespace, since the removal of the associated
     // file already removes them from the block map below.

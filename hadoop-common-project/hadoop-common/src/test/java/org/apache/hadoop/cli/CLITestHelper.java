@@ -311,7 +311,7 @@ public class CLITestHelper {
   public void testAll() {
     assertTrue("Number of tests has to be greater then zero",
       testsFromConfigFile.size() > 0);
-    LOG.info("TestAll");
+    LOG.info("TestAll, size is " + testsFromConfigFile.size());
     // Run the tests defined in the testConf.xml config file.
     for (int index = 0; index < testsFromConfigFile.size(); index++) {
       
@@ -357,6 +357,7 @@ public class CLITestHelper {
       // Execute the cleanup commands
       ArrayList<CLICommand> cleanupCommands = testdata.getCleanupCommands();
       for (CLICommand cmd : cleanupCommands) {
+        LOG.info("execute command " + cmd);
       try { 
         execute(cmd);
       } catch (Exception e) {

@@ -187,11 +187,11 @@ public class EncryptionZoneManager {
       final int count) throws IOException {
     INodesInPath iip;
     final FSPermissionChecker pc = dir.getPermissionChecker();
-    dir.getFSNamesystem().readLock();
+    dir.readLock();
     try {
       iip = dir.resolvePath(pc, zone, DirOp.READ);
     } finally {
-      dir.getFSNamesystem().readUnlock();
+      dir.readUnlock();
     }
     reencryptionHandler
         .pauseForTestingAfterNthCheckpoint(iip.getLastINode().getId(), count);
@@ -280,11 +280,11 @@ public class EncryptionZoneManager {
     if (getProvider() == null || reencryptionHandler == null) {
       return;
     }
-    dir.getFSNamesystem().writeLock();
+    dir.writeLock();
     try {
       reencryptionHandler.stopThreads();
     } finally {
-      dir.getFSNamesystem().writeUnlock();
+      dir.writeUnlock();
     }
     if (reencryptHandlerExecutor != null) {
       reencryptHandlerExecutor.shutdownNow();
@@ -302,7 +302,7 @@ public class EncryptionZoneManager {
    */
   void addEncryptionZone(Long inodeId, CipherSuite suite,
       CryptoProtocolVersion version, String keyName) {
-    assert dir.hasWriteLock();
+    assert dir.getFSNamesystem().hasReadLock();
     unprotectedAddEncryptionZone(inodeId, suite, version, keyName);
   }
 
@@ -358,7 +358,7 @@ public class EncryptionZoneManager {
    * Called while holding the FSDirectory lock.
    */
   String getFullPathName(Long nodeId) {
-    assert dir.hasReadLock();
+    assert dir.getFSNamesystem().hasReadLock();
     INode inode = dir.getInode(nodeId);
     if (inode == null) {
       return null;
@@ -389,7 +389,6 @@ public class EncryptionZoneManager {
    */
   private EncryptionZoneInt getEncryptionZoneForPath(INodesInPath iip)
       throws  IOException{
-    assert dir.hasReadLock();
     Preconditions.checkNotNull(iip);
     if (!hasCreatedEncryptionZone()) {
       return null;
@@ -438,7 +437,6 @@ public class EncryptionZoneManager {
    */
   private EncryptionZoneInt getParentEncryptionZoneForPath(INodesInPath iip)
       throws  IOException {
-    assert dir.hasReadLock();
     Preconditions.checkNotNull(iip);
     INodesInPath parentIIP = iip.getParentINodesInPath();
     return parentIIP == null ? null : getEncryptionZoneForPath(parentIIP);
@@ -533,7 +531,7 @@ public class EncryptionZoneManager {
   XAttr createEncryptionZone(INodesInPath srcIIP, CipherSuite suite,
       CryptoProtocolVersion version, String keyName)
       throws IOException {
-    assert dir.hasWriteLock();
+    assert dir.getFSNamesystem().hasReadLock();
 
     // Check if src is a valid path for new EZ creation
     if (srcIIP.getLastINode() == null) {
@@ -576,7 +574,7 @@ public class EncryptionZoneManager {
    */
   BatchedListEntries<EncryptionZone> listEncryptionZones(long prevId)
       throws IOException {
-    assert dir.hasReadLock();
+    assert dir.getFSNamesystem().hasReadLock();
     if (!hasCreatedEncryptionZone()) {
       return new BatchedListEntries<EncryptionZone>(Lists.newArrayList(), false);
     }
@@ -675,7 +673,7 @@ public class EncryptionZoneManager {
    */
   List<XAttr> cancelReencryptEncryptionZone(final INodesInPath zoneIIP)
       throws IOException {
-    assert dir.hasWriteLock();
+    assert dir.getFSNamesystem().hasReadLock();
     if (reencryptionHandler == null) {
       throw new IOException("No key provider configured, re-encryption "
           + "operation is rejected");
@@ -736,7 +734,7 @@ public class EncryptionZoneManager {
    */
   boolean isEncryptionZoneRoot(final INode inode, final String name)
       throws FileNotFoundException {
-    assert dir.hasReadLock();
+    assert dir.getFSNamesystem().hasReadLock();
     if (inode == null) {
       throw new FileNotFoundException("INode does not exist for " + name);
     }

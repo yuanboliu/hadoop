@@ -49,6 +49,7 @@ import org.apache.hadoop.hdfs.protocol.proto.HdfsProtos.ReencryptionInfoProto;
 import org.apache.hadoop.hdfs.protocol.proto.HdfsProtos.ZoneEncryptionInfoProto;
 import org.apache.hadoop.hdfs.protocolPB.PBHelperClient;
 import org.apache.hadoop.hdfs.server.namenode.FSDirectory.DirOp;
+import org.apache.hadoop.hdfs.server.namenode.FSDirectory.LockMode;
 import org.apache.hadoop.hdfs.server.namenode.ReencryptionUpdater.FileEdekInfo;
 import org.apache.hadoop.security.SecurityUtil;
 
@@ -163,18 +164,13 @@ final class FSDirEncryptionZoneOp {
     final CryptoProtocolVersion version =
         CryptoProtocolVersion.ENCRYPTION_ZONES;
 
-    final INodesInPath iip;
-    fsd.writeLock();
-    try {
-      iip = fsd.resolvePath(pc, srcArg, DirOp.WRITE);
+    try (INodesInPath iip = fsd.lockInodePath(pc, srcArg, DirOp.WRITE, LockMode.WRITE)) {
       final XAttr ezXAttr = fsd.ezManager.createEncryptionZone(iip, suite,
           version, keyName);
       xAttrs.add(ezXAttr);
-    } finally {
-      fsd.writeUnlock();
+      fsd.getEditLog().logSetXAttrs(iip.getPath(), xAttrs, logRetryCache);
+      return fsd.getAuditFileInfo(iip);
     }
-    fsd.getEditLog().logSetXAttrs(iip.getPath(), xAttrs, logRetryCache);
-    return fsd.getAuditFileInfo(iip);
   }
 
   /**
@@ -188,40 +184,24 @@ final class FSDirEncryptionZoneOp {
   static Map.Entry<EncryptionZone, FileStatus> getEZForPath(
       final FSDirectory fsd, final String srcArg, final FSPermissionChecker pc)
       throws IOException {
-    final INodesInPath iip;
     final EncryptionZone ret;
-    fsd.readLock();
-    try {
-      iip = fsd.resolvePath(pc, srcArg, DirOp.READ);
-      if (fsd.isPermissionEnabled()) {
-        fsd.checkPathAccess(pc, iip, FsAction.READ);
-      }
+    try (INodesInPath iip = fsd.lockInodePath(pc, srcArg, DirOp.READ, LockMode.READ)) {
       ret = fsd.ezManager.getEZINodeForPath(iip);
-    } finally {
-      fsd.readUnlock();
+      FileStatus auditStat = fsd.getAuditFileInfo(iip);
+      return new AbstractMap.SimpleImmutableEntry<>(ret, auditStat);
     }
-    FileStatus auditStat = fsd.getAuditFileInfo(iip);
-    return new AbstractMap.SimpleImmutableEntry<>(ret, auditStat);
   }
 
   static EncryptionZone getEZForPath(final FSDirectory fsd,
       final INodesInPath iip) throws IOException {
-    fsd.readLock();
-    try {
-      return fsd.ezManager.getEZINodeForPath(iip);
-    } finally {
-      fsd.readUnlock();
-    }
+    assert fsd.getFSNamesystem().hasReadLock();
+    return fsd.ezManager.getEZINodeForPath(iip);
   }
 
   static BatchedListEntries<EncryptionZone> listEncryptionZones(
       final FSDirectory fsd, final long prevId) throws IOException {
-    fsd.readLock();
-    try {
-      return fsd.ezManager.listEncryptionZones(prevId);
-    } finally {
-      fsd.readUnlock();
-    }
+    assert fsd.getFSNamesystem().hasReadLock();
+    return fsd.ezManager.listEncryptionZones(prevId);
   }
 
   static List<XAttr> reencryptEncryptionZone(final FSDirectory fsd,
@@ -238,12 +218,8 @@ final class FSDirEncryptionZoneOp {
   static BatchedListEntries<ZoneReencryptionStatus> listReencryptionStatus(
       final FSDirectory fsd, final long prevId)
       throws IOException {
-    fsd.readLock();
-    try {
-      return fsd.ezManager.listReencryptionStatus(prevId);
-    } finally {
-      fsd.readUnlock();
-    }
+    assert fsd.getFSNamesystem().hasReadLock();
+    return fsd.ezManager.listReencryptionStatus(prevId);
   }
 
   /**
@@ -255,7 +231,7 @@ final class FSDirEncryptionZoneOp {
   static XAttr updateReencryptionSubmitted(final FSDirectory fsd,
       final INodesInPath iip, final String ezKeyVersionName)
       throws IOException {
-    assert fsd.hasWriteLock();
+    assert fsd.getFSNamesystem().hasReadLock();
     Preconditions.checkNotNull(ezKeyVersionName, "ezKeyVersionName is null.");
     final ZoneEncryptionInfoProto zoneProto = getZoneEncryptionInfoProto(iip);
     Preconditions.checkNotNull(zoneProto, "ZoneEncryptionInfoProto is null.");
@@ -328,7 +304,7 @@ final class FSDirEncryptionZoneOp {
       final INodesInPath zoneIIP, final ZoneReencryptionStatus origStatus)
       throws IOException {
     assert origStatus != null;
-    assert fsd.hasWriteLock();
+    assert fsd.getFSNamesystem().hasReadLock();
     fsd.ezManager.getReencryptionStatus()
         .markZoneCompleted(zoneIIP.getLastINode().getId());
     final XAttr xattr =
@@ -725,10 +701,8 @@ final class FSDirEncryptionZoneOp {
   static String getKeyNameForZone(final FSDirectory dir,
       final FSPermissionChecker pc, final String zone) throws IOException {
     assert dir.getProvider() != null;
-    final INodesInPath iip;
     dir.getFSNamesystem().readLock();
-    try {
-      iip = dir.resolvePath(pc, zone, DirOp.READ);
+    try (final INodesInPath iip = dir.lockInodePath(pc, zone, DirOp.READ, LockMode.READ)) {
       dir.ezManager.checkEncryptionZoneRoot(iip.getLastINode(), zone);
       return dir.ezManager.getKeyName(iip);
     } finally {
