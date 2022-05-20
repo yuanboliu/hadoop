@@ -373,7 +373,7 @@ public class EncryptionZoneManager {
    * Called while holding the FSDirectory lock.
    */
   String getKeyName(final INodesInPath iip) throws IOException {
-    assert dir.hasReadLock();
+    assert dir.getFSNamesystem().hasReadLock();
     EncryptionZoneInt ezi = getEncryptionZoneForPath(iip);
     if (ezi == null) {
       return null;
@@ -512,7 +512,7 @@ public class EncryptionZoneManager {
 
   private void checkMoveValidityForReencryption(final String pathName,
       final long zoneId) throws IOException {
-    assert dir.hasReadLock();
+    assert dir.getFSNamesystem().hasReadLock();
     final ZoneReencryptionStatus zs = reencryptionStatus.getZoneStatus(zoneId);
     if (zs != null && zs.getState() != ZoneReencryptionStatus.State.Completed) {
       final StringBuilder sb = new StringBuilder(pathName);
@@ -622,7 +622,7 @@ public class EncryptionZoneManager {
   private boolean pathResolvesToId(final long zoneId, final String zonePath)
       throws UnresolvedLinkException, AccessControlException,
       ParentNotDirectoryException {
-    assert dir.hasReadLock();
+    assert dir.getFSNamesystem().hasReadLock();
     INode inode = dir.getInode(zoneId);
     if (inode == null) {
       return false;
@@ -694,7 +694,7 @@ public class EncryptionZoneManager {
    */
   BatchedListEntries<ZoneReencryptionStatus> listReencryptionStatus(
       final long prevId) throws IOException {
-    assert dir.hasReadLock();
+    assert dir.getFSNamesystem().hasReadLock();
     if (!hasCreatedEncryptionZone()) {
       return ReencryptionStatus.EMPTY_LIST;
     }

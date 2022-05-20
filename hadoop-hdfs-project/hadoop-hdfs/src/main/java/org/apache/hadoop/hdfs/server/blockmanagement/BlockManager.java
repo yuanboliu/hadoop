@@ -2850,7 +2850,7 @@ public class BlockManager implements BlockStatsMXBean {
       BlockInfo block,
       long oldGenerationStamp, long oldNumBytes, 
       DatanodeStorageInfo[] newStorages) throws IOException {
-    assert namesystem.hasWriteLock();
+    assert namesystem.hasReadLock();
     BlockToMarkCorrupt b = null;
     if (block.getGenerationStamp() != oldGenerationStamp) {
       b = new BlockToMarkCorrupt(oldBlock, block, oldGenerationStamp,
@@ -3950,7 +3950,7 @@ public class BlockManager implements BlockStatsMXBean {
    */
   public void removeStoredBlock(BlockInfo storedBlock, DatanodeDescriptor node) {
     blockLog.debug("BLOCK* removeStoredBlock: {} from {}", storedBlock, node);
-    assert (namesystem.hasWriteLock());
+    assert (namesystem.hasReadLock());
     {
       if (storedBlock == null || !blocksMap.removeNode(storedBlock, node)) {
         blockLog.debug("BLOCK* removeStoredBlock: {} has already been" +
