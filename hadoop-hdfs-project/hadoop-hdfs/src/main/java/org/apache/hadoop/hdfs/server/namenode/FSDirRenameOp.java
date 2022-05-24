@@ -124,6 +124,9 @@ class FSDirRenameOp {
         fsd.lockInodePathPair(src, FSDirectory.LockMode.WRITE, dst, FSDirectory.LockMode.READ)) {
       INodesInPath srcIIP = inodePathPair.getFirst();
       INodesInPath dstIIP = inodePathPair.getSecond();
+      // this is wrong but accidentally works.  the edit contains the full path
+      // so the following will do nothing, but shouldn't change due to backward
+      // compatibility when maybe full path wasn't logged.
       dstIIP = dstForRenameTo(srcIIP, dstIIP);
       return unprotectedRenameTo(fsd, srcIIP, dstIIP, timestamp);
     }

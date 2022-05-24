@@ -4503,7 +4503,7 @@ public class BlockManager implements BlockStatsMXBean {
   /** updates a block in needed reconstruction queue. */
   private void updateNeededReconstructions(final BlockInfo block,
       final int curReplicasDelta, int expectedReplicasDelta) {
-    namesystem.writeLock();
+    namesystem.readLock();
     try {
       if (!isPopulatingReplQueues() || !block.isComplete()) {
         return;
@@ -4522,7 +4522,7 @@ public class BlockManager implements BlockStatsMXBean {
             repl.outOfServiceReplicas(), oldExpectedReplicas);
       }
     } finally {
-      namesystem.writeUnlock();
+      namesystem.readUnlock();
     }
   }
 

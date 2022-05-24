@@ -53,10 +53,9 @@ class FSDirSymlinkOp {
     }
 
     FSPermissionChecker pc = fsn.getPermissionChecker();
-    INodesInPath iip;
-    fsd.writeLock();
-    try {
-      iip = fsd.resolvePath(pc, link, DirOp.WRITE_LINK);
+    fsd.readLock();
+    try (INodesInPath iip = fsd.lockInodePath(pc, link, DirOp.WRITE_LINK,
+            FSDirectory.LockMode.WRITE)){
       link = iip.getPath();
       if (!createParent) {
         fsd.verifyParentDir(iip);
@@ -74,18 +73,18 @@ class FSDirSymlinkOp {
 
       // add symbolic link to namespace
       addSymlink(fsd, link, iip, target, dirPerms, createParent, logRetryCache);
+      NameNode.getNameNodeMetrics().incrCreateSymlinkOps();
+      return fsd.getAuditFileInfo(iip);
     } finally {
-      fsd.writeUnlock();
+      fsd.readUnlock();
     }
-    NameNode.getNameNodeMetrics().incrCreateSymlinkOps();
-    return fsd.getAuditFileInfo(iip);
   }
 
   static INodeSymlink unprotectedAddSymlink(FSDirectory fsd, INodesInPath iip,
       byte[] localName, long id, String target, long mtime, long atime,
       PermissionStatus perm)
       throws UnresolvedLinkException, QuotaExceededException {
-    assert fsd.hasWriteLock();
+    assert fsd.hasReadLock();
     final INodeSymlink symlink = new INodeSymlink(id, null, perm, mtime, atime,
         target);
     symlink.setLocalName(localName);

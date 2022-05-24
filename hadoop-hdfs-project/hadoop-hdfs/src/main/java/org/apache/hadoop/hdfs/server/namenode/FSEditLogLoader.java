@@ -427,7 +427,7 @@ public class FSEditLogLoader {
           // add to the file tree
           inodeId = getAndUpdateLastInodeId(addCloseOp.inodeId, logVersion, lastInodeId);
           newFile = FSDirWriteFileOp.addFileForEditLog(fsDir, inodeId,
-                  iip.getExistingINodes(), iip.getLastLocalName(),
+                  iip, iip.getLastLocalName(),
                   addCloseOp.permissions, addCloseOp.aclEntries,
                   addCloseOp.xAttrs, replication, addCloseOp.mtime,
                   addCloseOp.atime, addCloseOp.blockSize, true,
