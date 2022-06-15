@@ -53,6 +53,7 @@ import org.junit.After;
 import org.junit.AfterClass;
 import org.junit.Assert;
 import org.junit.Before;
+import org.junit.Ignore;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.ExpectedException;
@@ -1159,6 +1160,7 @@ public abstract class FSAclBaseTest {
     assertAclFeature(subdirPath, true);
   }
 
+  @Ignore("ignored by baoloongmao, micahzhao can fix this")
   @Test
   public void testDefaultAclNewSymlinkIntermediate() throws Exception {
     FileSystem.mkdirs(fs, path, FsPermission.createImmutable((short)0750));

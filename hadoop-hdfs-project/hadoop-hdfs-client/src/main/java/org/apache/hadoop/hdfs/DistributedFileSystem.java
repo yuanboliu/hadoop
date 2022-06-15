@@ -135,10 +135,10 @@ public class DistributedFileSystem extends FileSystem
   private Path workingDir;
   private URI uri;
 
-  DFSClient dfs;
-  private boolean verifyChecksum = true;
+  protected DFSClient dfs;
+  protected boolean verifyChecksum = true;
 
-  private DFSOpsCountStatistics storageStatistics;
+  protected DFSOpsCountStatistics storageStatistics;
 
   static{
     HdfsConfiguration.init();
@@ -232,7 +232,7 @@ public class DistributedFileSystem extends FileSystem
    * @return path component of {file}
    * @throws IllegalArgumentException if URI does not belong to this DFS
    */
-  String getPathName(Path file) {
+  protected String getPathName(Path file) {
     checkPath(file);
     String result = file.toUri().getPath();
     if (!DFSUtilClient.isValidName(result)) {
@@ -1147,7 +1147,7 @@ public class DistributedFileSystem extends FileSystem
    * more details.
    */
   @Override
-  protected RemoteIterator<LocatedFileStatus> listLocatedStatus(final Path p,
+  public RemoteIterator<LocatedFileStatus> listLocatedStatus(final Path p,
       final PathFilter filter)
       throws IOException {
     Path absF = fixRelativePart(p);

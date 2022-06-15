@@ -56,20 +56,16 @@ public class FSDirAttrOp {
     if (FSDirectory.isExactReservedName(src)) {
       throw new InvalidPathException(src);
     }
-    INodesInPath iip;
     boolean changed;
-    fsd.writeLock();
-    try {
-      iip = fsd.resolvePath(pc, src, DirOp.WRITE);
+    try (INodesInPath iip = fsd.lockInodePath(pc, src, DirOp.WRITE,
+            FSDirectory.LockMode.WRITE)) {
       fsd.checkOwner(pc, iip);
       changed = unprotectedSetPermission(fsd, iip, permission);
-    } finally {
-      fsd.writeUnlock();
+      if (changed) {
+        fsd.getEditLog().logSetPermissions(iip.getPath(), permission);
+      }
+      return fsd.getAuditFileInfo(iip);
     }
-    if (changed) {
-      fsd.getEditLog().logSetPermissions(iip.getPath(), permission);
-    }
-    return fsd.getAuditFileInfo(iip);
   }
 
   static FileStatus setOwner(
@@ -78,11 +74,9 @@ public class FSDirAttrOp {
     if (FSDirectory.isExactReservedName(src)) {
       throw new InvalidPathException(src);
     }
-    INodesInPath iip;
     boolean changed;
-    fsd.writeLock();
-    try {
-      iip = fsd.resolvePath(pc, src, DirOp.WRITE);
+    try (INodesInPath iip = fsd.lockInodePath(pc, src, DirOp.WRITE,
+            FSDirectory.LockMode.WRITE)) {
       fsd.checkOwner(pc, iip);
       if (!pc.isSuperUser()) {
         if (username != null && !pc.getUser().equals(username)) {
@@ -95,22 +89,18 @@ public class FSDirAttrOp {
         }
       }
       changed = unprotectedSetOwner(fsd, iip, username, group);
-    } finally {
-      fsd.writeUnlock();
+      if (changed) {
+        fsd.getEditLog().logSetOwner(iip.getPath(), username, group);
+      }
+      return fsd.getAuditFileInfo(iip);
     }
-    if (changed) {
-      fsd.getEditLog().logSetOwner(iip.getPath(), username, group);
-    }
-    return fsd.getAuditFileInfo(iip);
   }
 
   static FileStatus setTimes(
       FSDirectory fsd, FSPermissionChecker pc, String src, long mtime,
       long atime) throws IOException {
-    INodesInPath iip;
-    fsd.writeLock();
-    try {
-      iip = fsd.resolvePath(pc, src, DirOp.WRITE);
+    try (INodesInPath iip = fsd.lockInodePath(pc, src,
+            DirOp.WRITE, FSDirectory.LockMode.WRITE)) {
       // Write access is required to set access and modification times
       if (fsd.isPermissionEnabled()) {
         fsd.checkPathAccess(pc, iip, FsAction.WRITE);
@@ -118,16 +108,14 @@ public class FSDirAttrOp {
       final INode inode = iip.getLastINode();
       if (inode == null) {
         throw new FileNotFoundException("File/Directory " + iip.getPath() +
-                                            " does not exist.");
+            " does not exist.");
       }
       boolean changed = unprotectedSetTimes(fsd, iip, mtime, atime, true);
       if (changed) {
         fsd.getEditLog().logTimes(iip.getPath(), mtime, atime);
       }
-    } finally {
-      fsd.writeUnlock();
+      return fsd.getAuditFileInfo(iip);
     }
-    return fsd.getAuditFileInfo(iip);
   }
 
   static boolean setReplication(
@@ -266,7 +254,6 @@ public class FSDirAttrOp {
       FSDirectory fsd, INodesInPath iip, FsPermission permissions)
       throws FileNotFoundException, UnresolvedLinkException,
              QuotaExceededException, SnapshotAccessControlException {
-    assert fsd.hasWriteLock();
     final INode inode = FSDirectory.resolveLastINode(iip);
     int snapshotId = iip.getLatestSnapshotId();
     long oldPerm = inode.getPermissionLong();
@@ -278,7 +265,6 @@ public class FSDirAttrOp {
       FSDirectory fsd, INodesInPath iip, String username, String groupname)
       throws FileNotFoundException, UnresolvedLinkException,
       QuotaExceededException, SnapshotAccessControlException {
-    assert fsd.hasWriteLock();
     final INode inode = FSDirectory.resolveLastINode(iip);
     long oldPerm = inode.getPermissionLong();
     if (username != null) {
@@ -293,12 +279,7 @@ public class FSDirAttrOp {
   static boolean setTimes(
       FSDirectory fsd, INodesInPath iip, long mtime, long atime, boolean force)
           throws QuotaExceededException {
-    fsd.writeLock();
-    try {
-      return unprotectedSetTimes(fsd, iip, mtime, atime, force);
-    } finally {
-      fsd.writeUnlock();
-    }
+    return unprotectedSetTimes(fsd, iip, mtime, atime, force);
   }
 
   /**
@@ -484,9 +465,8 @@ public class FSDirAttrOp {
   static boolean unprotectedSetTimes(
       FSDirectory fsd, INodesInPath iip, long mtime, long atime, boolean force)
           throws QuotaExceededException {
-    assert fsd.hasWriteLock();
     boolean status = false;
-    INode inode = iip.getLastINode();
+    INode inode = iip.getLastExistingInode();
     int latest = iip.getLatestSnapshotId();
     if (mtime != -1) {
       inode = inode.setModificationTime(mtime, latest);

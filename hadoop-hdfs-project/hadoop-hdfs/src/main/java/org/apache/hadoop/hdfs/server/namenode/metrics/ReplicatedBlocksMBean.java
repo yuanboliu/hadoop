@@ -65,4 +65,9 @@ public interface ReplicatedBlocksMBean {
    * Return total number of replicated blocks.
    */
   long getTotalReplicatedBlocks();
+
+  /**
+   * Return high priority replicated blocks count.
+   */
+  long getHighestPriorityLowRedundancyReplicatedBlocks();
 }

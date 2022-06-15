@@ -131,7 +131,7 @@ final class FSDirErasureCodingOp {
       final String srcArg, final String ecPolicyName,
       final FSPermissionChecker pc, final boolean logRetryCache)
       throws IOException, AccessControlException {
-    assert fsn.hasWriteLock();
+    assert fsn.hasReadLock();
 
     String src = srcArg;
     FSDirectory fsd = fsn.getFSDirectory();
@@ -158,7 +158,7 @@ final class FSDirErasureCodingOp {
   private static List<XAttr> setErasureCodingPolicyXAttr(final FSNamesystem fsn,
       final INodesInPath srcIIP, ErasureCodingPolicy ecPolicy) throws IOException {
     FSDirectory fsd = fsn.getFSDirectory();
-    assert fsd.hasWriteLock();
+    assert fsd.hasReadLock();
     Preconditions.checkNotNull(srcIIP, "INodes cannot be null");
     Preconditions.checkNotNull(ecPolicy, "EC policy cannot be null");
     String src = srcIIP.getPath();
@@ -208,7 +208,7 @@ final class FSDirErasureCodingOp {
   static FileStatus unsetErasureCodingPolicy(final FSNamesystem fsn,
       final String srcArg, final FSPermissionChecker pc,
       final boolean logRetryCache) throws IOException {
-    assert fsn.hasWriteLock();
+    assert fsn.hasReadLock();
 
     String src = srcArg;
     FSDirectory fsd = fsn.getFSDirectory();
@@ -314,7 +314,7 @@ final class FSDirErasureCodingOp {
   private static List<XAttr> removeErasureCodingPolicyXAttr(
       final FSNamesystem fsn, final INodesInPath srcIIP) throws IOException {
     FSDirectory fsd = fsn.getFSDirectory();
-    assert fsd.hasWriteLock();
+    assert fsd.hasReadLock();
     Preconditions.checkNotNull(srcIIP, "INodes cannot be null");
     String src = srcIIP.getPath();
     final INode inode = srcIIP.getLastINode();

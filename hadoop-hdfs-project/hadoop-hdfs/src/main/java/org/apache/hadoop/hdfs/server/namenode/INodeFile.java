@@ -274,7 +274,7 @@ public class INodeFile extends INodeWithAdditionalFields
     }
     setBlocks(blklist);
   }
-  
+
   public INodeFile(INodeFile that) {
     super(that);
     this.header = that.header;

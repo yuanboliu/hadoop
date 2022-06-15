@@ -257,7 +257,7 @@ public class DFSOutputStream extends FSOutputSummer
     }
   }
 
-  static DFSOutputStream newStreamForCreate(DFSClient dfsClient, String src,
+  public static DFSOutputStream newStreamForCreate(DFSClient dfsClient, String src,
       FsPermission masked, EnumSet<CreateFlag> flag, boolean createParent,
       short replication, long blockSize, Progressable progress,
       DataChecksum checksum, String[] favoredNodes, String ecPolicyName)

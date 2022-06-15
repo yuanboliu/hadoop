@@ -65,7 +65,7 @@ final class FSDirSatisfyStoragePolicyOp {
   static FileStatus satisfyStoragePolicy(FSDirectory fsd, BlockManager bm,
       String src, boolean logRetryCache) throws IOException {
 
-    assert fsd.getFSNamesystem().hasWriteLock();
+    assert fsd.getFSNamesystem().hasReadLock();
     FSPermissionChecker pc = fsd.getPermissionChecker();
     INodesInPath iip;
     fsd.writeLock();

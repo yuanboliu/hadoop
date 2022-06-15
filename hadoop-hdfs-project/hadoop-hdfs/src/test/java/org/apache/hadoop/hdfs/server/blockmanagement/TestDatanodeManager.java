@@ -146,7 +146,7 @@ public class TestDatanodeManager {
   public void testNumVersionsReportedCorrect() throws IOException {
     //Create the DatanodeManager which will be tested
     FSNamesystem fsn = Mockito.mock(FSNamesystem.class);
-    Mockito.when(fsn.hasWriteLock()).thenReturn(true);
+    Mockito.when(fsn.hasReadLock()).thenReturn(true);
     DatanodeManager dm = mockDatanodeManager(fsn, new Configuration());
 
     //Seed the RNG with a known value so test failures are easier to reproduce
@@ -159,16 +159,16 @@ public class TestDatanodeManager {
     HashMap <String, DatanodeRegistration> sIdToDnReg =
       new HashMap<String, DatanodeRegistration>();
 
-    for(int i=0; i<NUM_ITERATIONS; ++i) {
+    for(int i = 0; i < NUM_ITERATIONS; ++i) {
 
       //If true, remove a node for every 3rd time (if there's one)
-      if(rng.nextBoolean() && i%3 == 0 && sIdToDnReg.size()!=0) {
+      if(rng.nextBoolean() && i % 3 == 0 && sIdToDnReg.size() != 0) {
         //Pick a random node.
         int randomIndex = rng.nextInt() % sIdToDnReg.size();
         //Iterate to that random position 
         Iterator<Map.Entry<String, DatanodeRegistration>> it =
           sIdToDnReg.entrySet().iterator();
-        for(int j=0; j<randomIndex-1; ++j) {
+        for(int j = 0; j < randomIndex - 1; ++j) {
           it.next();
         }
         DatanodeRegistration toRemove = it.next().getValue();
@@ -245,7 +245,7 @@ public class TestDatanodeManager {
   public void testRejectUnresolvedDatanodes() throws IOException {
     //Create the DatanodeManager which will be tested
     FSNamesystem fsn = Mockito.mock(FSNamesystem.class);
-    Mockito.when(fsn.hasWriteLock()).thenReturn(true);
+    Mockito.when(fsn.hasReadLock()).thenReturn(true);
     
     Configuration conf = new Configuration();
     

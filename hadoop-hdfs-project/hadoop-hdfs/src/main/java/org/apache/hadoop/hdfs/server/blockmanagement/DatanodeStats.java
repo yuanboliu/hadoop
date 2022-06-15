@@ -30,7 +30,7 @@ import java.util.Set;
  * Datanode statistics.
  * For decommissioning/decommissioned nodes, only used capacity is counted.
  */
-class DatanodeStats {
+public class DatanodeStats {
 
   private final StorageTypeStatsMap statsMap = new StorageTypeStatsMap();
   private long capacityTotal = 0L;
@@ -46,7 +46,7 @@ class DatanodeStats {
   private int nodesInServiceXceiverCount = 0;
   private int expiredHeartbeats = 0;
 
-  synchronized void add(final DatanodeDescriptor node) {
+  public synchronized void add(final DatanodeDescriptor node) {
     xceiverCount += node.getXceiverCount();
     if (node.isInService()) {
       capacityUsed += node.getDfsUsed();
@@ -75,7 +75,7 @@ class DatanodeStats {
     }
   }
 
-  synchronized void subtract(final DatanodeDescriptor node) {
+  public synchronized void subtract(final DatanodeDescriptor node) {
     xceiverCount -= node.getXceiverCount();
     if (node.isInService()) {
       capacityUsed -= node.getDfsUsed();
@@ -105,71 +105,71 @@ class DatanodeStats {
   }
 
   /** Increment expired heartbeat counter. */
-  void incrExpiredHeartbeats() {
+  public void incrExpiredHeartbeats() {
     expiredHeartbeats++;
   }
 
-  synchronized Map<StorageType, StorageTypeStats> getStatsMap() {
+  public synchronized Map<StorageType, StorageTypeStats> getStatsMap() {
     return statsMap.get();
   }
 
-  synchronized long getCapacityTotal() {
+  public synchronized long getCapacityTotal() {
     return capacityTotal;
   }
 
-  synchronized long getCapacityUsed() {
+  public synchronized long getCapacityUsed() {
     return capacityUsed;
   }
 
-  synchronized long getCapacityRemaining() {
+  public synchronized long getCapacityRemaining() {
     return capacityRemaining;
   }
 
-  synchronized long getBlockPoolUsed() {
+  public synchronized long getBlockPoolUsed() {
     return blockPoolUsed;
   }
 
-  synchronized int getXceiverCount() {
+  public synchronized int getXceiverCount() {
     return xceiverCount;
   }
 
-  synchronized long getCacheCapacity() {
+  public synchronized long getCacheCapacity() {
     return cacheCapacity;
   }
 
-  synchronized long getCacheUsed() {
+  public synchronized long getCacheUsed() {
     return cacheUsed;
   }
 
-  synchronized int getNodesInService() {
+  public synchronized int getNodesInService() {
     return nodesInService;
   }
 
-  synchronized int getNodesInServiceXceiverCount() {
+  public synchronized int getNodesInServiceXceiverCount() {
     return nodesInServiceXceiverCount;
   }
 
-  synchronized int getExpiredHeartbeats() {
+  public synchronized int getExpiredHeartbeats() {
     return expiredHeartbeats;
   }
 
-  synchronized float getCapacityRemainingPercent() {
+  public synchronized float getCapacityRemainingPercent() {
     return DFSUtilClient.getPercentRemaining(capacityRemaining, capacityTotal);
   }
 
-  synchronized float getPercentBlockPoolUsed() {
+  public synchronized float getPercentBlockPoolUsed() {
     return DFSUtilClient.getPercentUsed(blockPoolUsed, capacityTotal);
   }
 
-  synchronized long getCapacityUsedNonDFS() {
+  public synchronized long getCapacityUsedNonDFS() {
     return capacityUsedNonDfs;
   }
 
-  synchronized float getCapacityUsedPercent() {
+  public synchronized float getCapacityUsedPercent() {
     return DFSUtilClient.getPercentUsed(capacityUsed, capacityTotal);
   }
 
-  static final class StorageTypeStatsMap {
+  public static final class StorageTypeStatsMap {
 
     private Map<StorageType, StorageTypeStats> storageTypeStatsMap =
         new EnumMap<>(StorageType.class);

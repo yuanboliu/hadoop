@@ -30,7 +30,7 @@ import org.apache.hadoop.hdfs.server.common.HdfsServerConstants;
  * It is not guaranteed, but expected, that datanodes actually have
  * corresponding replicas.
  */
-class ReplicaUnderConstruction extends Block {
+public class ReplicaUnderConstruction extends Block {
   private final DatanodeStorageInfo expectedLocation;
   private HdfsServerConstants.ReplicaState state;
   private boolean chosenAsPrimary;

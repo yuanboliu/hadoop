@@ -269,7 +269,7 @@ public final class FSImageFormatPBINode {
             + "name before upgrading to this release.");
       }
       // NOTE: This does not update space counts for parents
-      if (!parent.addChildAtLoading(child)) {
+      if (!parent.addChild(child)) {
         return;
       }
       dir.cacheName(child);

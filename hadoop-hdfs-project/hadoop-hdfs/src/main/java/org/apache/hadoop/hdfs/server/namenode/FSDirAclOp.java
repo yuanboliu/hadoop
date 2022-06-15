@@ -40,10 +40,8 @@ class FSDirAclOp {
       List<AclEntry> aclSpec) throws IOException {
     String src = srcArg;
     checkAclsConfigFlag(fsd);
-    INodesInPath iip;
-    fsd.writeLock();
-    try {
-      iip = fsd.resolvePath(pc, src, DirOp.WRITE);
+    try (INodesInPath iip =
+        fsd.lockInodePath(pc, src, DirOp.WRITE, FSDirectory.LockMode.WRITE)) {
       src = iip.getPath();
       fsd.checkOwner(pc, iip);
       INode inode = FSDirectory.resolveLastINode(iip);
@@ -53,12 +51,10 @@ class FSDirAclOp {
           existingAcl, aclSpec);
       AclStorage.updateINodeAcl(inode, newAcl, snapshotId);
       fsd.getEditLog().logSetAcl(src, newAcl);
+      return fsd.getAuditFileInfo(iip);
     } catch (AclException e){
       throw new AclException(e.getMessage() + " Path: " + src, e);
-    } finally {
-      fsd.writeUnlock();
     }
-    return fsd.getAuditFileInfo(iip);
   }
 
   static FileStatus removeAclEntries(
@@ -66,10 +62,8 @@ class FSDirAclOp {
       List<AclEntry> aclSpec) throws IOException {
     String src = srcArg;
     checkAclsConfigFlag(fsd);
-    INodesInPath iip;
-    fsd.writeLock();
-    try {
-      iip = fsd.resolvePath(pc, src, DirOp.WRITE);
+    try (INodesInPath iip =
+        fsd.lockInodePath(pc, src, DirOp.WRITE, FSDirectory.LockMode.WRITE)) {
       src = iip.getPath();
       fsd.checkOwner(pc, iip);
       INode inode = FSDirectory.resolveLastINode(iip);
@@ -79,22 +73,18 @@ class FSDirAclOp {
         existingAcl, aclSpec);
       AclStorage.updateINodeAcl(inode, newAcl, snapshotId);
       fsd.getEditLog().logSetAcl(src, newAcl);
+      return fsd.getAuditFileInfo(iip);
     } catch (AclException e){
       throw new AclException(e.getMessage() + " Path: " + src, e);
-    } finally {
-      fsd.writeUnlock();
     }
-    return fsd.getAuditFileInfo(iip);
   }
 
   static FileStatus removeDefaultAcl(FSDirectory fsd, FSPermissionChecker pc,
       final String srcArg) throws IOException {
     String src = srcArg;
     checkAclsConfigFlag(fsd);
-    INodesInPath iip;
-    fsd.writeLock();
-    try {
-      iip = fsd.resolvePath(pc, src, DirOp.WRITE);
+    try (INodesInPath iip =
+        fsd.lockInodePath(pc, src, DirOp.WRITE, FSDirectory.LockMode.WRITE)) {
       src = iip.getPath();
       fsd.checkOwner(pc, iip);
       INode inode = FSDirectory.resolveLastINode(iip);
@@ -104,32 +94,26 @@ class FSDirAclOp {
         existingAcl);
       AclStorage.updateINodeAcl(inode, newAcl, snapshotId);
       fsd.getEditLog().logSetAcl(src, newAcl);
+      return fsd.getAuditFileInfo(iip);
     } catch (AclException e){
       throw new AclException(e.getMessage() + " Path: " + src, e);
-    } finally {
-      fsd.writeUnlock();
     }
-    return fsd.getAuditFileInfo(iip);
   }
 
   static FileStatus removeAcl(FSDirectory fsd, FSPermissionChecker pc,
       final String srcArg) throws IOException {
     String src = srcArg;
     checkAclsConfigFlag(fsd);
-    INodesInPath iip;
-    fsd.writeLock();
-    try {
-      iip = fsd.resolvePath(pc, src, DirOp.WRITE);
+    try (INodesInPath iip =
+        fsd.lockInodePath(pc, src, DirOp.WRITE, FSDirectory.LockMode.WRITE)) {
       src = iip.getPath();
       fsd.checkOwner(pc, iip);
       unprotectedRemoveAcl(fsd, iip);
+      fsd.getEditLog().logSetAcl(src, AclFeature.EMPTY_ENTRY_LIST);
+      return fsd.getAuditFileInfo(iip);
     } catch (AclException e){
       throw new AclException(e.getMessage() + " Path: " + src, e);
-    } finally {
-      fsd.writeUnlock();
     }
-    fsd.getEditLog().logSetAcl(src, AclFeature.EMPTY_ENTRY_LIST);
-    return fsd.getAuditFileInfo(iip);
   }
 
   static FileStatus setAcl(
@@ -137,27 +121,22 @@ class FSDirAclOp {
       List<AclEntry> aclSpec) throws IOException {
     String src = srcArg;
     checkAclsConfigFlag(fsd);
-    INodesInPath iip;
-    fsd.writeLock();
-    try {
-      iip = fsd.resolvePath(pc, src, DirOp.WRITE);
+    try (INodesInPath iip =
+        fsd.lockInodePath(pc, src, DirOp.WRITE, FSDirectory.LockMode.WRITE)) {
       fsd.checkOwner(pc, iip);
       List<AclEntry> newAcl = unprotectedSetAcl(fsd, iip, aclSpec, false);
       fsd.getEditLog().logSetAcl(iip.getPath(), newAcl);
+      return fsd.getAuditFileInfo(iip);
     } catch (AclException e){
       throw new AclException(e.getMessage() + " Path: " + src, e);
-    } finally {
-      fsd.writeUnlock();
     }
-    return fsd.getAuditFileInfo(iip);
   }
 
   static AclStatus getAclStatus(
       FSDirectory fsd, FSPermissionChecker pc, String src) throws IOException {
     checkAclsConfigFlag(fsd);
-    fsd.readLock();
-    try {
-      INodesInPath iip = fsd.resolvePath(pc, src, DirOp.READ);
+    try (INodesInPath iip =
+        fsd.lockInodePath(pc, src, DirOp.WRITE, FSDirectory.LockMode.READ)) {
       // There is no real inode for the path ending in ".snapshot", so return a
       // non-null, unpopulated AclStatus.  This is similar to getFileInfo.
       if (iip.isDotSnapshotDir() && fsd.getINode4DotSnapshot(iip) != null) {
@@ -173,14 +152,11 @@ class FSDirAclOp {
           .addEntries(acl).build();
     } catch (AclException e){
       throw new AclException(e.getMessage() + " Path: " + src, e);
-    } finally {
-      fsd.readUnlock();
     }
   }
 
   static List<AclEntry> unprotectedSetAcl(FSDirectory fsd, INodesInPath iip,
       List<AclEntry> aclSpec, boolean fromEdits) throws IOException {
-    assert fsd.hasWriteLock();
 
     // ACL removal is logged to edits as OP_SET_ACL with an empty list.
     if (aclSpec.isEmpty()) {
@@ -210,7 +186,6 @@ class FSDirAclOp {
 
   private static void unprotectedRemoveAcl(FSDirectory fsd, INodesInPath iip)
       throws IOException {
-    assert fsd.hasWriteLock();
     INode inode = FSDirectory.resolveLastINode(iip);
     int snapshotId = iip.getLatestSnapshotId();
     AclFeature f = inode.getAclFeature();

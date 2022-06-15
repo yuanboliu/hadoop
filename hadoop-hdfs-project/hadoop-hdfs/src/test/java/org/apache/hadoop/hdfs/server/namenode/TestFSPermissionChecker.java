@@ -48,6 +48,7 @@ import org.apache.hadoop.fs.permission.FsAction;
 import org.apache.hadoop.fs.permission.FsPermission;
 import org.apache.hadoop.fs.permission.PermissionStatus;
 import org.apache.hadoop.hdfs.protocol.HdfsConstants;
+import org.apache.hadoop.hdfs.server.blockmanagement.BlockInfo;
 import org.apache.hadoop.hdfs.server.namenode.FSDirectory.DirOp;
 import org.apache.hadoop.hdfs.server.namenode.snapshot.Snapshot;
 import org.apache.hadoop.security.AccessControlException;
@@ -441,7 +442,7 @@ public class TestFSPermissionChecker {
     PermissionStatus permStatus = PermissionStatus.createImmutable(owner, group,
       FsPermission.createImmutable(perm));
     INodeFile inodeFile = new INodeFile(HdfsConstants.GRANDFATHER_INODE_ID,
-      name.getBytes("UTF-8"), permStatus, 0L, 0L, null, REPLICATION,
+      name.getBytes("UTF-8"), permStatus, 0L, 0L, (BlockInfo[]) null, REPLICATION,
       PREFERRED_BLOCK_SIZE);
     parent.addChild(inodeFile);
     return inodeFile;

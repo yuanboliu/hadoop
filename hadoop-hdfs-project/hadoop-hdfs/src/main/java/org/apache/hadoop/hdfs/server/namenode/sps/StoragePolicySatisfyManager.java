@@ -66,23 +66,41 @@ public class StoragePolicySatisfyManager {
 
   public StoragePolicySatisfyManager(Configuration conf,
       Namesystem namesystem) {
+    this(conf, namesystem, null);
+  }
+
+  /**
+   * Create SPS manager instance. It manages the user invoked sps paths and does
+   * the movement.
+   *
+   * @param conf
+   *          configuration
+   * @param spsMode
+   *          satisfier mode
+   */
+  public StoragePolicySatisfyManager(final Configuration conf,
+      Namesystem namesystem, final String spsMode) {
+    // sps manager manages the user invoked sps paths and does the movement.
     // StoragePolicySatisfier(SPS) configs
     storagePolicyEnabled = conf.getBoolean(
         DFSConfigKeys.DFS_STORAGE_POLICY_ENABLED_KEY,
         DFSConfigKeys.DFS_STORAGE_POLICY_ENABLED_DEFAULT);
-    String modeVal = conf.get(
-        DFSConfigKeys.DFS_STORAGE_POLICY_SATISFIER_MODE_KEY,
-        DFSConfigKeys.DFS_STORAGE_POLICY_SATISFIER_MODE_DEFAULT);
+    String modeVal = spsMode;
+    if (org.apache.commons.lang3.StringUtils.isBlank(modeVal)) {
+      modeVal = conf.get(DFSConfigKeys.DFS_STORAGE_POLICY_SATISFIER_MODE_KEY,
+          DFSConfigKeys.DFS_STORAGE_POLICY_SATISFIER_MODE_DEFAULT);
+    }
+    mode = StoragePolicySatisfierMode.fromString(modeVal);
     outstandingPathsLimit = conf.getInt(
         DFSConfigKeys.DFS_SPS_MAX_OUTSTANDING_PATHS_KEY,
         DFSConfigKeys.DFS_SPS_MAX_OUTSTANDING_PATHS_DEFAULT);
-    mode = StoragePolicySatisfierMode.fromString(modeVal);
     pathsToBeTraveresed = new LinkedList<Long>();
     this.namesystem = namesystem;
     // instantiate SPS service by just keeps config reference and not starting
     // any supporting threads.
     spsService = new StoragePolicySatisfier(conf);
   }
+
 
   /**
    * This function will do following logic based on the configured sps mode:
@@ -97,7 +115,7 @@ public class StoragePolicySatisfyManager {
    * service is disabled and won't do any action.
    */
   public void start() {
-    if (!storagePolicyEnabled) {
+    if (!storagePolicyEnabled || mode == StoragePolicySatisfierMode.NONE) {
       LOG.info("Disabling StoragePolicySatisfier service as {} set to {}.",
           DFSConfigKeys.DFS_STORAGE_POLICY_ENABLED_KEY, storagePolicyEnabled);
       return;
@@ -130,7 +148,7 @@ public class StoragePolicySatisfyManager {
    * service is disabled and won't do any action.
    */
   public void stop() {
-    if (!storagePolicyEnabled) {
+    if (!storagePolicyEnabled || mode == StoragePolicySatisfierMode.NONE) {
       if (LOG.isDebugEnabled()) {
         LOG.debug("Storage policy is not enabled, ignoring");
       }
@@ -164,7 +182,7 @@ public class StoragePolicySatisfyManager {
    * feature completely by clearing all queued up sps path's hint.
    */
   public void changeModeEvent(StoragePolicySatisfierMode newMode) {
-    if (!storagePolicyEnabled) {
+    if (!storagePolicyEnabled || mode == StoragePolicySatisfierMode.NONE) {
       LOG.info("Failed to change storage policy satisfier as {} set to {}.",
           DFSConfigKeys.DFS_STORAGE_POLICY_ENABLED_KEY, storagePolicyEnabled);
       return;

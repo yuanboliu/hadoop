@@ -19,20 +19,24 @@ package org.apache.hadoop.hdfs.server.namenode;
 
 import java.io.FileNotFoundException;
 import java.io.PrintWriter;
-import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 
+import org.apache.commons.collections.IteratorUtils;
 import org.apache.hadoop.fs.PathIsNotDirectoryException;
 import org.apache.hadoop.fs.permission.FsAction;
 import org.apache.hadoop.fs.permission.PermissionStatus;
 import org.apache.hadoop.fs.StorageType;
 import org.apache.hadoop.fs.XAttr;
 import org.apache.hadoop.hdfs.DFSUtil;
+import org.apache.hadoop.hdfs.DFSUtilClient;
 import org.apache.hadoop.hdfs.protocol.SnapshotException;
 import org.apache.hadoop.hdfs.server.blockmanagement.BlockStoragePolicySuite;
+import org.apache.hadoop.hdfs.server.common.FieldIndex;
+import org.apache.hadoop.hdfs.server.common.IndexDefinition;
+import org.apache.hadoop.hdfs.server.common.UniqueFieldIndex;
 import org.apache.hadoop.hdfs.server.namenode.INodeReference.WithCount;
 import org.apache.hadoop.hdfs.server.namenode.snapshot.DirectorySnapshottableFeature;
 import org.apache.hadoop.hdfs.server.namenode.snapshot.DirectoryWithSnapshotFeature;
@@ -50,7 +54,16 @@ import static org.apache.hadoop.hdfs.protocol.HdfsConstants.BLOCK_STORAGE_POLICY
  * Directory INode class.
  */
 public class INodeDirectory extends INodeWithAdditionalFields
-    implements INodeDirectoryAttributes {
+        implements INodeDirectoryAttributes {
+  private static final IndexDefinition<INode> NAME_INDEX = new IndexDefinition<INode>(true) {
+    @Override
+    public Object getFieldValue(INode o) {
+      return o.getLocalName();
+    }
+  };
+
+  /** Use UniqueFieldIndex directly for name index. */
+  private FieldIndex<INode> children = null;
 
   /** Cast INode to INodeDirectory. */
   public static INodeDirectory valueOf(INode inode, Object path
@@ -71,8 +84,6 @@ public class INodeDirectory extends INodeWithAdditionalFields
 
   static final byte[] ROOT_NAME = DFSUtil.string2Bytes("");
 
-  private List<INode> children = null;
-  
   /** constructor */
   public INodeDirectory(long id, byte[] name, PermissionStatus permissions,
       long mtime) {
@@ -199,10 +210,6 @@ public class INodeDirectory extends INodeWithAdditionalFields
     return q;
   }
 
-  int searchChildren(byte[] name) {
-    return children == null? -1: Collections.binarySearch(children, name);
-  }
-  
   public DirectoryWithSnapshotFeature addSnapshotFeature(
       DirectoryDiffList diffs) {
     Preconditions.checkState(!isWithSnapshot(), 
@@ -332,21 +339,21 @@ public class INodeDirectory extends INodeWithAdditionalFields
   public void replaceChild(INode oldChild, final INode newChild,
       final INodeMap inodeMap) {
     Preconditions.checkNotNull(children);
-    final int i = searchChildren(newChild.getLocalNameBytes());
-    Preconditions.checkState(i >= 0);
-    Preconditions.checkState(oldChild == children.get(i)
-        || oldChild == children.get(i).asReference().getReferredINode()
+    INode existedChild = children.getFirst(newChild.getLocalName());
+    Preconditions.checkState(existedChild != null);
+    Preconditions.checkState(oldChild == existedChild
+            || oldChild == existedChild.asReference().getReferredINode()
             .asReference().getReferredINode());
-    oldChild = children.get(i);
-    
-    if (oldChild.isReference() && newChild.isReference()) {
+
+    if (existedChild.isReference() && newChild.isReference()) {
       // both are reference nodes, e.g., DstReference -> WithName
-      final INodeReference.WithCount withCount = 
-          (WithCount) oldChild.asReference().getReferredINode();
-      withCount.removeReference(oldChild.asReference());
+      final INodeReference.WithCount withCount =
+              (WithCount) existedChild.asReference().getReferredINode();
+      withCount.removeReference(existedChild.asReference());
     }
-    children.set(i, newChild);
-    
+    children.remove(existedChild);
+    children.add(newChild);
+
     // replace the instance in the created list of the diff list
     DirectoryWithSnapshotFeature sf = this.getDirectoryWithSnapshotFeature();
     if (sf != null) {
@@ -423,13 +430,11 @@ public class INodeDirectory extends INodeWithAdditionalFields
    */
   public INode getChild(byte[] name, int snapshotId) {
     DirectoryWithSnapshotFeature sf;
-    if (snapshotId == Snapshot.CURRENT_STATE_ID || 
-        (sf = getDirectoryWithSnapshotFeature()) == null) {
-      ReadOnlyList<INode> c = getCurrentChildrenList();
-      final int i = ReadOnlyList.Util.binarySearch(c, name);
-      return i < 0 ? null : c.get(i);
+    if (snapshotId == Snapshot.CURRENT_STATE_ID ||
+            (sf = getDirectoryWithSnapshotFeature()) == null) {
+      return children == null ? null : children.getFirst(new String(name));
     }
-    
+
     return sf.getChild(this, name, snapshotId);
   }
 
@@ -473,10 +478,22 @@ public class INodeDirectory extends INodeWithAdditionalFields
     }
     return sf.getChildrenList(this, snapshotId);
   }
-  
+
+  // TODO(runzhiwang): Consider snapshot when getChildrenList
+  public int getChildrenSize() {
+    return children == null ? 0 : children.size();
+  }
+
   private ReadOnlyList<INode> getCurrentChildrenList() {
-    return children == null ? ReadOnlyList.Util.<INode> emptyList()
-        : ReadOnlyList.Util.asReadOnlyList(children);
+    if (children != null) {
+      List<INode> nodes = IteratorUtils.toList(children.iterator());
+      // TODO(runzhiwang): sort is not efficient
+      Collections.sort(nodes, (o1, o2) -> DFSUtilClient
+              .compareBytes(o1.getLocalNameBytes(), o2.getLocalNameBytes()));
+
+      return ReadOnlyList.Util.asReadOnlyList(nodes);
+    }
+    return ReadOnlyList.Util.<INode> emptyList();
   }
 
   /**
@@ -520,14 +537,10 @@ public class INodeDirectory extends INodeWithAdditionalFields
    * @return true if the child is removed; false if the child is not found.
    */
   public boolean removeChild(final INode child) {
-    final int i = searchChildren(child.getLocalNameBytes());
-    if (i < 0) {
+    if (children == null) {
       return false;
     }
-
-    final INode removed = children.remove(i);
-    Preconditions.checkState(removed.equals(child));
-    return true;
+    return children.remove(child);
   }
 
   /**
@@ -535,15 +548,14 @@ public class INodeDirectory extends INodeWithAdditionalFields
    * 
    * @param node INode to insert
    * @param setModTime set modification time for the parent node
-   *                   not needed when replaying the addition and 
+   *                   not needed when replaying the addition and
    *                   the parent already has the proper mod time
-   * @return false if the child with this name already exists; 
+   * @return false if the child with this name already exists;
    *         otherwise, return true;
    */
   public boolean addChild(INode node, final boolean setModTime,
-      final int latestSnapshotId) {
-    final int low = searchChildren(node.getLocalNameBytes());
-    if (low >= 0) {
+          final int latestSnapshotId) {
+    if (children != null && children.containsObject(node)) {
       return false;
     }
 
@@ -555,7 +567,7 @@ public class INodeDirectory extends INodeWithAdditionalFields
       }
       return sf.addChild(this, node, setModTime, latestSnapshotId);
     }
-    addChild(node, low);
+    addChild(node);
     if (setModTime) {
       // update modification time of the parent directory
       updateModificationTime(node.getModificationTime(), latestSnapshotId);
@@ -564,44 +576,17 @@ public class INodeDirectory extends INodeWithAdditionalFields
   }
 
   public boolean addChild(INode node) {
-    final int low = searchChildren(node.getLocalNameBytes());
-    if (low >= 0) {
+    if (children == null) {
+      children = new UniqueFieldIndex<INode>(NAME_INDEX);
+    } else if (children.containsObject(node)) {
       return false;
     }
-    addChild(node, low);
-    return true;
-  }
 
-  /**
-   * During image loading, the search is unnecessary since the insert position
-   * should always be at the end of the map given the sequence they are
-   * serialized on disk.
-   */
-  public boolean addChildAtLoading(INode node) {
-    int pos;
-    if (!node.isReference()) {
-      pos = (children == null) ? (-1) : (-children.size() - 1);
-      addChild(node, pos);
-      return true;
-    } else {
-      return addChild(node);
-    }
-  }
-
-  /**
-   * Add the node to the children list at the given insertion point.
-   * The basic add method which actually calls children.add(..).
-   */
-  private void addChild(final INode node, final int insertionPoint) {
-    if (children == null) {
-      children = new ArrayList<>(DEFAULT_FILES_PER_DIRECTORY);
-    }
     node.setParent(this);
-    children.add(-insertionPoint - 1, node);
-
     if (node.getGroupName() == null) {
       node.setGroup(getGroupName());
     }
+    return children.add(node);
   }
 
   @Override

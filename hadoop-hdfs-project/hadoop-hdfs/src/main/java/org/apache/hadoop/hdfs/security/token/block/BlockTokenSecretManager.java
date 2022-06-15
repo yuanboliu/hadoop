@@ -25,12 +25,18 @@ import java.io.IOException;
 import java.security.MessageDigest;
 import java.security.SecureRandom;
 import java.util.Arrays;
+import java.util.Collection;
 import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.Map;
 
 import org.apache.commons.lang3.ArrayUtils;
+import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.hdfs.DFSConfigKeys;
+import org.apache.hadoop.hdfs.DFSUtil;
+import org.apache.hadoop.hdfs.DFSUtilClient;
+import org.apache.hadoop.hdfs.HAUtil;
 import org.apache.hadoop.ipc.Server;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -49,6 +55,9 @@ import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.HashMultiset;
 import com.google.common.collect.Multiset;
+
+import static org.apache.hadoop.hdfs.DFSConfigKeys.DFS_NAMENODE_SEND_QOP_ENABLED;
+import static org.apache.hadoop.hdfs.DFSConfigKeys.DFS_NAMENODE_SEND_QOP_ENABLED_DEFAULT;
 
 /**
  * BlockTokenSecretManager can be instantiated in 2 modes, master mode
@@ -123,6 +132,68 @@ public class BlockTokenSecretManager extends
         encryptionAlgorithm, nnIndex, numNNs, useProto, shouldWrapQOP);
     Preconditions.checkArgument(nnIndex >= 0);
     Preconditions.checkArgument(numNNs > 0);
+  }
+
+  public static BlockTokenSecretManager createBlockTokenSecretManager(
+          final Configuration conf) throws IOException {
+    final boolean isEnabled = conf.getBoolean(
+            DFSConfigKeys.DFS_BLOCK_ACCESS_TOKEN_ENABLE_KEY,
+            DFSConfigKeys.DFS_BLOCK_ACCESS_TOKEN_ENABLE_DEFAULT);
+    LOG.info("{} = {}", DFSConfigKeys.DFS_BLOCK_ACCESS_TOKEN_ENABLE_KEY,
+            isEnabled);
+
+    if (!isEnabled) {
+      if (UserGroupInformation.isSecurityEnabled()) {
+        String errMessage = "Security is enabled but block access tokens " +
+                "(via " + DFSConfigKeys.DFS_BLOCK_ACCESS_TOKEN_ENABLE_KEY + ") " +
+                "aren't enabled. This may cause issues " +
+                "when clients attempt to connect to a DataNode. Aborting NameNode";
+        throw new IOException(errMessage);
+      }
+      return null;
+    }
+
+    final long updateMin = conf.getLong(
+            DFSConfigKeys.DFS_BLOCK_ACCESS_KEY_UPDATE_INTERVAL_KEY,
+            DFSConfigKeys.DFS_BLOCK_ACCESS_KEY_UPDATE_INTERVAL_DEFAULT);
+    final long lifetimeMin = conf.getLong(
+            DFSConfigKeys.DFS_BLOCK_ACCESS_TOKEN_LIFETIME_KEY,
+            DFSConfigKeys.DFS_BLOCK_ACCESS_TOKEN_LIFETIME_DEFAULT);
+    final String encryptionAlgorithm = conf.get(
+            DFSConfigKeys.DFS_DATA_ENCRYPTION_ALGORITHM_KEY);
+    LOG.info("{}={} min(s), {}={} min(s), {}={}",
+            DFSConfigKeys.DFS_BLOCK_ACCESS_KEY_UPDATE_INTERVAL_KEY, updateMin,
+            DFSConfigKeys.DFS_BLOCK_ACCESS_TOKEN_LIFETIME_KEY, lifetimeMin,
+            DFSConfigKeys.DFS_DATA_ENCRYPTION_ALGORITHM_KEY, encryptionAlgorithm);
+
+    String nsId = DFSUtil.getNamenodeNameServiceId(conf);
+    boolean isHaEnabled = HAUtil.isHAEnabled(conf, nsId);
+    boolean shouldWriteProtobufToken = conf.getBoolean(
+            DFSConfigKeys.DFS_BLOCK_ACCESS_TOKEN_PROTOBUF_ENABLE,
+            DFSConfigKeys.DFS_BLOCK_ACCESS_TOKEN_PROTOBUF_ENABLE_DEFAULT);
+
+    boolean shouldWrapQOP = conf.getBoolean(
+            DFS_NAMENODE_SEND_QOP_ENABLED, DFS_NAMENODE_SEND_QOP_ENABLED_DEFAULT);
+
+    if (isHaEnabled) {
+      // figure out which index we are of the nns
+      Collection<String> nnIds = DFSUtilClient.getNameNodeIds(conf, nsId);
+      String nnId = HAUtil.getNameNodeId(conf, nsId);
+      int nnIndex = 0;
+      for (String id : nnIds) {
+        if (id.equals(nnId)) {
+          break;
+        }
+        nnIndex++;
+      }
+      return new BlockTokenSecretManager(updateMin * 60 * 1000L,
+              lifetimeMin * 60 * 1000L, nnIndex, nnIds.size(), null,
+              encryptionAlgorithm, shouldWriteProtobufToken, shouldWrapQOP);
+    } else {
+      return new BlockTokenSecretManager(updateMin*60*1000L,
+              lifetimeMin*60*1000L, 0, 1, null, encryptionAlgorithm,
+              shouldWriteProtobufToken, shouldWrapQOP);
+    }
   }
 
   /**

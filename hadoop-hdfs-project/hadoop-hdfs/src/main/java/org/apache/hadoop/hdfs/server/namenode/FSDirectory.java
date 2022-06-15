@@ -17,6 +17,16 @@
  */
 package org.apache.hadoop.hdfs.server.namenode;
 
+import org.apache.hadoop.fs.FileStatus;
+import org.apache.hadoop.fs.InvalidPathException;
+import org.apache.hadoop.fs.ParentNotDirectoryException;
+import org.apache.hadoop.fs.Path;
+import org.apache.hadoop.fs.StorageType;
+import org.apache.hadoop.fs.UnresolvedLinkException;
+import org.apache.hadoop.fs.XAttr;
+import org.apache.hadoop.hdfs.server.lock.exception.ExceptionMessage;
+import org.apache.hadoop.hdfs.server.lock.resource.RWLockResource;
+import org.apache.hadoop.hdfs.server.lock.util.io.PathUtils;
 import org.apache.hadoop.hdfs.server.namenode.snapshot.Snapshot;
 import org.apache.hadoop.util.StringUtils;
 
@@ -29,13 +39,6 @@ import org.apache.hadoop.HadoopIllegalArgumentException;
 import org.apache.hadoop.classification.InterfaceAudience;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.crypto.key.KeyProviderCryptoExtension;
-import org.apache.hadoop.fs.FileStatus;
-import org.apache.hadoop.fs.InvalidPathException;
-import org.apache.hadoop.fs.ParentNotDirectoryException;
-import org.apache.hadoop.fs.Path;
-import org.apache.hadoop.fs.StorageType;
-import org.apache.hadoop.fs.UnresolvedLinkException;
-import org.apache.hadoop.fs.XAttr;
 import org.apache.hadoop.fs.permission.FsAction;
 import org.apache.hadoop.fs.permission.FsPermission;
 import org.apache.hadoop.hdfs.DFSConfigKeys;
@@ -93,6 +96,7 @@ import static org.apache.hadoop.hdfs.DFSConfigKeys.DFS_STORAGE_POLICY_ENABLED_KE
 import static org.apache.hadoop.hdfs.server.common.HdfsServerConstants.CRYPTO_XATTR_ENCRYPTION_ZONE;
 import static org.apache.hadoop.hdfs.server.common.HdfsServerConstants.SECURITY_XATTR_UNREADABLE_BY_SUPERUSER;
 import static org.apache.hadoop.hdfs.server.common.HdfsServerConstants.XATTR_SATISFY_STORAGE_POLICY;
+import static org.apache.hadoop.hdfs.server.namenode.INodeId.INVALID_INODE_ID;
 import static org.apache.hadoop.hdfs.server.namenode.snapshot.Snapshot.CURRENT_STATE_ID;
 
 /**
@@ -150,6 +154,8 @@ public class FSDirectory implements Closeable {
         .isdir(true)
         .build();
 
+  private static final int PATH_TRAVERSAL_RETRIES = 1000;
+
   INodeDirectory rootDir;
   private final FSNamesystem namesystem;
   private volatile boolean skipQuotaCheck = false; //skip while consuming edits
@@ -158,6 +164,7 @@ public class FSDirectory implements Closeable {
   private final int lsLimit;  // max list limit
   private final int contentCountLimit; // max content summary counts per run
   private final long contentSleepMicroSec;
+
   private final INodeMap inodeMap; // Synchronized by dirLock
   private long yieldCount = 0; // keep track of lock yield count.
   private int quotaInitThreads;
@@ -206,6 +213,9 @@ public class FSDirectory implements Closeable {
   // A HashSet of principals of users for whom the external attribute provider
   // will be bypassed
   private HashSet<String> usersToBypassExtAttrProvider = null;
+
+  /** Manager for inode locking. */
+  private final InodeLockManager mInodeLockManager;
 
   public void setINodeAttributeProvider(INodeAttributeProvider provider) {
     attributeProvider = provider;
@@ -260,6 +270,10 @@ public class FSDirectory implements Closeable {
    */
   private final NameCache<ByteArray> nameCache;
 
+  public RWLockResource lockWriteInode(INodeFile inode) {
+    return mInodeLockManager.lockInode(inode, LockMode.WRITE, false);
+  }
+
   // used to specify path resolution type. *_LINK will return symlinks instead
   // of throwing an unresolved exception
   public enum DirOp {
@@ -272,6 +286,7 @@ public class FSDirectory implements Closeable {
   };
 
   FSDirectory(FSNamesystem ns, Configuration conf) throws IOException {
+    mInodeLockManager = new InodeLockManager(conf);
     this.inodeId = new INodeId();
     rootDir = createRoot(ns);
     inodeMap = INodeMap.newInstance(rootDir);
@@ -654,7 +669,10 @@ public class FSDirectory implements Closeable {
    * @throws AccessControlException
    * @throws ParentNotDirectoryException
    * @throws UnresolvedLinkException
+   *
+   * @deprecated Use {@link #lockFullInodePath(FSPermissionChecker, String, LockMode)} instead.
    */
+  @Deprecated
   @VisibleForTesting
   public INodesInPath resolvePath(FSPermissionChecker pc, String src,
       DirOp dirOp) throws UnresolvedLinkException, FileNotFoundException,
@@ -713,6 +731,21 @@ public class FSDirectory implements Closeable {
     return INodesInPath.resolve(rootDir, components, isRaw);
   }
 
+  /**
+   *
+   * @param pc
+   * @param src
+   * @param fileId
+   * @return
+   * @throws UnresolvedLinkException
+   * @throws FileNotFoundException
+   * @throws AccessControlException
+   * @throws ParentNotDirectoryException
+   *
+   * @deprecated Use {@link #lockFullInodePath(String, long, LockMode)} instead.
+   * // TODO(baoloongmao): bring pc back
+   */
+  @Deprecated
   INodesInPath resolvePath(FSPermissionChecker pc, String src, long fileId)
       throws UnresolvedLinkException, FileNotFoundException,
       AccessControlException, ParentNotDirectoryException {
@@ -733,6 +766,7 @@ public class FSDirectory implements Closeable {
     return iip;
   }
 
+  @Deprecated
   // this method can be removed after IIP is used more extensively
   static String resolvePath(String src,
       FSDirectory fsd) throws FileNotFoundException {
@@ -999,7 +1033,6 @@ public class FSDirectory implements Closeable {
   void updateCount(INodesInPath iip, int numOfINodes,
                     QuotaCounts counts, boolean checkQuota)
                     throws QuotaExceededException {
-    assert hasWriteLock();
     if (!namesystem.isImageLoaded()) {
       //still initializing. do not check or update quotas.
       return;
@@ -1050,7 +1083,7 @@ public class FSDirectory implements Closeable {
    */
   public void updateSpaceForCompleteBlock(BlockInfo completeBlk,
       INodesInPath inodes) throws IOException {
-    assert namesystem.hasWriteLock();
+    assert namesystem.hasReadLock();
     INodesInPath iip = inodes != null ? inodes :
         INodesInPath.fromINode(namesystem.getBlockCollection(completeBlk));
     INodeFile fileINode = iip.getLastINode().asFile();
@@ -1138,12 +1171,7 @@ public class FSDirectory implements Closeable {
                         FsPermission modes)
       throws QuotaExceededException, UnresolvedLinkException {
     cacheName(child);
-    writeLock();
-    try {
-      return addLastINode(existing, child, modes, true);
-    } finally {
-      writeUnlock();
-    }
+    return addLastINode(existing, child, modes, true);
   }
 
   /**
@@ -1230,7 +1258,7 @@ public class FSDirectory implements Closeable {
    */
   void verifyMaxDirItems(INodeDirectory parent, String parentPath)
       throws MaxDirectoryItemsExceededException {
-    final int count = parent.getChildrenList(CURRENT_STATE_ID).size();
+    final int count = parent.getChildrenSize();
     if (count >= maxDirItems) {
       final MaxDirectoryItemsExceededException e
           = new MaxDirectoryItemsExceededException(parentPath, maxDirItems,
@@ -1291,8 +1319,8 @@ public class FSDirectory implements Closeable {
   @VisibleForTesting
   public INodesInPath addLastINode(INodesInPath existing, INode inode,
       FsPermission modes, boolean checkQuota) throws QuotaExceededException {
-    assert existing.getLastINode() != null &&
-        existing.getLastINode().isDirectory();
+    assert existing.getLastExistingInode() != null &&
+        existing.getLastExistingInode().isDirectory();
 
     final int pos = existing.length();
     // Disallow creation of /.reserved. This may be created when loading
@@ -1327,18 +1355,45 @@ public class FSDirectory implements Closeable {
     updateCount(existing, pos, counts, checkQuota);
 
     boolean isRename = (inode.getParent() != null);
+    // Lock the newly created inode before subsequent operations, and add it to the lock group.
+    if (!isRename) {
+      existing.getLockList().lockWriteAndCheckParent(inode, parent);
+    }
     final boolean added = parent.addChild(inode, true,
         existing.getLatestSnapshotId());
-    if (!added) {
-      updateCountNoQuotaCheck(existing, pos, counts.negation());
-      return null;
+    if (!added && !isRename) {
+
+      // The inode couldn't be added, so we will not add it to the tree and it should soon be
+      // garbage collected. We mark it deleted as a precautionary measure in case something
+      // manages to get a reference the inode.
+      inode.setDeleted(true);
+      existing.unlockLast();
+
+      int i = 0;
+      while (true) {
+        if (i > 1000) {
+          updateCountNoQuotaCheck(existing, pos, counts.negation());
+          return null;
+        }
+        i++;
+        INode child = parent.getChild(inode.getLocalNameBytes(), CURRENT_STATE_ID);
+        existing.getLockList().lockWriteAndCheckNameAndParent(child, parent, inode.getLocalNameBytes());
+        if (child != parent.getChild(inode.getLocalNameBytes(), CURRENT_STATE_ID)) {
+          // The locked child has changed, so unlock and try again.
+          existing.unlockLast();
+          continue;
+        }
+        break;
+      }
     } else {
       if (!isRename) {
         copyINodeDefaultAcl(inode, modes);
       }
       addToInodeMap(inode);
     }
-    return INodesInPath.append(existing, inode, inode.getLocalNameBytes());
+
+    // TODO(runzhiwang): do not create a new INodesInPath
+    return isRename ? INodesInPath.append(existing, inode, inode.getLocalNameBytes()) : existing;
   }
 
   INodesInPath addLastINodeNoQuotaCheck(INodesInPath existing, INode i) {
@@ -1422,6 +1477,8 @@ public class FSDirectory implements Closeable {
   }
 
   public INodeMap getINodeMap() {
+    // TODO(baoloongmao): make this thread-safe,
+    //  do not export the inodeMap out of this class.
     return inodeMap;
   }
 
@@ -1505,7 +1562,7 @@ public class FSDirectory implements Closeable {
       }
     }
   }
-  
+
   /**
    * Get the inode from inodeMap based on its inode id.
    * @param id The given id
@@ -1563,12 +1620,12 @@ public class FSDirectory implements Closeable {
       inode.setLocalName(name.getBytes());
     }
   }
-  
+
   void shutdown() {
     nameCache.reset();
     inodeMap.clear();
   }
-  
+
   /**
    * Given an INode get all the path complents leading to it from the root.
    * If an Inode corresponding to C is given in /A/B/C, the returned
@@ -1755,13 +1812,28 @@ public class FSDirectory implements Closeable {
    * @throws UnresolvedLinkException
    * @throws ParentNotDirectoryException
    * @throws AccessControlException
+   *
+   * @deprecated Use {@link #lockInodePath(String, DirOp, LockMode)} instead.
    */
+  @Deprecated
   public INodesInPath getINodesInPath(String src, DirOp dirOp)
       throws UnresolvedLinkException, AccessControlException,
       ParentNotDirectoryException {
     return getINodesInPath(INode.getPathComponents(src), dirOp);
   }
 
+  /**
+   *
+   * @param components
+   * @param dirOp
+   * @return
+   * @throws UnresolvedLinkException
+   * @throws AccessControlException
+   * @throws ParentNotDirectoryException
+   *
+   * @deprecated Use {@link #lockInodePath(byte[][], DirOp, LockMode)} instead.
+   */
+  @Deprecated
   public INodesInPath getINodesInPath(byte[][] components, DirOp dirOp)
       throws UnresolvedLinkException, AccessControlException,
       ParentNotDirectoryException {
@@ -1773,7 +1845,9 @@ public class FSDirectory implements Closeable {
   /**
    * Get {@link INode} associated with the file / directory.
    * See {@link #getINode(String, DirOp)}
+   * @deprecated Use {@link #lockFullInodePath(String, LockMode)} instead.
    */
+  @Deprecated
   @VisibleForTesting // should be removed after a lot of tests are updated
   public INode getINode(String src) throws UnresolvedLinkException,
       AccessControlException, ParentNotDirectoryException {
@@ -1959,7 +2033,11 @@ public class FSDirectory implements Closeable {
    */
   void verifyParentDir(INodesInPath iip)
       throws FileNotFoundException, ParentNotDirectoryException {
-    if (iip.length() > 2) {
+    if (iip.getPathComponents().length > 2) {
+      if (iip.length() < iip.getPathComponents().length - 1) {
+        throw new FileNotFoundException("Parent directory doesn't exist: "
+            + iip.getParentPath());
+      }
       final INode parentNode = iip.getINode(-2);
       if (parentNode == null) {
         throw new FileNotFoundException("Parent directory doesn't exist: "
@@ -1999,7 +2077,10 @@ public class FSDirectory implements Closeable {
 
   INodeAttributes getAttributes(INodesInPath iip)
       throws IOException {
-    INode node = FSDirectory.resolveLastINode(iip);
+    INode node = iip.getLastINode();
+    if (node == null) {
+      throw new FileNotFoundException("can not find " + iip.getPath());
+    }
     int snapshot = iip.getPathSnapshotId();
     INodeAttributes nodeAttrs = node.getSnapshotINode(snapshot);
     UserGroupInformation ugi = NameNode.getRemoteUser();
@@ -2014,6 +2095,761 @@ public class FSDirectory implements Closeable {
       nodeAttrs = ap.getAttributes(components, nodeAttrs);
     }
     return nodeAttrs;
+  }
+
+  BlockManager getHDDSBlockManager() {
+    return getFSNamesystem().getBlockManager();
+  }
+
+  /**
+   * Locks from a specific point in the tree to the descendant, and return a lockedInodePath.
+   *
+   * @param inodePath the root to start locking
+   * @param lockMode the lock type to use
+   * @param descendantUri the path to the descendant that we are locking
+   * @return  an {@link InodeLockList} representing the list of descendants that got locked as
+   * a result of this call.
+   * @throws InvalidPathException
+   */
+  public INodesInPath lockDescendantPath(INodesInPath inodePath, LockMode lockMode,
+      String descendantUri) throws InvalidPathException {
+    InodeLockList descendantLockList = lockDescendant(inodePath, lockMode, descendantUri);
+    return new MutableLockedInodePath(descendantUri,
+        new CompositeInodeLockList(inodePath.getLockList(), descendantLockList), lockMode, inodePath.isRaw());
+  }
+
+  private InodeLockList lockDescendant(INodesInPath inodePath, LockMode lockMode,
+      String descendantUri) throws InvalidPathException {
+    // Check if the descendant is really the descendant of inodePath
+    if (!PathUtils.hasPrefix(descendantUri, inodePath.getPath())
+        || descendantUri.equals(inodePath.getPath())) {
+      throw new InvalidPathException(descendantUri + " is not a valid descendant of "
+          + inodePath.getPath());
+    }
+
+    List<INode> inodeList = new ArrayList<>(inodePath.getInodeList());
+    // Lock from inodePath to the descendant
+    InodeLockList lockList = new InodeLockList(mInodeLockManager, false);
+    TraversalResult traversalResult = traverseToInodeInternal(
+        INode.getPathComponents(descendantUri),
+        inodeList, lockList, lockMode, null);
+    if (traversalResult.mFound) {
+      return traversalResult.mLockList;
+    } else {
+      throw new InvalidPathException(descendantUri
+          + " path not found in traversal starting from " + inodePath.getPath() + ".");
+    }
+  }
+
+  /**
+   * Locks existing inodes on the specified path, in the specified {@link LockMode}. The target
+   * inode is not required to exist.
+   *
+   * @param path the path to lock
+   * @param lockMode the {@link LockMode} to lock the inodes with
+   * @return the {@link INodesInPath} representing the locked path of inodes
+   * @throws InvalidPathException if the path is invalid
+   */
+  public INodesInPath lockInodePath(String path, DirOp dirOp, LockMode lockMode)
+      throws InvalidPathException, UnresolvedPathException,
+      ParentNotDirectoryException, AccessControlException {
+    return lockInodePath(INode.getPathComponents(path), dirOp, lockMode);
+  }
+
+  public INodesInPath lockInodePath(byte[][] path, DirOp dirOp, LockMode lockMode)
+      throws InvalidPathException, ParentNotDirectoryException,
+      UnresolvedPathException, AccessControlException {
+    TraversalResult traversalResult =
+        traverseToInode(path, lockMode, null);
+    MutableLockedInodePath iip = new MutableLockedInodePath(
+        traversalResult.getInodeLockList(), path, lockMode, false);
+    try {
+      checkTraverse(null, iip, dirOp);
+    } catch (Throwable e) {
+      iip.close();
+      throw e;
+    }
+    return iip;
+  }
+
+  /**
+   * Locks existing inodes on the specified path, in the specified {@link LockMode}. The target
+   * inode is not required to exist.
+   *
+   * @param pc  A permission checker for traversal checks.  Pass null for no permission checks.
+   * @param path the path to lock
+   * @param lockMode the {@link LockMode} to lock the inodes with
+   * @return the {@link INodesInPath} representing the locked path of inodes
+   * @throws InvalidPathException if the path is invalid
+   */
+  public INodesInPath lockInodePath(FSPermissionChecker pc, String path,
+      DirOp dirOp, LockMode lockMode)
+      throws InvalidPathException, AccessControlException,
+      FileNotFoundException, ParentNotDirectoryException,
+      UnresolvedPathException {
+    boolean isCreate = (dirOp == DirOp.CREATE || dirOp == DirOp.CREATE_LINK);
+    // prevent creation of new invalid paths
+    if (isCreate && !DFSUtil.isValidName(path)) {
+      throw new InvalidPathException("Invalid file name: " + path);
+    }
+    byte[][] components = INode.getPathComponents(path);
+    boolean isRaw = isReservedRawName(components);
+    if (isPermissionEnabled && pc != null && isRaw) {
+      switch(dirOp) {
+      case READ_LINK:
+      case READ:
+        break;
+      default:
+        pc.checkSuperuserPrivilege();
+        break;
+      }
+    }
+    components = resolveComponents(components, this);
+
+    INodesInPath iipForCheck = INodesInPath.resolve(rootDir, components, isRaw);
+    // verify all ancestors are dirs and traversable.  note that only
+    // methods that create new namespace items have the signature to throw
+    // PNDE
+    try {
+      checkTraverse(pc, iipForCheck, dirOp);
+    } catch (ParentNotDirectoryException pnde) {
+      if (!isCreate) {
+        throw new AccessControlException(pnde.getMessage());
+      }
+      throw pnde;
+    }
+
+    TraversalResult traversalResult =
+        traverseToInode(components, lockMode, null);
+    MutableLockedInodePath iip = new MutableLockedInodePath(
+        traversalResult.getInodeLockList(),
+        iipForCheck.getPathComponents(), lockMode, isRaw);
+    return iip;
+  }
+
+  /**
+   * Locks existing inodes on the two specified paths. The two paths will be locked in the
+   * correct order. The target inodes are not required to exist.
+   *
+   * @param path1 the first path to lock
+   * @param lockMode1 the {@link LockMode} of the first path
+   * @param path2 the second path to lock
+   * @param lockMode2 the {@link LockMode} of the second path
+   * @return a {@link InodePathPair} representing the two locked paths
+   * @throws InvalidPathException if a path is invalid
+   */
+  public InodePathPair lockInodePathPair(String path1, LockMode lockMode1, String path2,
+      LockMode lockMode2) throws InvalidPathException {
+    byte[][] pathComponents1 = INode.getPathComponents(path1);
+    byte[][] pathComponents2 = INode.getPathComponents(path2);
+    List<LockMode> lockHints = new ArrayList<>();
+
+    int minLength = Math.min(pathComponents1.length, pathComponents2.length);
+    for (int i = 0; i < minLength; i++) {
+      if ((pathComponents1[i] == null && pathComponents2[i] == DFSUtilClient.EMPTY_BYTES && i == 0) ||
+          pathComponents1[i].equals(pathComponents2[i])) {
+        // The two paths share a common path prefix.
+        LockMode mode1 = getLockModeForComponent(i, pathComponents1.length, lockMode1, null);
+        LockMode mode2 = getLockModeForComponent(i, pathComponents2.length, lockMode2, null);
+        // If either of the modes are WRITE, lock both components as WRITE to prevent deadlock.
+        // TODO(gpang): consider a combine helper method
+        if (mode1 == LockMode.READ && mode2 == LockMode.READ) {
+          lockHints.add(LockMode.READ);
+        } else {
+          lockHints.add(LockMode.WRITE);
+        }
+      } else {
+        // The two paths no longer share a common prefix.
+        break;
+      }
+    }
+
+    TraversalResult traversalResult1 = null;
+    TraversalResult traversalResult2 = null;
+    boolean valid = false;
+    try {
+      // Lock paths in a deterministic order.
+      if (path1.compareTo(path2) > 0) {
+        traversalResult2 = traverseToInode(pathComponents2, lockMode2, lockHints);
+        traversalResult1 = traverseToInode(pathComponents1, lockMode1, lockHints);
+      } else {
+        traversalResult1 = traverseToInode(pathComponents1, lockMode1, lockHints);
+        traversalResult2 = traverseToInode(pathComponents2, lockMode2, lockHints);
+      }
+
+      INodesInPath inodePath1 = new MutableLockedInodePath(path1, traversalResult1.getInodes(),
+          traversalResult1.getInodeLockList(), lockMode1);
+      INodesInPath inodePath2 = new MutableLockedInodePath(path2, traversalResult2.getInodes(),
+          traversalResult2.getInodeLockList(), lockMode2);
+      valid = true;
+      return new InodePathPair(inodePath1, inodePath2);
+    } finally {
+      if (!valid) {
+        if (traversalResult1 != null) {
+          traversalResult1.getInodeLockList().close();
+        }
+        if (traversalResult2 != null) {
+          traversalResult2.getInodeLockList().close();
+        }
+      }
+    }
+  }
+
+  /**
+   * Returns the lock mode for a particular index into the path components.
+   *
+   * @param index the index into the path components
+   * @param length the length of path components
+   * @param lockMode the specified {@link LockMode}
+   * @param lockHints the list of lock hints for each index; this can be null, or incomplete
+   * @return the {@link LockMode} to lock this particular inode at this index with
+   */
+  private LockMode getLockModeForComponent(int index, int length, LockMode lockMode,
+      List<LockMode> lockHints) {
+    if (lockHints != null && index < lockHints.size()) {
+      // Use the lock hint if it exists.
+      return lockHints.get(index);
+    }
+    if (lockMode == LockMode.READ) {
+      return LockMode.READ;
+    }
+    boolean isTarget = (index == length - 1);
+    boolean isTargetOrParent = (index >= length - 2);
+
+    if (isTargetOrParent && lockMode == LockMode.WRITE_PARENT
+        || isTarget && lockMode == LockMode.WRITE) {
+      return LockMode.WRITE;
+    }
+    return LockMode.READ;
+  }
+
+  /**
+   * Locks existing inodes on the specified path, in the specified {@link LockMode}. The target
+   * inode must exist.
+   *
+   * @param pc  A permission checker for traversal checks.  Pass null for no permission checks.
+   * @param path the path to lock
+   * @param lockMode the {@link LockMode} to lock the inodes with
+   * @return the {@link INodesInPath} representing the locked path of inodes
+   * @throws InvalidPathException if the path is invalid
+   * @throws FileNotFoundException if the target inode does not exist
+   */
+  public INodesInPath lockFullInodePath(FSPermissionChecker pc, String path, LockMode lockMode)
+      throws InvalidPathException, FileNotFoundException {
+    TraversalResult traversalResult =
+        traverseToInode(INode.getPathComponents(path), lockMode, null);
+    if (!traversalResult.isFound()) {
+      traversalResult.getInodeLockList().close();
+      throw new FileNotFoundException(ExceptionMessage.PATH_DOES_NOT_EXIST.getMessage(path));
+    }
+    return new MutableLockedInodePath(path,
+        traversalResult.getInodeLockList(), lockMode);
+  }
+
+  /**
+   * Locks existing inodes on the specified path, in the specified {@link LockMode}. The target
+   * inode must exist.
+   *
+   * @param path the path to lock
+   * @param lockMode the {@link LockMode} to lock the inodes with
+   * @return the {@link INodesInPath} representing the locked path of inodes
+   * @throws InvalidPathException if the path is invalid
+   * @throws FileNotFoundException if the target inode does not exist
+   */
+  public INodesInPath lockFullInodePath(String path, LockMode lockMode)
+      throws InvalidPathException, FileNotFoundException {
+    TraversalResult traversalResult =
+        traverseToInode(INode.getPathComponents(path), lockMode, null);
+    if (!traversalResult.isFound()) {
+      traversalResult.getInodeLockList().close();
+      throw new FileNotFoundException(ExceptionMessage.PATH_DOES_NOT_EXIST.getMessage(path));
+    }
+    return new MutableLockedInodePath(path,
+        traversalResult.getInodeLockList(), lockMode);
+  }
+
+  /**
+   * Locks existing inodes on the path to the inode specified by an id, in the specified
+   * {@link LockMode}. The target inode must exist. This may require multiple traversals of the
+   * tree, so may be inefficient.
+   *
+   * @param id the inode id
+   * @param lockMode the {@link LockMode} to lock the inodes with
+   * @return the {@link INodesInPath} representing the locked path of inodes
+   * @throws FileNotFoundException if the target inode does not exist
+   */
+  public INodesInPath lockFullInodePath(long id, LockMode lockMode)
+      throws FileNotFoundException {
+    int count = 0;
+    while (true) {
+      INode inode = getInode(id);
+      if (inode == null) {
+        throw new FileNotFoundException(ExceptionMessage.INODE_DOES_NOT_EXIST.getMessage(id));
+      }
+      // Compute the path given the target inode.
+      StringBuilder builder = new StringBuilder();
+      computePathForInode(inode, builder);
+      String path = builder.toString();
+      boolean valid = false;
+      INodesInPath inodePath = null;
+      try {
+        inodePath = lockFullInodePath(path, lockMode);
+        if (inodePath.getInode().getId() == id) {
+          // Set to true, so the path is not unlocked before returning.
+          valid = true;
+          return inodePath;
+        }
+        // The path does not end up at the target inode id. Repeat the traversal.
+      } catch (InvalidPathException e) {
+        // ignore and repeat the loop
+        LOG.warn("Inode lookup id {} computed path {} mismatch id. Repeating.", id, path);
+      } finally {
+        if (!valid && inodePath != null) {
+          inodePath.close();
+        }
+      }
+      count++;
+      if (count > PATH_TRAVERSAL_RETRIES) {
+        throw new FileNotFoundException(
+            ExceptionMessage.INODE_DOES_NOT_EXIST.getMessage(id));
+      }
+    }
+  }
+
+  /**
+   * Locks existing inodes on the specified path, in the specified
+   * {@link LockMode}.
+   *
+   * @param pc  A permission checker for traversal checks.  Pass null for no
+   *            permission checks.
+   * @param path the path to lock
+   * @param fileId the inode id
+   * @param dirOp the directory operation type
+   * @param lockMode the {@link LockMode} to lock the inodes with.
+   * @return the {@link INodesInPath} representing the locked path of inodes
+   * @throws InvalidPathException if the path is invalid
+   * @throws FileNotFoundException if the target inode does not exist
+   */
+  public INodesInPath lockInodePath(FSPermissionChecker pc, String path,
+      long fileId, DirOp dirOp, LockMode lockMode)
+      throws InvalidPathException, ParentNotDirectoryException,
+      FileNotFoundException, AccessControlException, UnresolvedPathException {
+    // Older clients may not have given us an inode ID to work with.
+    // In this case, we have to try to resolve the path and hope it
+    // hasn't changed or been deleted since the file was opened for write.
+    INodesInPath iip;
+    if (fileId == HdfsConstants.GRANDFATHER_INODE_ID) {
+      iip = lockInodePath(pc, path, DirOp.WRITE, lockMode);
+    } else {
+      INode inode = getInode(fileId);
+      if (inode == null) {
+        iip = new MutableLockedInodePath(path, InodeLockList.emptyInodeLockList,
+            lockMode);
+      } else {
+        iip = lockInodePath(pc, inode.getFullPathName(), dirOp, lockMode);
+      }
+    }
+    return iip;
+  }
+
+  INodesInPath lockFullInodePath(String src,
+      long fileId, LockMode lockMode)
+      throws InvalidPathException, FileNotFoundException {
+    // Older clients may not have given us an inode ID to work with.
+    // In this case, we have to try to resolve the path and hope it
+    // hasn't changed or been deleted since the file was opened for write.
+    INodesInPath iip;
+    if (fileId == HdfsConstants.GRANDFATHER_INODE_ID) {
+      iip = lockFullInodePath(src, lockMode);
+    } else {
+      INode inode = getInode(fileId);
+      if (inode == null) {
+        iip = lockFullInodePath(src, lockMode);
+      } else {
+        iip = lockFullInodePath(fileId, lockMode);
+      }
+    }
+    return iip;
+  }
+
+  INodesInPath lockInodePath(FSPermissionChecker pc, String src,
+      long fileId, LockMode lockMode)
+      throws InvalidPathException, FileNotFoundException,
+      ParentNotDirectoryException, UnresolvedPathException,
+      AccessControlException {
+    // Older clients may not have given us an inode ID to work with.
+    // In this case, we have to try to resolve the path and hope it
+    // hasn't changed or been deleted since the file was opened for write.
+    INodesInPath iip;
+    if (fileId == HdfsConstants.GRANDFATHER_INODE_ID) {
+      iip = lockInodePath(pc, src, DirOp.WRITE, lockMode);
+    } else {
+      INode inode = getInode(fileId);
+      if (inode == null) {
+        iip = INodesInPath.fromComponents(INode.getPathComponents(src));
+      } else {
+        iip = lockFullInodePath(fileId, lockMode);
+      }
+    }
+    return iip;
+  }
+
+  /**
+   * Attempts to extend an existing {@link INodesInPath} to reach the target inode (the last
+   * inode for the full path). If the target inode does not exist, an exception will be thrown.
+   *
+   * @param inodePath the {@link INodesInPath} to extend to the target inode
+   * @param lockMode the {@link LockMode} to lock the inodes with
+   * @throws InvalidPathException if the path is invalid
+   * @throws FileNotFoundException if the target inode does not exist
+   */
+  public void ensureFullInodePath(INodesInPath inodePath, LockMode lockMode)
+      throws InvalidPathException, FileNotFoundException {
+    if (inodePath.fullPathExists()) {
+      return;
+    }
+    TraversalResult traversalResult = traverseToInode(inodePath, lockMode);
+    if (!traversalResult.isFound()) {
+      throw new FileNotFoundException(
+          ExceptionMessage.PATH_DOES_NOT_EXIST.getMessage(inodePath.getPath()));
+    }
+  }
+
+  /**
+   * Appends components of the path from a given inode.
+   *
+   * @param inode the {@link INode} to compute the path for
+   * @param builder a {@link StringBuilder} that is updated with the path components
+   * @throws FileNotFoundException if an inode in the path does not exist
+   */
+  private void computePathForInode(INode inode, StringBuilder builder)
+      throws FileNotFoundException {
+    long id;
+    long parentId;
+    String name;
+    try (RWLockResource lock = mInodeLockManager.lockInode(inode, LockMode.READ, false)) {
+      id = inode.getId();
+      parentId = INVALID_INODE_ID;
+      if (inode.getParent() != null) {
+        parentId = inode.getParent().getId();
+      }
+      name = inode.getLocalName();
+    }
+    if (isRootId(id)) {
+      builder.append(Path.SEPARATOR);
+    } else if (isRootId(parentId)) {
+      builder.append(Path.SEPARATOR);
+      builder.append(name);
+    } else {
+      INode parentInode = getInode(parentId);
+      if (parentInode == null) {
+        throw new FileNotFoundException(name + ": "
+            + ExceptionMessage.INODE_DOES_NOT_EXIST.getMessage(parentId));
+      }
+
+      computePathForInode(parentInode, builder);
+      builder.append(Path.SEPARATOR);
+      builder.append(name);
+    }
+  }
+
+  /**
+   * Lock from a specific poiint in the tree to the immediate child, and return a lockedInodePath.
+   *
+   * @param inodePath the root to start locking
+   * @param lockMode the lock type to use
+   * @param childInode the inode of the child that we are locking
+   * @param pathComponents the array of pre-parsed path components, or null to parse pathComponents
+   *                       from the uri
+   * @return an {@link InodeLockList} representing the list of descendants that got locked as
+   * a result of this call.
+   * @throws InvalidPathException if the path is invalid
+   * @throws FileNotFoundException if the inode does not exist
+   */
+  public INodesInPath lockChildPath(INodesInPath inodePath, LockMode lockMode,
+      INode childInode, byte[][] pathComponents)
+      throws FileNotFoundException, InvalidPathException {
+    InodeLockList inodeLockList = new InodeLockList(mInodeLockManager, false);
+
+    if (lockMode == LockMode.READ) {
+      inodeLockList.lockReadAndCheckParent(childInode, inodePath.getInode());
+    } else {
+      inodeLockList.lockWriteAndCheckParent(childInode, inodePath.getInode());
+    }
+
+    if (pathComponents == null) {
+      return new MutableLockedInodePath(new Path(inodePath.getPath(), childInode.getLocalName()).toString(),
+          new CompositeInodeLockList(inodePath.getLockList(), inodeLockList), lockMode);
+    } else {
+      return new MutableLockedInodePath(
+          new CompositeInodeLockList(inodePath.getLockList(), inodeLockList), pathComponents, lockMode, inodePath.isRaw());
+    }
+  }
+
+  /**
+   * Locks all descendants of a particular {@link INodesInPath}. Any directory inode
+   * precedes its descendants in the list.
+   *
+   * @param inodePath the root {@link INodesInPath} to retrieve all descendants from
+   * @param lockMode the lock type to use
+   * @return an {@link InodeLockList} representing the list of all descendants
+   */
+  public LockedInodePathList lockDescendants(INodesInPath inodePath, LockMode lockMode) {
+    List<INodesInPath> inodePathList = new ArrayList<>();
+    lockDescendantsInternal(inodePath, lockMode, inodePathList);
+    return new LockedInodePathList(inodePathList);
+  }
+
+  private void lockDescendantsInternal(INodesInPath inodePath, LockMode lockMode,
+      List<INodesInPath> inodePathList) {
+    INode inode = inodePath.getInodeOrNull();
+    if (inode == null || !inode.isDirectory()) {
+      return;
+    }
+    INodeDirectory inodeDirectory = (INodeDirectory) inode;
+    for (INode child : inodeDirectory.getChildrenList(Snapshot.CURRENT_STATE_ID)) {
+      INodesInPath lockedDescendantPath;
+      try {
+        lockedDescendantPath =
+            inodePath.createTempPathForExistingChild(child, inodePath.getLockMode());
+        inodePathList.add(lockedDescendantPath);
+      } catch (InvalidPathException | FileNotFoundException e) {
+        // INode is no longer a child, continue.
+        continue;
+      }
+      if (child.isDirectory()) {
+        lockDescendantsInternal(lockedDescendantPath, lockMode, inodePathList);
+      }
+    }
+  }
+
+  /**
+   * @param fileId the file id to check
+   * @return true if the given file id is the root id
+   */
+  public boolean isRootId(long fileId) {
+    return fileId == INodeId.ROOT_INODE_ID;
+  }
+
+  /**
+   * Traverses the tree to find the given path components. Hints for the lock mode at each path
+   * component can be specified.
+   *
+   * @param pathComponents the components of the path to traverse
+   * @param lockMode the {@link LockMode} for the path
+   * @param lockHints optional {@link List} to specify the lock type for each path component; this
+   *                  can be shorter than pathComponents
+   * @return the {@link TraversalResult} for this traversal
+   * @throws InvalidPathException if the path is invalid
+   */
+  private TraversalResult traverseToInode(byte[][] pathComponents, LockMode lockMode,
+      List<LockMode> lockHints)
+      throws InvalidPathException {
+    List<INode> inodes = new ArrayList<>();
+    InodeLockList lockList = new InodeLockList(mInodeLockManager, false);
+
+    // This must be set to true before returning a valid value, otherwise all the inodes will be
+    // unlocked.
+    boolean valid = false;
+    try {
+      if (pathComponents == null) {
+        throw new InvalidPathException(
+            ExceptionMessage.PATH_COMPONENTS_INVALID.getMessage("null"));
+      } else if (pathComponents.length == 0) {
+        throw new InvalidPathException(
+            ExceptionMessage.PATH_COMPONENTS_INVALID.getMessage("empty"));
+      } else if (pathComponents.length == 1) {
+        if (pathComponents[0] == null || pathComponents[0].length == 0) {
+          if (getLockModeForComponent(0, pathComponents.length, lockMode, lockHints)
+              == LockMode.READ) {
+            lockList.lockRead(rootDir);
+          } else {
+            lockList.lockWrite(rootDir);
+          }
+          inodes.add(rootDir);
+          valid = true;
+          return TraversalResult.createFoundResult(inodes, lockList);
+        } else {
+          throw new InvalidPathException(
+              ExceptionMessage.PATH_COMPONENTS_INVALID_START.getMessage(new String(pathComponents[0])));
+        }
+      }
+
+      if (getLockModeForComponent(0, pathComponents.length, lockMode, lockHints) == LockMode.READ) {
+        lockList.lockRead(rootDir);
+      } else {
+        lockList.lockWrite(rootDir);
+      }
+      inodes.add(rootDir);
+      TraversalResult result =
+          traverseToInodeInternal(pathComponents, inodes, lockList, lockMode,
+              lockHints);
+      while (inodes.size() < pathComponents.length) {
+        inodes.add(null);
+      }
+
+      valid = true;
+      return result;
+    } finally {
+      if (!valid) {
+        lockList.close();
+      }
+    }
+  }
+
+  /**
+   * Traverses the tree to find the rest of the given {@link INodesInPath}. Hints for the lock
+   * mode at each path.
+   *
+   * @param inodePath the {@link INodesInPath} to start the traversal from
+   * @param lockMode the {@link LockMode} for the path
+   * @return the {@link TraversalResult} for this traversal
+   * @throws InvalidPathException if the path is invalid
+   */
+  private TraversalResult traverseToInode(INodesInPath inodePath, LockMode lockMode)
+      throws InvalidPathException {
+    // the inodePath is guaranteed to already include at least the root inode.
+    if (!(inodePath instanceof MutableLockedInodePath)) {
+      throw new InvalidPathException(
+          ExceptionMessage.NOT_MUTABLE_INODE_PATH.getMessage(inodePath.getPath()));
+    }
+    MutableLockedInodePath extensibleInodePath = (MutableLockedInodePath) inodePath;
+    List<INode> inodes = extensibleInodePath.getInodeList();
+    InodeLockList lockList = extensibleInodePath.getLockList();
+    return traverseToInodeInternal(extensibleInodePath.getPathComponents(), inodes,
+        lockList, lockMode, null);
+  }
+
+  /**
+   * Traverse the tree to find the rest of the given {@link INodesInPath}. Hints for the lock
+   * mode at each path.
+   *
+   * @param pathComponents components of the path that are are traversing towards
+   * @param inodes inodes that are already locked and will no longer require locking,
+   *               modified in the method to return all inode along the path
+   * @param lockList lockList containing all locked inodes, modified in the method
+   * @param lockMode the {@link LockMode} for the path
+   * @param lockHints list of lock hints for locking the path, must be null or its size must match
+   *                  the size of pathComponents
+   * @return the result of the traversal
+   * @throws InvalidPathException
+   */
+  private TraversalResult traverseToInodeInternal(byte[][] pathComponents, List<INode> inodes,
+      InodeLockList lockList, LockMode lockMode,
+      List<LockMode> lockHints)
+      throws InvalidPathException {
+    INode current = inodes.get(inodes.size() - 1);
+    for (int i = inodes.size(); i < pathComponents.length; i++) {
+      INode next = ((INodeDirectory) current).getChild(
+          pathComponents[i], CURRENT_STATE_ID);
+      if (next == null) {
+        // The user might want to create the nonexistent directories, so return the traversal
+        // result current inode with the last INode taken, and the index of the first path
+        // component that couldn't be found.
+        return TraversalResult.createNotFoundResult(i, inodes, lockList);
+      }
+      // Lock the existing next inode before proceeding.
+      if (getLockModeForComponent(i, pathComponents.length, lockMode, lockHints)
+          == LockMode.READ) {
+        lockList.lockReadAndCheckNameAndParent(next, current, pathComponents[i]);
+      } else {
+        lockList.lockWriteAndCheckNameAndParent(next, current, pathComponents[i]);
+      }
+      if (next.isFile()) {
+        // The inode can't have any children. If this is the last path component, we're good.
+        // Otherwise, we can't traverse further, so we clean up and throw an exception.
+        if (i == pathComponents.length - 1) {
+          inodes.add(next);
+          return TraversalResult.createFoundResult(inodes, lockList);
+        } else {
+          throw new InvalidPathException(
+              "Traversal failed. Component " + i + "(" + next.getLocalName() + ") is a file");
+        }
+      } else {
+        inodes.add(next);
+        current = next;
+      }
+    }
+    return TraversalResult.createFoundResult(inodes, lockList);
+  }
+
+  private LockingScheme createLockingScheme(Path path,
+      FSDirectory.LockMode desiredLockMode) {
+    return new LockingScheme(path, desiredLockMode);
+  }
+
+  public boolean isInodeReadLocked(INode inode) {
+    return isInodeWriteLocked(inode) ||
+        mInodeLockManager.inodeReadLockedByCurrentThread(inode.getId());
+  }
+
+  public boolean isInodeWriteLocked(INode inode) {
+    return mInodeLockManager.inodeWriteLockedByCurrentThread(inode.getId());
+  }
+
+  public int getInodeLockPoolSize() {
+    return mInodeLockManager.getInodeLockPoolSize();
+  }
+
+  private static final class TraversalResult {
+    /** True if the traversal found the target inode, false otherwise. */
+    private final boolean mFound;
+
+    /** The list of all inodes encountered during the traversal. */
+    private final List<INode> mInodes;
+
+    /** The {@link InodeLockList} managing the locks for the inodes. */
+    private final InodeLockList mLockList;
+
+    static TraversalResult createFoundResult(List<INode> inodes,
+        InodeLockList lockList) {
+      return new TraversalResult(true, inodes, lockList);
+    }
+
+    static TraversalResult createNotFoundResult(int index,
+        List<INode> inodes, InodeLockList lockList) {
+      return new TraversalResult(false, inodes, lockList);
+    }
+
+    private TraversalResult(boolean found,
+        List<INode> inodes, InodeLockList lockList) {
+      mFound = found;
+      mInodes = inodes;
+      mLockList = lockList;
+    }
+
+    /**
+     * @return true if target inode was found, false otherwise
+     */
+    boolean isFound() {
+      return mFound;
+    }
+
+    /**
+     * @return the list of all inodes encountered during the traversal
+     */
+    List<INode> getInodes() {
+      return mInodes;
+    }
+
+    /**
+     * @return the {@link InodeLockList} managing the locks for all the inodes
+     */
+    InodeLockList getInodeLockList() {
+      return mLockList;
+    }
+  }
+
+  /**
+   * The type of lock to lock inode paths with.
+   */
+  public enum LockMode {
+    /** Read lock the entire path. */
+    READ,
+    /** Read lock the entire path, but write lock the target inode. */
+    WRITE,
+    /** Read lock the entire path, but write lock the target inode and the parent of the target. */
+    WRITE_PARENT,
   }
 
 }

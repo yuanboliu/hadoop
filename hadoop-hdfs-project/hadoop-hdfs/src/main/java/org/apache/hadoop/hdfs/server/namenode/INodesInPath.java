@@ -17,8 +17,14 @@
  */
 package org.apache.hadoop.hdfs.server.namenode;
 
+import java.io.Closeable;
+import java.io.FileNotFoundException;
 import java.util.Arrays;
+import java.util.List;
 
+import org.apache.hadoop.fs.InvalidPathException;
+import org.apache.hadoop.fs.Path;
+import org.apache.hadoop.hdfs.server.lock.exception.ExceptionMessage;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.apache.hadoop.hdfs.DFSUtil;
@@ -29,13 +35,17 @@ import org.apache.hadoop.hdfs.server.namenode.snapshot.Snapshot;
 
 import com.google.common.base.Preconditions;
 
+import javax.annotation.Nullable;
+import javax.annotation.concurrent.ThreadSafe;
+
 import static org.apache.hadoop.hdfs.server.namenode.snapshot.Snapshot.CURRENT_STATE_ID;
 import static org.apache.hadoop.hdfs.server.namenode.snapshot.Snapshot.ID_INTEGER_COMPARATOR;
 
 /**
  * Contains INodes information resolved from a given path.
  */
-public class INodesInPath {
+@ThreadSafe
+public class INodesInPath implements Closeable {
   public static final Logger LOG = LoggerFactory.getLogger(INodesInPath.class);
 
   /**
@@ -46,6 +56,7 @@ public class INodesInPath {
         Arrays.equals(HdfsServerConstants.DOT_SNAPSHOT_DIR_BYTES, pathComponent);
   }
 
+  @Deprecated
   private static INode[] getINodes(final INode inode) {
     int depth = 0, index;
     INode tmp = inode;
@@ -77,7 +88,9 @@ public class INodesInPath {
    *
    * @param inode to construct from
    * @return INodesInPath
+   * @deprecated use {@link FSDirectory#lockFullInodePath(long, FSDirectory.LockMode)} instead.
    */
+  @Deprecated
   static INodesInPath fromINode(INode inode) {
     INode[] inodes = getINodes(inode);
     byte[][] paths = getPaths(inodes);
@@ -99,11 +112,20 @@ public class INodesInPath {
    * @param inode the {@link INode} to be resolved
    * @return INodesInPath
    */
+  @Deprecated
   static INodesInPath fromINode(final INodeDirectory rootDir, INode inode) {
     byte[][] paths = getPaths(getINodes(inode));
     return resolve(rootDir, paths);
   }
 
+  /**
+   * @param components
+   * @return
+   *
+   * @deprecated Use
+   * {@link FSDirectory#lockInodePath(byte[][], FSDirectory.LockMode)} instead.
+   */
+  @Deprecated
   static INodesInPath fromComponents(byte[][] components) {
     return new INodesInPath(new INode[components.length], components);
   }
@@ -130,11 +152,13 @@ public class INodesInPath {
    * @param components array of path component name
    * @return the specified number of existing INodes in the path
    */
+  @Deprecated
   static INodesInPath resolve(final INodeDirectory startingDir,
       final byte[][] components) {
     return resolve(startingDir, components, false);
   }
 
+  @Deprecated
   static INodesInPath resolve(final INodeDirectory startingDir,
       byte[][] components, final boolean isRaw) {
     Preconditions.checkArgument(startingDir.compareTo(components[0]) == 0);
@@ -239,7 +263,11 @@ public class INodesInPath {
    * @param pos the position of the replacement
    * @param inode the new inode
    * @return a new INodesInPath instance
+   *
+   * @Deprecated use {@link #unlockLast()} instead, when remove last.
+   * use {@link InodeLockList#lockWrite(INode) instead.
    */
+  @Deprecated
   public static INodesInPath replace(INodesInPath iip, int pos, INode inode) {
     Preconditions.checkArgument(iip.length() > 0 && pos > 0 // no for root
         && pos < iip.length());
@@ -256,7 +284,10 @@ public class INodesInPath {
   /**
    * Extend a given INodesInPath with a child INode. The child INode will be
    * appended to the end of the new INodesInPath.
+   *
+   * @Deprecated use {@link InodeLockList#lockWrite(INode) instead.
    */
+  @Deprecated
   public static INodesInPath append(INodesInPath iip, INode child,
       byte[] childName) {
     Preconditions.checkArgument(iip.length() > 0);
@@ -269,7 +300,7 @@ public class INodesInPath {
     System.arraycopy(iip.path, 0, path, 0, path.length - 1);
     path[path.length - 1] = childName;
     return new INodesInPath(inodes, path, iip.isRaw,
-        iip.isSnapshot, iip.snapshotId);
+        iip.isSnapshot, iip.snapshotId, iip.getLockList(), iip.getLockMode());
   }
 
   private final byte[][] path;
@@ -278,6 +309,7 @@ public class INodesInPath {
   /**
    * Array with the specified number of INodes resolved for a given path.
    */
+  @Deprecated
   private final INode[] inodes;
   /**
    * true if this path corresponds to a snapshot
@@ -298,6 +330,10 @@ public class INodesInPath {
    */
   private final int snapshotId;
 
+  private final InodeLockList mLockList;
+  protected FSDirectory.LockMode mLockMode;
+
+  @Deprecated
   private INodesInPath(INode[] inodes, byte[][] path, boolean isRaw,
       boolean isSnapshot,int snapshotId) {
     Preconditions.checkArgument(inodes != null && path != null);
@@ -306,10 +342,78 @@ public class INodesInPath {
     this.isRaw = isRaw;
     this.isSnapshot = isSnapshot;
     this.snapshotId = snapshotId;
+
+    mLockList = null;
   }
 
+  INodesInPath(InodeLockList lockList, byte[][] path, INode[] iNodes,
+      FSDirectory.LockMode lockMode) {
+    this(iNodes, path, false, false, CURRENT_STATE_ID, lockList, lockMode);
+  }
+
+  private INodesInPath(INode[] inodes, byte[][] path, boolean isRaw,
+      boolean isSnapshot,int snapshotId, InodeLockList lockList) {
+    this(inodes, path, isRaw, isSnapshot, snapshotId, lockList, null);
+  }
+
+  private INodesInPath(INode[] inodes, byte[][] path, boolean isRaw,
+      boolean isSnapshot, int snapshotId, InodeLockList lockList, FSDirectory.LockMode lockMode) {
+    Preconditions.checkArgument(inodes != null && path != null);
+    this.inodes = inodes;
+    this.path = path;
+    this.isRaw = isRaw;
+    this.isSnapshot = isSnapshot;
+    this.snapshotId = snapshotId;
+
+    mLockList = lockList;
+    mLockMode = lockMode;
+  }
+
+  @Deprecated
   private INodesInPath(INode[] inodes, byte[][] path) {
     this(inodes, path, false, false, CURRENT_STATE_ID);
+  }
+
+  INodesInPath(InodeLockList lockList, byte[][] pathComponents,
+      FSDirectory.LockMode lockMode, boolean isRaw) {
+    Preconditions.checkArgument(lockList != null && pathComponents != null);
+    path = pathComponents;
+    mLockList = lockList;
+    mLockMode = lockMode;
+    this.isRaw = isRaw;
+
+    // TODO(baoloongmao): fix snapshot and raw future.
+    this.isSnapshot = false;
+    this.snapshotId = CURRENT_STATE_ID;
+    inodes = null;
+  }
+
+  INodesInPath(String uri, InodeLockList lockList,
+      FSDirectory.LockMode lockMode, boolean isRaw)
+      throws InvalidPathException {
+    this(lockList, INode.getPathComponents(uri), lockMode, isRaw);
+  }
+
+  /**
+   * Creates a new instance of {@link INodesInPath}, that is the descendant of an existing
+   * lockedInodePath.
+   *
+   * @param descendantUri the uri of the descendant
+   * @param lockedInodePath the lockedInodePath that is the parent of the descendant
+   * @param lockList the lockList which contains all the locks from the parent (not including)
+   *                to the descendant.
+   */
+  INodesInPath(String descendantUri, INodesInPath lockedInodePath,
+      InodeLockList lockList) throws InvalidPathException {
+    path = INode.getPathComponents(descendantUri);
+    mLockList = new CompositeInodeLockList(lockedInodePath.mLockList, lockList);
+    mLockMode = lockedInodePath.getLockMode();
+
+    // TODO(baoloongmao): fix snapshot and raw future.
+    this.isSnapshot = false;
+    this.snapshotId = CURRENT_STATE_ID;
+    this.isRaw = false;
+    inodes = null;
   }
 
   /**
@@ -328,21 +432,38 @@ public class INodesInPath {
     return isSnapshot ? snapshotId : CURRENT_STATE_ID;
   }
 
+
   /**
    * @return the i-th inode if i >= 0;
    *         otherwise, i < 0, return the (length + i)-th inode.
    */
   public INode getINode(int i) {
+    if (inodes == null) {
+      return mLockList.mInodes.get((i < 0) ? mLockList.mInodes.size() + i : i);
+    }
     return inodes[(i < 0) ? inodes.length + i : i];
   }
 
-  /** @return the last inode. */
+  /**
+   * @return the last inode.
+   **/
   public INode getLastINode() {
+    if (inodes == null) {
+      return getLastInodeOrNull();
+    }
     return getINode(-1);
   }
 
   byte[] getLastLocalName() {
     return path[path.length - 1];
+  }
+
+  byte[] getLocalNameByInodesSize() {
+    if (path.length > mLockList.mInodes.size()) {
+      return path[mLockList.mInodes.size()];
+    } else {
+      return getLastLocalName();
+    }
   }
 
   public byte[][] getPathComponents() {
@@ -354,7 +475,7 @@ public class INodesInPath {
   }
 
   /** @return the full path in string form */
-  public String getPath() {
+  public synchronized String getPath() {
     if (pathname == null) {
       pathname = DFSUtil.byteArray2PathString(path);
     }
@@ -370,13 +491,28 @@ public class INodesInPath {
   }
 
   public int length() {
+    if (inodes == null) {
+      if (mLockList != null && mLockList.mInodes != null) {
+        return mLockList.mInodes.size();
+      }
+      return -1;
+    }
     return inodes.length;
   }
 
-  public INode[] getINodesArray() {
+  private INode[] getINodesArrayDeprecated() {
     INode[] retArr = new INode[inodes.length];
     System.arraycopy(inodes, 0, retArr, 0, inodes.length);
     return retArr;
+  }
+
+  public synchronized INode[] getINodesArray() {
+    if (inodes != null) {
+      return getINodesArrayDeprecated();
+    }
+    INode[] retArr = new INode[path.length];
+    List<INode> inodeList = mLockList.mInodes;
+    return inodeList.toArray(retArr);
   }
 
   /**
@@ -385,20 +521,24 @@ public class INodesInPath {
    * @return the INodesInPath instance containing ancestral INodes. Note that
    * this method only handles non-snapshot paths.
    */
+  @Deprecated
   private INodesInPath getAncestorINodesInPath(int length) {
     Preconditions.checkArgument(length >= 0 && length < inodes.length);
     Preconditions.checkState(isDotSnapshotDir() || !isSnapshot());
     final INode[] anodes = new INode[length];
     final byte[][] apath = new byte[length][];
+    InodeLockList lockList = this.mLockList == null ? null : this.mLockList.getAncestorINodeLockListInPath(length);
     System.arraycopy(this.inodes, 0, anodes, 0, length);
     System.arraycopy(this.path, 0, apath, 0, length);
-    return new INodesInPath(anodes, apath, isRaw, false, snapshotId);
+
+    return new INodesInPath(anodes, apath, isRaw, false, snapshotId, lockList);
   }
 
   /**
    * @return an INodesInPath instance containing all the INodes in the parent
    *         path. We do a deep copy here.
    */
+  @Deprecated
   public INodesInPath getParentINodesInPath() {
     return inodes.length > 1 ? getAncestorINodesInPath(inodes.length - 1) :
         null;
@@ -411,11 +551,13 @@ public class INodesInPath {
    * @param inodeDirectory the ancestor directory
    * @return true if this INodesInPath is a descendant of inodeDirectory
    */
+  @Deprecated
   public boolean isDescendant(final INodeDirectory inodeDirectory) {
     final INodesInPath dirIIP = fromINode(inodeDirectory);
     return isDescendant(dirIIP);
   }
 
+  @Deprecated
   private boolean isDescendant(final INodesInPath ancestorDirIIP) {
     int ancestorDirINodesLength = ancestorDirIIP.length();
     int myParentINodesLength = length() - 1;
@@ -438,6 +580,7 @@ public class INodesInPath {
    * @return a new INodesInPath instance that only contains existing INodes.
    * Note that this method only handles non-snapshot paths.
    */
+  @Deprecated
   public INodesInPath getExistingINodes() {
     Preconditions.checkState(!isSnapshot());
     for (int i = inodes.length; i > 0; i--) {
@@ -486,24 +629,30 @@ public class INodesInPath {
     final StringBuilder b = new StringBuilder(getClass().getSimpleName())
         .append(": path = ").append(getPath())
         .append("\n  inodes = ");
-    if (inodes == null) {
+    if (mLockList == null || mLockList.mInodes == null) {
       b.append("null");
-    } else if (inodes.length == 0) {
+    } else if (mLockList.mInodes.size() == 0) {
       b.append("[]");
     } else {
-      b.append("[").append(toString(inodes[0]));
-      for(int i = 1; i < inodes.length; i++) {
-        b.append(", ").append(toString(inodes[i]));
+      b.append("[").append(toString(mLockList.mInodes.get(0)));
+      for(int i = 1; i < mLockList.mInodes.size(); i++) {
+        b.append(", ").append(toString(mLockList.mInodes.get(i)));
       }
-      b.append("], length=").append(inodes.length);
+      b.append("], length=").append(mLockList.mInodes.size());
     }
     b.append("\n  isSnapshot        = ").append(isSnapshot)
      .append("\n  snapshotId        = ").append(snapshotId);
     return b.toString();
   }
 
+  @Deprecated
   void validate() {
     // check parent up to snapshotRootIndex if this is a snapshot path
+    if (inodes == null) {
+      // skip validate avoid NPE.
+      return;
+    }
+
     int i = 0;
     if (inodes[i] != null) {
       for(i++; i < inodes.length && inodes[i] != null; i++) {
@@ -524,5 +673,202 @@ public class INodesInPath {
       throw new AssertionError("i = " + i + " != " + inodes.length
           + ", this=" + toString(false));
     }
+  }
+
+
+  /**
+   * @return the target inode
+   * @throws FileNotFoundException if the target inode does not exist
+   */
+  public synchronized INode getInode() throws FileNotFoundException {
+    INode inode = getInodeOrNull();
+    if (inode == null) {
+      throw new FileNotFoundException(ExceptionMessage.PATH_DOES_NOT_EXIST.getMessage(getPath()));
+    }
+    return inode;
+  }
+
+  /**
+   * @return the target inode
+   */
+  public synchronized INode getLastLockListInode() {
+    List<INode> inodeList = mLockList.getInodes();
+    return inodeList.get(length() - 1);
+  }
+
+  /**
+   * @return the target inode, or null if it does not exist
+   */
+  @Nullable
+  public synchronized INode getInodeOrNull() {
+    if (!fullPathExists()) {
+      return null;
+    }
+    List<INode> inodeList = mLockList.getInodes();
+    return inodeList.get(inodeList.size() - 1);
+  }
+
+  /**
+   * @return the target inode as an {@link INodeFile}
+   * @throws FileNotFoundException if the target inode does not exist, or it is not a file
+   */
+  public synchronized  INodeFile getInodeFile() throws
+      FileNotFoundException {
+    INode inode = getInode();
+    if (!inode.isFile()) {
+      throw new FileNotFoundException(ExceptionMessage.PATH_MUST_BE_FILE.getMessage(getPath()));
+    }
+    return (INodeFile) inode;
+  }
+
+  /**
+   * @return the parent of the target inode
+   * @throws InvalidPathException if the parent inode is not a directory
+   * @throws FileNotFoundException if the parent of the target does not exist
+   */
+  public synchronized INodeDirectory getParentInodeDirectory()
+      throws InvalidPathException, FileNotFoundException {
+    INode inode = getParentInodeOrNull();
+    if (inode == null) {
+      throw new FileNotFoundException(
+          ExceptionMessage.PATH_DOES_NOT_EXIST.getMessage(new Path(getPath()).getParent()));
+    }
+    if (!inode.isDirectory()) {
+      throw new InvalidPathException(
+          ExceptionMessage.PATH_MUST_HAVE_VALID_PARENT.getMessage(getPath()));
+    }
+    return (INodeDirectory) inode;
+  }
+
+  /**
+   * @return the parent of the target inode, or null if the parent does not exist
+   */
+  @Nullable
+  public synchronized INode getParentInodeOrNull() {
+    if (path.length < 2 || mLockList.getInodes().size() < (path.length - 1)) {
+      // The path is only the root, or the list of inodes is not long enough to contain the parent
+      return null;
+    }
+    return mLockList.getInodes().get(path.length - 2);
+  }
+
+  /**
+   * @return the last existing inode on the inode path
+   */
+  @Nullable
+  public synchronized INode getLastInodeOrNull() {
+    if (path.length > mLockList.getInodes().size()) {
+      return null;
+    }
+    return getLastExistingInode();
+  }
+
+  public synchronized INode getLastExistingInode() {
+    return mLockList.getInodes().get(mLockList.getInodes().size() - 1);
+  }
+
+  /**
+   * @return a copy of the list of existing inodes, from the root
+   */
+  public synchronized List<INode> getInodeList() {
+    return mLockList.getInodes();
+  }
+
+  /**
+   * @return true if the entire path of inodes exists, false otherwise
+   */
+  public synchronized boolean fullPathExists() {
+    return mLockList.getInodes().size() == path.length;
+  }
+
+  /**
+   * @return the {@link FSDirectory.LockMode} of this path
+   */
+  public synchronized FSDirectory.LockMode getLockMode() {
+    return mLockMode;
+  }
+
+  @Override
+  public synchronized void close() {
+    if (mLockList != null) {
+      mLockList.close();
+    }
+  }
+
+  /**
+   * Returns the closest ancestor of the target inode (last inode in the full path).
+   *
+   * @return the closest ancestor inode
+   * @throws FileNotFoundException if an ancestor does not exist
+   */
+  public synchronized INode getAncestorInode() throws FileNotFoundException {
+    int ancestorIndex = path.length - 2;
+    if (ancestorIndex < 0) {
+      throw new FileNotFoundException(ExceptionMessage.PATH_DOES_NOT_EXIST.getMessage(getPath()));
+    }
+    ancestorIndex = Math.min(ancestorIndex, mLockList.getInodes().size() - 1);
+    return mLockList.getInodes().get(ancestorIndex);
+  }
+
+  /**
+   * Constructs a temporary {@link INodesInPath} from an existing {@link INodesInPath}, for
+   * a direct child of the existing path. The child does not exist yet, this method simply adds
+   * the child to the path.
+   *
+   * @param childName the name of the direct child
+   * @return a {@link INodesInPath} for the direct child
+   * @throws InvalidPathException if the path is invalid
+   */
+  public synchronized INodesInPath createTempPathForChild(String childName)
+      throws InvalidPathException {
+    Preconditions.checkNotNull(getInodeOrNull());
+    Preconditions.checkState(getInodeOrNull().isDirectory(),
+        "Trying to create TempPathForChild for a file inode");
+    return new MutableLockedInodePath(new Path(getPath(), childName).toString(),
+        new CompositeInodeLockList(mLockList),
+        mLockMode, false);
+  }
+
+  /**
+   * Constructs a temporary {@link INodesInPath} from an existing {@link INodesInPath}, for
+   * a direct child of the existing path. The child must exist and this method will lock the child.
+   * A new {@link INodesInPath} object is returned. When the returned temporary path is closed,
+   * it does not close the existing path.
+   *
+   * @param child the inode of the direct child
+   * @param lockMode the desired locking mode for the child
+   * @return a {@link INodesInPath} for the direct child
+   * @throws InvalidPathException if the path is invalid
+   * @throws FileNotFoundException if the file does not exist
+   */
+  public synchronized INodesInPath createTempPathForExistingChild(
+      INode child, FSDirectory.LockMode lockMode)
+      throws InvalidPathException, FileNotFoundException {
+    InodeLockList lockList = new CompositeInodeLockList(mLockList);
+    INodesInPath lockedDescendantPath;
+    if (lockMode == FSDirectory.LockMode.READ) {
+      lockList.lockReadAndCheckParent(child, getInode());
+      lockedDescendantPath = new MutableLockedInodePath(
+          new Path(getPath(), child.getLocalName()).toString(), this, lockList);
+    } else {
+      lockList.lockWriteAndCheckParent(child, getInode());
+      lockedDescendantPath = new MutableLockedInodePath(
+          new Path(getPath(), child.getLocalName()).toString(), this, lockList);
+    }
+    return lockedDescendantPath;
+  }
+
+  /**
+   * Unlocks the last inode that was locked.
+   */
+  public synchronized void unlockLast() {
+    if (mLockList.getInodes().isEmpty()) {
+      return;
+    }
+    mLockList.unlockLast();
+  }
+
+  protected synchronized InodeLockList getLockList() {
+    return mLockList;
   }
 }

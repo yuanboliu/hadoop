@@ -33,6 +33,7 @@ import com.google.common.base.Preconditions;
 @InterfaceAudience.Private
 public abstract class INodeWithAdditionalFields extends INode
     implements LinkedElement {
+
   // Note: this format is used both in-memory and on-disk.  Changes will be
   // incompatible.
   enum PermissionStatusFormat implements LongBitFormat.Enum {
@@ -163,7 +164,7 @@ public abstract class INodeWithAdditionalFields extends INode
   }
 
   @Override
-  public final byte[] getLocalNameBytes() {
+  public byte[] getLocalNameBytes() {
     return name;
   }
   

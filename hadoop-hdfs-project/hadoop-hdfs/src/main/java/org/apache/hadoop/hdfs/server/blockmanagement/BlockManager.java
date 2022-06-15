@@ -1643,7 +1643,7 @@ public class BlockManager implements BlockStatsMXBean {
 
   /** Remove the blocks associated to the given DatanodeStorageInfo. */
   void removeBlocksAssociatedTo(final DatanodeStorageInfo storageInfo) {
-    assert namesystem.hasWriteLock();
+    assert namesystem.hasReadLock();
     final Iterator<BlockInfo> it = storageInfo.getBlockIterator();
     DatanodeDescriptor node = storageInfo.getDatanodeDescriptor();
     while(it.hasNext()) {
@@ -1714,7 +1714,7 @@ public class BlockManager implements BlockStatsMXBean {
    */
   public void findAndMarkBlockAsCorrupt(final ExtendedBlock blk,
       final DatanodeInfo dn, String storageID, String reason) throws IOException {
-    assert namesystem.hasWriteLock();
+    assert namesystem.hasReadLock();
     final Block reportedBlock = blk.getLocalBlock();
     final BlockInfo storedBlock = getStoredBlock(reportedBlock);
     if (storedBlock == null) {
@@ -2549,7 +2549,7 @@ public class BlockManager implements BlockStatsMXBean {
    *               list of blocks that need to be removed from blocksMap
    */
   public void removeBlocksAndUpdateSafemodeTotal(BlocksMapUpdateInfo blocks) {
-    assert namesystem.hasWriteLock();
+    assert namesystem.hasReadLock();
     // In the case that we are a Standby tailing edits from the
     // active while in safe-mode, we need to track the total number
     // of blocks and safe blocks in the system.
@@ -2765,7 +2765,7 @@ public class BlockManager implements BlockStatsMXBean {
     if (getPostponedMisreplicatedBlocksCount() == 0) {
       return;
     }
-    namesystem.writeLock();
+    namesystem.readLock();
     long startTime = Time.monotonicNow();
     long startSize = postponedMisreplicatedBlocks.size();
     try {
@@ -2792,7 +2792,7 @@ public class BlockManager implements BlockStatsMXBean {
       postponedMisreplicatedBlocks.addAll(rescannedMisreplicatedBlocks);
       rescannedMisreplicatedBlocks.clear();
       long endSize = postponedMisreplicatedBlocks.size();
-      namesystem.writeUnlock();
+      namesystem.readUnlock();
       LOG.info("Rescan of postponedMisreplicatedBlocks completed in {}" +
           " msecs. {} blocks are left. {} blocks were removed.",
           (Time.monotonicNow() - startTime), endSize, (startSize - endSize));
@@ -2850,7 +2850,7 @@ public class BlockManager implements BlockStatsMXBean {
       BlockInfo block,
       long oldGenerationStamp, long oldNumBytes, 
       DatanodeStorageInfo[] newStorages) throws IOException {
-    assert namesystem.hasWriteLock();
+    assert namesystem.hasReadLock();
     BlockToMarkCorrupt b = null;
     if (block.getGenerationStamp() != oldGenerationStamp) {
       b = new BlockToMarkCorrupt(oldBlock, block, oldGenerationStamp,
@@ -2898,7 +2898,7 @@ public class BlockManager implements BlockStatsMXBean {
       final DatanodeStorageInfo storageInfo,
       final BlockListAsLongs report) throws IOException {
     if (report == null) return;
-    assert (namesystem.hasWriteLock());
+    assert (namesystem.hasReadLock());
     assert (storageInfo.getBlockReportCount() == 0);
 
     for (BlockReportReplica iblk : report) {
@@ -3348,7 +3348,7 @@ public class BlockManager implements BlockStatsMXBean {
   private void addStoredBlockImmediate(BlockInfo storedBlock, Block reported,
       DatanodeStorageInfo storageInfo)
   throws IOException {
-    assert (storedBlock != null && namesystem.hasWriteLock());
+    assert (storedBlock != null && namesystem.hasReadLock());
     if (!namesystem.isInStartupSafeMode()
         || isPopulatingReplQueues()) {
       addStoredBlock(storedBlock, reported, storageInfo, null, false);
@@ -3543,7 +3543,7 @@ public class BlockManager implements BlockStatsMXBean {
    * extra or low redundancy. Place it into the respective queue.
    */
   public void processMisReplicatedBlocks() {
-    assert namesystem.hasWriteLock();
+    assert namesystem.hasReadLock();
     stopReconstructionInitializer();
     neededReconstruction.clear();
     reconstructionQueuesInitializer = new Daemon() {
@@ -3950,7 +3950,7 @@ public class BlockManager implements BlockStatsMXBean {
    */
   public void removeStoredBlock(BlockInfo storedBlock, DatanodeDescriptor node) {
     blockLog.debug("BLOCK* removeStoredBlock: {} from {}", storedBlock, node);
-    assert (namesystem.hasWriteLock());
+    assert (namesystem.hasReadLock());
     {
       if (storedBlock == null || !blocksMap.removeNode(storedBlock, node)) {
         blockLog.debug("BLOCK* removeStoredBlock: {} has already been" +
@@ -4460,7 +4460,7 @@ public class BlockManager implements BlockStatsMXBean {
   }
 
   public void removeBlock(BlockInfo block) {
-    assert namesystem.hasWriteLock();
+    assert namesystem.hasReadLock();
     // No need to ACK blocks that are being removed entirely
     // from the namespace, since the removal of the associated
     // file already removes them from the block map below.
@@ -4503,7 +4503,7 @@ public class BlockManager implements BlockStatsMXBean {
   /** updates a block in needed reconstruction queue. */
   private void updateNeededReconstructions(final BlockInfo block,
       final int curReplicasDelta, int expectedReplicasDelta) {
-    namesystem.writeLock();
+    namesystem.readLock();
     try {
       if (!isPopulatingReplQueues() || !block.isComplete()) {
         return;
@@ -4522,7 +4522,7 @@ public class BlockManager implements BlockStatsMXBean {
             repl.outOfServiceReplicas(), oldExpectedReplicas);
       }
     } finally {
-      namesystem.writeUnlock();
+      namesystem.readUnlock();
     }
   }
 

@@ -706,7 +706,7 @@ public class DatanodeManager {
    */
   private void removeDatanode(DatanodeDescriptor nodeInfo,
       boolean removeBlocksFromBlocksMap) {
-    assert namesystem.hasWriteLock();
+    assert namesystem.hasReadLock();
     heartbeatManager.removeDatanode(nodeInfo);
     if (removeBlocksFromBlocksMap) {
       blockManager.removeBlocksAssociatedTo(nodeInfo);

@@ -52,7 +52,7 @@ public class TestFSDirAttrOp {
     when(ssMgr.getSkipCaptureAccessTimeOnlyChange()).thenReturn(false);
     when(fsd.getAccessTimePrecision()).thenReturn(precision);
     when(fsd.hasWriteLock()).thenReturn(Boolean.TRUE);
-    when(iip.getLastINode()).thenReturn(inode);
+    when(iip.getLastExistingInode()).thenReturn(inode);
     when(iip.getLatestSnapshotId()).thenReturn(Mockito.anyInt());
     when(inode.getAccessTime()).thenReturn(atime0);
 

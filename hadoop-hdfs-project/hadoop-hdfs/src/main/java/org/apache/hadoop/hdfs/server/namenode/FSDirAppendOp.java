@@ -81,14 +81,12 @@ final class FSDirAppendOp {
       final String srcArg, final FSPermissionChecker pc, final String holder,
       final String clientMachine, final boolean newBlock,
       final boolean logRetryCache) throws IOException {
-    assert fsn.hasWriteLock();
+    assert fsn.hasReadLock();
 
     final LocatedBlock lb;
     final FSDirectory fsd = fsn.getFSDirectory();
-    final INodesInPath iip;
-    fsd.writeLock();
-    try {
-      iip = fsd.resolvePath(pc, srcArg, DirOp.WRITE);
+    try (INodesInPath iip = fsd.lockInodePath(pc, srcArg, DirOp.WRITE,
+        FSDirectory.LockMode.WRITE.WRITE)){
       // Verify that the destination does not exist as a directory already
       final INode inode = iip.getLastINode();
       final String path = iip.getPath();
@@ -140,23 +138,21 @@ final class FSDirAppendOp {
       }
       lb = prepareFileForAppend(fsn, iip, holder, clientMachine, newBlock,
           true, logRetryCache);
+      HdfsFileStatus stat =
+          FSDirStatAndListingOp.getFileInfo(fsd, iip, false, false);
+
+      if (lb != null) {
+        NameNode.stateChangeLog.debug(
+            "DIR* NameSystem.appendFile: file {} for {} at {} block {} block"
+                + " size {}", srcArg, holder, clientMachine, lb.getBlock(), lb
+                .getBlock().getNumBytes());
+      }
+      return new LastBlockWithStatus(lb, stat);
     } catch (IOException ie) {
       NameNode.stateChangeLog
           .warn("DIR* NameSystem.append: " + ie.getMessage());
       throw ie;
-    } finally {
-      fsd.writeUnlock();
     }
-
-    HdfsFileStatus stat =
-        FSDirStatAndListingOp.getFileInfo(fsd, iip, false, false);
-    if (lb != null) {
-      NameNode.stateChangeLog.debug(
-          "DIR* NameSystem.appendFile: file {} for {} at {} block {} block"
-              + " size {}", srcArg, holder, clientMachine, lb.getBlock(), lb
-              .getBlock().getNumBytes());
-    }
-    return new LastBlockWithStatus(lb, stat);
   }
 
   /**
@@ -179,7 +175,7 @@ final class FSDirAppendOp {
       final String clientMachine, final boolean newBlock,
       final boolean writeToEditLog, final boolean logRetryCache)
       throws IOException {
-    assert fsn.hasWriteLock();
+    assert fsn.hasReadLock();
 
     final INodeFile file = iip.getLastINode().asFile();
     final QuotaCounts delta = verifyQuotaForUCBlock(fsn, file, iip);

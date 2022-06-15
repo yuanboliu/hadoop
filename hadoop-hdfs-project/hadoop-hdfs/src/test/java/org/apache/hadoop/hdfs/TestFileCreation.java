@@ -100,9 +100,9 @@ public class TestFileCreation {
   static final String DIR = "/" + TestFileCreation.class.getSimpleName() + "/";
 
   {
-    GenericTestUtils.setLogLevel(LeaseManager.LOG, Level.TRACE);
-    GenericTestUtils.setLogLevel(FSNamesystem.LOG, Level.TRACE);
-    GenericTestUtils.setLogLevel(DFSClient.LOG, Level.TRACE);
+    GenericTestUtils.setLogLevel(LeaseManager.LOG, Level.INFO);
+    GenericTestUtils.setLogLevel(FSNamesystem.LOG, Level.INFO);
+    GenericTestUtils.setLogLevel(DFSClient.LOG, Level.INFO);
   }
   private static final String RPC_DETAILED_METRICS =
       "RpcDetailedActivityForPort";
@@ -401,6 +401,73 @@ public class TestFileCreation {
         assertEquals(fileSize, dataset.getDfsUsed());
         assertEquals(SimulatedFSDataset.DEFAULT_CAPACITY-fileSize,
             dataset.getRemaining());
+      }
+    } finally {
+      cluster.shutdown();
+    }
+  }
+
+  public static class CreateFileTask implements Runnable {
+    private String filePath;
+    private NamenodeProtocols nn;
+    private int index;
+
+    public CreateFileTask(NamenodeProtocols fs, int index, String path) {
+      this.nn = fs;
+      this.filePath = path;
+      this.index = index;
+    }
+
+    @Override
+    public void run() {
+      try {
+        for (int i = 0; i < 75; i++) {
+          filePath += index;
+          nn.create(filePath,
+              FsPermission.getDefault(), "clientName",
+              new EnumSetWritable<CreateFlag>(
+                  EnumSet.of(CreateFlag.CREATE, CreateFlag.OVERWRITE)), true,
+              (short)1, 4096, null, null);
+          nn.complete(filePath, "clientName", null,
+              HdfsConstants.GRANDFATHER_INODE_ID);
+        }
+      } catch (IOException e) {
+        e.printStackTrace();
+      }
+    }
+  }
+
+  @Test
+  public void testCreateFileConcurrently()
+      throws IOException {
+    Configuration conf = new HdfsConfiguration();
+    conf.setInt("dfs.namenode.handler.count", 100);
+    if (simulatedStorage) {
+      SimulatedFSDataset.setFactory(conf);
+    }
+    MiniDFSCluster cluster = new MiniDFSCluster.Builder(conf)
+        .checkDataNodeHostConfig(true)
+        .build();
+    DistributedFileSystem fs = cluster.getFileSystem();
+    NamenodeProtocols nn = cluster.getNameNode().getRpcServer();
+    try {
+      String dirPath = "/grand-father/father/child";
+      int count = 200;
+      Thread[] threads = new Thread[count];
+      for (int i = 0; i < count; i++) {
+        threads[i] = new Thread(new CreateFileTask(nn, i, dirPath + "/" + i));
+      }
+
+      for (int i = 0; i < count; i++) {
+        threads[i].start();
+      }
+
+      for (int i = 0; i < count; i++) {
+        try {
+          threads[i].join();
+        } catch (InterruptedException e) {
+          e.printStackTrace();
+        }
       }
     } finally {
       cluster.shutdown();

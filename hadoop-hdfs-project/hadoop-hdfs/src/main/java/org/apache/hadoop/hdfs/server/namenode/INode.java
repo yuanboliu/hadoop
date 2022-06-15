@@ -61,8 +61,11 @@ public abstract class INode implements INodeAttributes, Diff.Element<byte[]> {
   /** parent is either an {@link INodeDirectory} or an {@link INodeReference}.*/
   private INode parent = null;
 
+  private boolean mDeleted;
+
   INode(INode parent) {
     this.parent = parent;
+    mDeleted = false;
   }
 
   /** Get inode id */
@@ -573,7 +576,7 @@ public abstract class INode implements INodeAttributes, Diff.Element<byte[]> {
   /**
    * @return null if the local name is null; otherwise, return the local name.
    */
-  public final String getLocalName() {
+  public String getLocalName() {
     final byte[] name = getLocalNameBytes();
     return name == null? null: DFSUtil.bytes2String(name);
   }
@@ -611,7 +614,7 @@ public abstract class INode implements INodeAttributes, Diff.Element<byte[]> {
     return DFSUtil.bytes2String(path);
   }
 
-  public boolean isDeleted() {
+  public boolean isINodeDeleted() {
     INode pInode = this;
     while (pInode != null && !pInode.isRoot()) {
       pInode = pInode.getParent();
@@ -893,6 +896,22 @@ public abstract class INode implements INodeAttributes, Diff.Element<byte[]> {
   }
 
   /**
+   * @param deleted the deleted flag to use
+   * @return the updated object
+   */
+  public INode setDeleted(boolean deleted) {
+    mDeleted = deleted;
+    return this;
+  }
+
+  /**
+   * @return true if the inode is deleted, false otherwise
+   */
+  public boolean isDeleted() {
+    return mDeleted;
+  }
+
+  /**
    * Information used to record quota usage delta. This data structure is
    * usually passed along with an operation like {@link #cleanSubtree}. Note
    * that after the operation the delta counts should be decremented from the
@@ -1064,6 +1083,7 @@ public abstract class INode implements INodeAttributes, Diff.Element<byte[]> {
      * The list of blocks that need to be removed from blocksMap
      */
     private final List<BlockInfo> toDeleteList;
+
     /**
      * The list of blocks whose replication factor needs to be adjusted
      */

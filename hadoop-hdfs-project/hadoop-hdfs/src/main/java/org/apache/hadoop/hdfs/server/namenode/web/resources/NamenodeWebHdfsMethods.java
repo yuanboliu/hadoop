@@ -321,7 +321,8 @@ public class NamenodeWebHdfsMethods {
 
       if (len > 0) {
         final long offset = op == GetOpParam.Op.OPEN? openOffset: len - 1;
-        final LocatedBlocks locations = np.getBlockLocations(path, offset, 1);
+        final LocatedBlocks
+            locations = np.getBlockLocations(path, offset, 1);
         final int count = locations.locatedBlockCount();
         if (count > 0) {
           return bestNode(locations.get(0).getLocations(), excludes);

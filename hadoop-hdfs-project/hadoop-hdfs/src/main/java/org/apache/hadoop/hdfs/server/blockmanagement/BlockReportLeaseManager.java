@@ -51,7 +51,7 @@ import java.util.concurrent.ThreadLocalRandom;
  * to the DNs which have gone the longest without sending a full block
  * report.<p/>
  */
-class BlockReportLeaseManager {
+public class BlockReportLeaseManager {
   static final Logger LOG =
       LoggerFactory.getLogger(BlockReportLeaseManager.class);
 

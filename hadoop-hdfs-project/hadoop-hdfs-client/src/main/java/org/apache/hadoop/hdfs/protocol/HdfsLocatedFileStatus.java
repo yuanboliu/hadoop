@@ -74,14 +74,14 @@ public class HdfsLocatedFileStatus
    * @param ecPolicy the erasure coding policy
    * @param hdfsloc block locations
    */
-  HdfsLocatedFileStatus(long length, boolean isdir, int replication,
-                        long blocksize, long mtime, long atime,
-                        FsPermission permission, EnumSet<Flags> flags,
-                        String owner, String group,
-                        byte[] symlink, byte[] path, long fileId,
-                        int childrenNum, FileEncryptionInfo feInfo,
-                        byte storagePolicy, ErasureCodingPolicy ecPolicy,
-                        LocatedBlocks hdfsloc) {
+  protected HdfsLocatedFileStatus(long length, boolean isdir, int replication,
+      long blocksize, long mtime, long atime,
+      FsPermission permission, EnumSet<Flags> flags,
+      String owner, String group,
+      byte[] symlink, byte[] path, long fileId,
+      int childrenNum, FileEncryptionInfo feInfo,
+      byte storagePolicy, ErasureCodingPolicy ecPolicy,
+      LocatedBlocks hdfsloc) {
     super(length, isdir, replication, blocksize, mtime, atime,
         HdfsFileStatus.convert(isdir, symlink != null, permission, flags),
         owner, group, null, null, HdfsFileStatus.convert(flags),

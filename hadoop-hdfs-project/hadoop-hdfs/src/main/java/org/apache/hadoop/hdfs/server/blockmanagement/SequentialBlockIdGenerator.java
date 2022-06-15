@@ -21,6 +21,8 @@ import org.apache.hadoop.classification.InterfaceAudience;
 import org.apache.hadoop.hdfs.protocol.Block;
 import org.apache.hadoop.hdfs.server.namenode.INodeId;
 import org.apache.hadoop.util.SequentialNumber;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Generate the next valid block ID by incrementing the maximum block
@@ -39,6 +41,8 @@ public class SequentialBlockIdGenerator extends SequentialNumber {
   public static final long LAST_RESERVED_BLOCK_ID = 1024L * 1024 * 1024;
 
   private final BlockManager blockManager;
+  private static final Logger LOG = LoggerFactory
+      .getLogger(SequentialBlockIdGenerator.class);
 
   SequentialBlockIdGenerator(BlockManager blockManagerRef) {
     super(LAST_RESERVED_BLOCK_ID);
@@ -69,5 +73,16 @@ public class SequentialBlockIdGenerator extends SequentialNumber {
     BlockInfo bi = blockManager.getStoredBlock(b);
     return bi != null && bi.getBlockCollectionId() !=
         INodeId.INVALID_INODE_ID;
+  }
+
+  /** Skip to the new value. */
+  @Override
+  public void skipTo(long newValue) throws IllegalStateException {
+    try {
+      super.skipTo(newValue);
+    } catch (IllegalStateException e) {
+      LOG.debug(e.getMessage());
+      return;
+    }
   }
 }

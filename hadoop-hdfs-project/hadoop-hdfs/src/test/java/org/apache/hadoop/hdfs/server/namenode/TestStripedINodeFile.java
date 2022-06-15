@@ -82,7 +82,7 @@ public class TestStripedINodeFile {
 
   private static INodeFile createStripedINodeFile() {
     return new INodeFile(HdfsConstants.GRANDFATHER_INODE_ID, null, perm, 0L, 0L,
-        null, null, StripedFileTestUtil.getDefaultECPolicy().getId(), 1024L,
+        BlockInfo.EMPTY_ARRAY, null, StripedFileTestUtil.getDefaultECPolicy().getId(), 1024L,
         HdfsConstants.COLD_STORAGE_POLICY_ID, BlockType.STRIPED);
   }
 
@@ -100,7 +100,7 @@ public class TestStripedINodeFile {
     thrown.expect(IllegalArgumentException.class);
     thrown.expectMessage("Could not find EC policy with ID 0xbb");
     new INodeFile(HdfsConstants.GRANDFATHER_INODE_ID, null, perm, 0L, 0L,
-        null, null, (byte) 0xBB, 1024L,
+        BlockInfo.EMPTY_ARRAY, null, (byte) 0xBB, 1024L,
         HdfsConstants.COLD_STORAGE_POLICY_ID, BlockType.STRIPED);
   }
 
@@ -124,7 +124,7 @@ public class TestStripedINodeFile {
     INodeFile inodeFile;
     try {
       new INodeFile(HdfsConstants.GRANDFATHER_INODE_ID,
-          null, perm, 0L, 0L, null, new Short((short) 3) /*replication*/,
+          null, perm, 0L, 0L, BlockInfo.EMPTY_ARRAY, new Short((short) 3) /*replication*/,
           StripedFileTestUtil.getDefaultECPolicy().getId() /*ec policy*/,
           1024L, HdfsConstants.WARM_STORAGE_POLICY_ID, STRIPED);
       fail("INodeFile construction should fail when both replication and " +
@@ -135,7 +135,7 @@ public class TestStripedINodeFile {
 
     try {
       new INodeFile(HdfsConstants.GRANDFATHER_INODE_ID,
-          null, perm, 0L, 0L, null, null /*replication*/, null /*ec policy*/,
+          null, perm, 0L, 0L, BlockInfo.EMPTY_ARRAY, null /*replication*/, null /*ec policy*/,
           1024L, HdfsConstants.WARM_STORAGE_POLICY_ID, STRIPED);
       fail("INodeFile construction should fail when EC Policy param not " +
           "provided for striped layout!");
@@ -145,7 +145,7 @@ public class TestStripedINodeFile {
 
     try {
       new INodeFile(HdfsConstants.GRANDFATHER_INODE_ID,
-          null, perm, 0L, 0L, null, null /*replication*/,
+          null, perm, 0L, 0L, BlockInfo.EMPTY_ARRAY, null /*replication*/,
           Byte.MAX_VALUE /*ec policy*/, 1024L,
           HdfsConstants.WARM_STORAGE_POLICY_ID, STRIPED);
       fail("INodeFile construction should fail when EC Policy is " +
@@ -157,7 +157,7 @@ public class TestStripedINodeFile {
     final Byte ecPolicyID = StripedFileTestUtil.getDefaultECPolicy().getId();
     try {
       new INodeFile(HdfsConstants.GRANDFATHER_INODE_ID,
-          null, perm, 0L, 0L, null, null /*replication*/, ecPolicyID,
+          null, perm, 0L, 0L, BlockInfo.EMPTY_ARRAY, null /*replication*/, ecPolicyID,
           1024L, HdfsConstants.WARM_STORAGE_POLICY_ID, CONTIGUOUS);
       fail("INodeFile construction should fail when replication param is " +
           "provided for striped layout!");
@@ -166,7 +166,7 @@ public class TestStripedINodeFile {
     }
 
     inodeFile = new INodeFile(HdfsConstants.GRANDFATHER_INODE_ID,
-        null, perm, 0L, 0L, null, null /*replication*/, ecPolicyID,
+        null, perm, 0L, 0L, BlockInfo.EMPTY_ARRAY, null /*replication*/, ecPolicyID,
         1024L, HdfsConstants.WARM_STORAGE_POLICY_ID, STRIPED);
 
     Assert.assertTrue(inodeFile.isStriped());

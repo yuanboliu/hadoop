@@ -79,18 +79,13 @@ class FSDirXAttrOp {
         pc, xAttr, FSDirectory.isReservedRawName(src));
     List<XAttr> xAttrs = Lists.newArrayListWithCapacity(1);
     xAttrs.add(xAttr);
-    INodesInPath iip;
-    fsd.writeLock();
-    try {
-      iip = fsd.resolvePath(pc, src, DirOp.WRITE);
+    try (INodesInPath iip = fsd.lockInodePath(pc, src, DirOp.WRITE, FSDirectory.LockMode.WRITE)) {
       src = iip.getPath();
       checkXAttrChangeAccess(fsd, iip, xAttr, pc);
       unprotectedSetXAttrs(fsd, iip, xAttrs, flag);
-    } finally {
-      fsd.writeUnlock();
+      fsd.getEditLog().logSetXAttrs(src, xAttrs, logRetryCache);
+      return fsd.getAuditFileInfo(iip);
     }
-    fsd.getEditLog().logSetXAttrs(src, xAttrs, logRetryCache);
-    return fsd.getAuditFileInfo(iip);
   }
 
   static List<XAttr> getXAttrs(FSDirectory fsd, FSPermissionChecker pc,
@@ -102,11 +97,7 @@ class FSDirXAttrOp {
     if (!getAll) {
       XAttrPermissionFilter.checkPermissionForApi(pc, xAttrs, isRawPath);
     }
-    final INodesInPath iip = fsd.resolvePath(pc, src, DirOp.READ);
-    if (fsd.isPermissionEnabled()) {
-      fsd.checkPathAccess(pc, iip, FsAction.READ);
-    }
-    List<XAttr> all = FSDirXAttrOp.getXAttrs(fsd, iip);
+    List<XAttr> all = FSDirXAttrOp.getXAttrs(pc, fsd, src);
     List<XAttr> filteredAll = XAttrPermissionFilter.
         filterXAttrsForApi(pc, all, isRawPath);
 
@@ -140,11 +131,7 @@ class FSDirXAttrOp {
       FSDirectory fsd, FSPermissionChecker pc, String src) throws IOException {
     FSDirXAttrOp.checkXAttrsConfigFlag(fsd);
     final boolean isRawPath = FSDirectory.isReservedRawName(src);
-    final INodesInPath iip = fsd.resolvePath(pc, src, DirOp.READ);
-    if (fsd.isPermissionEnabled()) {
-      fsd.checkPathAccess(pc, iip, FsAction.READ);
-    }
-    final List<XAttr> all = FSDirXAttrOp.getXAttrs(fsd, iip);
+    final List<XAttr> all = FSDirXAttrOp.getXAttrs(pc, fsd, src);
     return XAttrPermissionFilter.
         filterXAttrsForApi(pc, all, isRawPath);
   }
@@ -173,10 +160,7 @@ class FSDirXAttrOp {
 
     List<XAttr> xAttrs = Lists.newArrayListWithCapacity(1);
     xAttrs.add(xAttr);
-    INodesInPath iip;
-    fsd.writeLock();
-    try {
-      iip = fsd.resolvePath(pc, src, DirOp.WRITE);
+    try (INodesInPath iip = fsd.lockInodePath(pc, src, DirOp.WRITE, FSDirectory.LockMode.WRITE)) {
       src = iip.getPath();
       checkXAttrChangeAccess(fsd, iip, xAttr, pc);
 
@@ -187,10 +171,8 @@ class FSDirXAttrOp {
         throw new IOException(
             "No matching attributes found for remove operation");
       }
-    } finally {
-      fsd.writeUnlock();
+      return fsd.getAuditFileInfo(iip);
     }
-    return fsd.getAuditFileInfo(iip);
   }
 
   /**
@@ -200,7 +182,6 @@ class FSDirXAttrOp {
   static List<XAttr> unprotectedRemoveXAttrs(
       FSDirectory fsd, final INodesInPath iip, final List<XAttr> toRemove)
       throws IOException {
-    assert fsd.hasWriteLock();
     INode inode = FSDirectory.resolveLastINode(iip);
     int snapshotId = iip.getLatestSnapshotId();
     List<XAttr> existingXAttrs = XAttrStorage.readINodeXAttrs(inode);
@@ -269,7 +250,6 @@ class FSDirXAttrOp {
       FSDirectory fsd, final INodesInPath iip, final List<XAttr> xAttrs,
       final EnumSet<XAttrSetFlag> flag)
       throws IOException {
-    assert fsd.hasWriteLock();
     INode inode = FSDirectory.resolveLastINode(iip);
     List<XAttr> existingXAttrs = XAttrStorage.readINodeXAttrs(inode);
     List<XAttr> newXAttrs = setINodeXAttrs(fsd, existingXAttrs, xAttrs, flag);
@@ -466,13 +446,13 @@ class FSDirXAttrOp {
     }
   }
 
-  private static List<XAttr> getXAttrs(FSDirectory fsd, INodesInPath iip)
+  private static List<XAttr> getXAttrs(FSPermissionChecker pc, FSDirectory fsd, String src)
       throws IOException {
-    fsd.readLock();
-    try {
+    try (INodesInPath iip = fsd.lockInodePath(pc, src, DirOp.READ, FSDirectory.LockMode.READ)) {
+      if (fsd.isPermissionEnabled()) {
+        fsd.checkPathAccess(pc, iip, FsAction.READ);
+      }
       return XAttrStorage.readINodeXAttrs(fsd.getAttributes(iip));
-    } finally {
-      fsd.readUnlock();
     }
   }
 

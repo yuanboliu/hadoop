@@ -44,6 +44,7 @@ import java.util.Properties;
 import java.util.Set;
 
 import org.apache.commons.lang3.StringUtils;
+import org.apache.hadoop.hdfs.server.blockmanagement.BlockInfo;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.apache.hadoop.conf.Configuration;
@@ -214,7 +215,7 @@ public abstract class FSImageTestUtil {
       PermissionStatus permissions, long mtime, long atime, short replication,
       long preferredBlockSize) {
     return new INodeFile(id, name.getBytes(StandardCharsets.UTF_8),
-        permissions, mtime, atime, null, replication, preferredBlockSize);
+        permissions, mtime, atime, (BlockInfo[]) null, replication, preferredBlockSize);
   }
 
   public static FSEditLog createEditLogWithJournalManager(Configuration conf,

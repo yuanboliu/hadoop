@@ -20,6 +20,8 @@ package org.apache.hadoop.hdfs.server.blockmanagement;
 import org.apache.hadoop.classification.InterfaceAudience;
 import org.apache.hadoop.hdfs.protocol.Block;
 import org.apache.hadoop.util.SequentialNumber;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import static org.apache.hadoop.hdfs.server.common.HdfsServerConstants.BLOCK_GROUP_INDEX_MASK;
 import static org.apache.hadoop.hdfs.server.common.HdfsServerConstants.MAX_BLOCKS_IN_GROUP;
@@ -44,6 +46,8 @@ import static org.apache.hadoop.hdfs.server.common.HdfsServerConstants.MAX_BLOCK
 public class SequentialBlockGroupIdGenerator extends SequentialNumber {
 
   private final BlockManager blockManager;
+  private static final Logger LOG = LoggerFactory
+      .getLogger(SequentialBlockGroupIdGenerator.class);
 
   SequentialBlockGroupIdGenerator(BlockManager blockManagerRef) {
     super(Long.MIN_VALUE);
@@ -82,5 +86,16 @@ public class SequentialBlockGroupIdGenerator extends SequentialNumber {
       }
     }
     return false;
+  }
+
+  /** Skip to the new value. */
+  @Override
+  public void skipTo(long newValue) throws IllegalStateException {
+    try {
+      super.skipTo(newValue);
+    } catch (IllegalStateException e) {
+      LOG.debug(e.getMessage());
+      return;
+    }
   }
 }

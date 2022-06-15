@@ -19,6 +19,8 @@ package org.apache.hadoop.hdfs.server.namenode;
 
 import org.apache.hadoop.classification.InterfaceAudience;
 import org.apache.hadoop.util.SequentialNumber;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * An id which uniquely identifies an inode. Id 1 to 1000 are reserved for
@@ -36,7 +38,20 @@ public class INodeId extends SequentialNumber {
   public static final long ROOT_INODE_ID = LAST_RESERVED_ID + 1;
   public static final long INVALID_INODE_ID = -1;
 
+  private static final Logger LOG = LoggerFactory.getLogger(INodeId.class);
+
   INodeId() {
     super(ROOT_INODE_ID);
+  }
+
+  /** Skip to the new value. */
+  @Override
+  public void skipTo(long newValue) throws IllegalStateException {
+    try {
+      super.skipTo(newValue);
+    } catch (IllegalStateException e) {
+      LOG.debug(e.getMessage());
+      return;
+    }
   }
 }

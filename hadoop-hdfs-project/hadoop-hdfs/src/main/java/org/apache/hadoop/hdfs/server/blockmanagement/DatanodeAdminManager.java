@@ -701,7 +701,7 @@ public class DatanodeAdminManager {
           // lock.
           // Yielding is required in case of block number is greater than the
           // configured per-iteration-limit.
-          namesystem.writeUnlock();
+          namesystem.readUnlock();
           try {
             LOG.debug("Yielded lock during decommission/maintenance check");
             Thread.sleep(0, 500);
@@ -710,7 +710,7 @@ public class DatanodeAdminManager {
           }
           // reset
           numBlocksCheckedPerLock = 0;
-          namesystem.writeLock();
+          namesystem.readLock();
         }
         numBlocksChecked++;
         numBlocksCheckedPerLock++;

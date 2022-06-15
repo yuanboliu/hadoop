@@ -530,6 +530,7 @@ public class FileStatus implements Writable, Comparable<Object>,
     }
   }
 
-
-
+  public Set<AttrFlags> getAttr() {
+    return attr;
+  }
 }

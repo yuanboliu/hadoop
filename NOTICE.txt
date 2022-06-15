@@ -262,6 +262,43 @@ This product contains a modified portion of 'JDOM 1.1', which can be obtained at
   * HOMEPAGE:
     * http://www.jdom.org/
 
+This product contains a modified version of 'Alluxio 1.8', It can be obtained at:
+
+  * LICENSE:
+    * https://github.com/Alluxio/alluxio/blob/branch-1.8/LICENSE (Apache License 2.0)
+  * HOMEPAGE:
+    * https://github.com/Alluxio/alluxio/blob/branch-1.8/core/server/master/src/main/java/alluxio/master/file/meta/InodeLockList.java
+    * https://github.com/Alluxio/alluxio/blob/branch-1.8/core/server/master/src/main/java/alluxio/master/file/meta/CompositeInodeLockList.java
+    * https://github.com/Alluxio/alluxio/blob/branch-1.8/core/server/master/src/main/java/alluxio/master/file/meta/LockedInodePath.java
+    * https://github.com/Alluxio/alluxio/blob/branch-1.8/core/server/master/src/main/java/alluxio/master/file/meta/LockedInodePathList.java
+    * https://github.com/Alluxio/alluxio/blob/branch-1.8/core/server/master/src/main/java/alluxio/master/file/meta/LockingScheme.java
+    * https://github.com/Alluxio/alluxio/blob/branch-1.8/core/server/master/src/main/java/alluxio/master/file/meta/MutableLockedInodePath.java
+    * https://github.com/Alluxio/alluxio/blob/branch-1.8/core/common/src/main/java/alluxio/util/io/PathUtils.java
+    * https://github.com/Alluxio/alluxio/blob/branch-1.8/core/common/src/main/java/alluxio/util/OSUtils.java
+    * https://github.com/Alluxio/alluxio/blob/branch-1.8/core/common/src/main/java/alluxio/exception/ExceptionMessage.java
+    * https://github.com/Alluxio/alluxio/blob/branch-1.8/core/common/src/main/java/alluxio/collections/FieldIndex.java
+    * https://github.com/Alluxio/alluxio/blob/branch-1.8/core/common/src/main/java/alluxio/collections/IndexDefinition.java
+    * https://github.com/Alluxio/alluxio/blob/branch-1.8/core/common/src/main/java/alluxio/collections/UniqueFieldIndex.java
+
+This product contains a modified version of 'Alluxio 2.4', It can be obtained at:
+
+  * LICENSE:
+    * https://github.com/Alluxio/alluxio/blob/branch-2.4/LICENSE (Apache License 2.0)
+  * HOMEPAGE:
+    * https://github.com/Alluxio/alluxio/blob/branch-2.4/core/common/src/main/java/alluxio/util/ThreadFactoryUtils.java
+    * https://github.com/Alluxio/alluxio/blob/branch-2.4/core/common/src/main/java/alluxio/resource/ResourcePool.java
+    * https://github.com/Alluxio/alluxio/blob/branch-2.4/core/common/src/main/java/alluxio/resource/RefCountLockResource.java
+    * https://github.com/Alluxio/alluxio/blob/branch-2.4/core/common/src/main/java/alluxio/resource/RWLockResource.java
+    * https://github.com/Alluxio/alluxio/blob/branch-2.4/core/common/src/main/java/alluxio/resource/Pool.java
+    * https://github.com/Alluxio/alluxio/blob/branch-2.4/core/common/src/main/java/alluxio/resource/LockResource.java
+    * https://github.com/Alluxio/alluxio/blob/branch-2.4/core/common/src/main/java/alluxio/resource/DynamicResourcePool.java
+    * https://github.com/Alluxio/alluxio/blob/branch-2.4/core/common/src/main/java/alluxio/resource/CloseableResource.java
+    * https://github.com/Alluxio/alluxio/blob/branch-2.4/core/common/src/main/java/alluxio/concurrent/LockMode.java
+    * https://github.com/Alluxio/alluxio/blob/branch-2.4/core/common/src/main/java/alluxio/collections/TwoKeyConcurrentMap.java
+    * https://github.com/Alluxio/alluxio/blob/branch-2.4/core/common/src/main/java/alluxio/collections/LockPool.java
+    * https://github.com/Alluxio/alluxio/blob/branch-2.4/core/common/src/main/java/alluxio/clock/SystemClock.java
+    * https://github.com/Alluxio/alluxio/blob/branch-2.4/core/common/src/main/java/alluxio/clock/ElapsedTimeClock.java
+
 The binary distribution of this product bundles binaries of
 Commons Codec 1.4,
 which has the following notices:

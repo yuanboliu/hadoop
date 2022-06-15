@@ -405,7 +405,7 @@ public abstract class BlockInfo extends Block
   /**
    * Convert an under construction block to complete.
    */
-  void convertToCompleteBlock() {
+  public void convertToCompleteBlock() {
     assert getBlockUCState() != BlockUCState.COMPLETE :
         "Trying to convert a COMPLETE block";
     uc = null;
@@ -433,7 +433,7 @@ public abstract class BlockInfo extends Block
    * @return staleReplica's List.
    * @throws IOException if block ids are inconsistent.
    */
-  List<ReplicaUnderConstruction> commitBlock(Block block) throws IOException {
+  public List<ReplicaUnderConstruction> commitBlock(Block block) throws IOException {
     if (getBlockId() != block.getBlockId()) {
       throw new IOException("Trying to commit inconsistent block: id = "
           + block.getBlockId() + ", expected id = " + getBlockId());

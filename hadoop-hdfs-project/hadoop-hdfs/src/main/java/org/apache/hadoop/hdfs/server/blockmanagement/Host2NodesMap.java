@@ -30,7 +30,7 @@ import org.apache.hadoop.classification.InterfaceStability;
 /** A map from host names to datanode descriptors. */
 @InterfaceAudience.Private
 @InterfaceStability.Evolving
-class Host2NodesMap {
+public class Host2NodesMap {
   private HashMap<String, String> mapHost = new HashMap<String, String>();
   private final HashMap<String, DatanodeDescriptor[]> map
     = new HashMap<String, DatanodeDescriptor[]>();

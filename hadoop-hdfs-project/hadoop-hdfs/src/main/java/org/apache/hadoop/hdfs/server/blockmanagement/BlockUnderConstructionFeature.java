@@ -156,7 +156,7 @@ public class BlockUnderConstructionFeature {
    * to decrease the scheduled block size of the DataNodes that do not store
    * any internal block.
    */
-  void updateStorageScheduledSize(BlockInfoStriped storedBlock) {
+  public void updateStorageScheduledSize(BlockInfoStriped storedBlock) {
     assert storedBlock.getUnderConstructionFeature() == this;
     if (replicas.length == 0) {
       return;

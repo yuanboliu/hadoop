@@ -63,7 +63,7 @@ public class HdfsNamedFileStatus extends FileStatus implements HdfsFileStatus {
    * @param storagePolicy ID which specifies storage policy
    * @param ecPolicy the erasure coding policy
    */
-  HdfsNamedFileStatus(long length, boolean isdir, int replication,
+  protected HdfsNamedFileStatus(long length, boolean isdir, int replication,
                       long blocksize, long mtime, long atime,
                       FsPermission permission, Set<Flags> flags,
                       String owner, String group,

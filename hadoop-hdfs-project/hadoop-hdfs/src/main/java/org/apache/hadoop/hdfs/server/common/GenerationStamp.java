@@ -19,6 +19,8 @@ package org.apache.hadoop.hdfs.server.common;
 
 import org.apache.hadoop.classification.InterfaceAudience;
 import org.apache.hadoop.util.SequentialNumber;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /****************************************************************
  * A GenerationStamp is a Hadoop FS primitive, identified by a long.
@@ -29,11 +31,24 @@ public class GenerationStamp extends SequentialNumber {
    * The last reserved generation stamp.
    */
   public static final long LAST_RESERVED_STAMP = 1000L;
+  private static final Logger LOG =
+      LoggerFactory.getLogger(GenerationStamp.class);
 
   /**
    * Create a new instance, initialized to {@link #LAST_RESERVED_STAMP}.
    */
   public GenerationStamp() {
     super(LAST_RESERVED_STAMP);
+  }
+
+  /** Skip to the new value. */
+  @Override
+  public void skipTo(long newValue) throws IllegalStateException {
+    try {
+      super.skipTo(newValue);
+    } catch (IllegalStateException e) {
+      LOG.debug(e.getMessage());
+      return;
+    }
   }
 }

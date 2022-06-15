@@ -29,12 +29,12 @@ import org.apache.hadoop.fs.permission.PermissionStatus;
 import org.apache.hadoop.hdfs.DFSUtil;
 import org.apache.hadoop.hdfs.protocol.AclException;
 import org.apache.hadoop.hdfs.protocol.QuotaExceededException;
-import org.apache.hadoop.hdfs.server.namenode.FSDirectory.DirOp;
-import org.apache.hadoop.hdfs.server.namenode.snapshot.Snapshot;
 import org.apache.hadoop.security.AccessControlException;
 
 import java.io.IOException;
 import java.util.List;
+
+import static org.apache.hadoop.hdfs.server.namenode.snapshot.Snapshot.CURRENT_STATE_ID;
 import static org.apache.hadoop.util.Time.now;
 
 class FSDirMkdirOp {
@@ -45,16 +45,14 @@ class FSDirMkdirOp {
     if(NameNode.stateChangeLog.isDebugEnabled()) {
       NameNode.stateChangeLog.debug("DIR* NameSystem.mkdirs: " + src);
     }
-    fsd.writeLock();
-    try {
-      INodesInPath iip = fsd.resolvePath(pc, src, DirOp.CREATE);
-
+    try (INodesInPath iip =
+        fsd.lockInodePath(pc, src, FSDirectory.DirOp.CREATE,
+            FSDirectory.LockMode.WRITE_PARENT)) {
       final INode lastINode = iip.getLastINode();
       if (lastINode != null && lastINode.isFile()) {
         throw new FileAlreadyExistsException("Path is not a directory: " + src);
       }
-
-      if (lastINode == null) {
+      if (!iip.fullPathExists()) {
         if (fsd.isPermissionEnabled()) {
           fsd.checkAncestorAccess(pc, iip, FsAction.WRITE);
         }
@@ -79,11 +77,9 @@ class FSDirMkdirOp {
         if (existing == null) {
           throw new IOException("Failed to create directory: " + src);
         }
-        iip = existing;
+        return fsd.getAuditFileInfo(existing);
       }
       return fsd.getAuditFileInfo(iip);
-    } finally {
-      fsd.writeUnlock();
     }
   }
 
@@ -110,7 +106,7 @@ class FSDirMkdirOp {
    * Create all ancestor directories and return the parent inodes.
    *
    * @param fsd FSDirectory
-   * @param iip inodes in path to the fs directory
+   * @param existing inodes in path to the fs directory
    * @param perm the permission of the directory. Note that all ancestors
    *             created along the path has implicit {@code u+wx} permissions.
    * @param inheritPerms if the ancestor directories should inherit permissions
@@ -122,25 +118,27 @@ class FSDirMkdirOp {
    * failed.
    */
   private static INodesInPath createParentDirectories(FSDirectory fsd,
-      INodesInPath iip, PermissionStatus perm, boolean inheritPerms)
+      INodesInPath existing, PermissionStatus perm, boolean inheritPerms)
       throws IOException {
-    assert fsd.hasWriteLock();
-    // this is the desired parent iip if the subsequent delta is 1.
-    INodesInPath existing = iip.getExistingINodes();
-    int missing = iip.length() - existing.length();
-    if (missing == 0) {  // full path exists, return parents.
-      existing = iip.getParentINodesInPath();
+    int pathLength = existing.getPathComponents().length;
+    int existPathLength = existing.length();
+
+    int missing = pathLength - existPathLength;
+    if (missing == 0) {
+      // full path exists, return existing. When createSingleDirectory is created later, the end
+      // inode is created, but will not be addChild so the creation logic will not be affected.
+      return existing;
     } else if (missing > 1) { // need to create at least one ancestor dir.
       // Ensure that the user can traversal the path by adding implicit
       // u+wx permission to all ancestor directories.
       PermissionStatus basePerm = inheritPerms
-          ? existing.getLastINode().getPermissionStatus()
+          ? existing.getLastExistingInode().getPermissionStatus()
           : perm;
       perm = addImplicitUwx(basePerm, perm);
       // create all the missing directories.
-      final int last = iip.length() - 2;
-      for (int i = existing.length(); existing != null && i <= last; i++) {
-        byte[] component = iip.getPathComponent(i);
+      final int last = pathLength - 2;
+      for (int i = existPathLength; existing != null && i <= last; i++) {
+        byte[] component = existing.getPathComponent(i);
         existing = createSingleDirectory(fsd, existing, component, perm);
       }
     }
@@ -152,26 +150,26 @@ class FSDirMkdirOp {
       throws QuotaExceededException, UnresolvedLinkException, AclException,
       FileAlreadyExistsException, ParentNotDirectoryException,
       AccessControlException {
-    assert fsd.hasWriteLock();
-    INodesInPath iip = fsd.getINodesInPath(src, DirOp.WRITE_LINK);
-    final byte[] localName = iip.getLastLocalName();
-    final INodesInPath existing = iip.getParentINodesInPath();
-    Preconditions.checkState(existing.getLastINode() != null);
-    unprotectedMkdir(fsd, inodeId, existing, localName, permissions, aclEntries,
-        timestamp);
+    try (INodesInPath existing =
+        fsd.lockInodePath(src, FSDirectory.DirOp.WRITE_LINK,
+            FSDirectory.LockMode.WRITE)) {
+      final byte[] localName = existing.getLocalNameByInodesSize();
+      Preconditions.checkState(existing.getLastLockListInode() != null);
+      unprotectedMkdir(fsd, inodeId, existing, localName, permissions, aclEntries,
+              timestamp);
+    }
   }
 
   private static INodesInPath createSingleDirectory(FSDirectory fsd,
       INodesInPath existing, byte[] localName, PermissionStatus perm)
       throws IOException {
-    assert fsd.hasWriteLock();
     existing = unprotectedMkdir(fsd, fsd.allocateNewInodeId(), existing,
         localName, perm, null, now());
     if (existing == null) {
       return null;
     }
 
-    final INode newNode = existing.getLastINode();
+    final INode newNode = existing.getLastLockListInode();
     // Directory creation also count towards FilesCreated
     // to match count of FilesDeleted metric.
     NameNode.getNameNodeMetrics().incrFilesCreated();
@@ -202,21 +200,21 @@ class FSDirMkdirOp {
       INodesInPath parent, byte[] name, PermissionStatus permission,
       List<AclEntry> aclEntries, long timestamp)
       throws QuotaExceededException, AclException, FileAlreadyExistsException {
-    assert fsd.hasWriteLock();
-    assert parent.getLastINode() != null;
-    if (!parent.getLastINode().isDirectory()) {
+    if (!parent.getLastLockListInode().isDirectory()) {
       throw new FileAlreadyExistsException("Parent path is not a directory: " +
           parent.getPath() + " " + DFSUtil.bytes2String(name));
     }
+
     final INodeDirectory dir = new INodeDirectory(inodeId, name, permission,
         timestamp);
-
-    INodesInPath iip =
-        fsd.addLastINode(parent, dir, permission.getPermission(), true);
-    if (iip != null && aclEntries != null) {
-      AclStorage.updateINodeAcl(dir, aclEntries, Snapshot.CURRENT_STATE_ID);
+    if (fsd.addLastINode(parent, dir, permission.getPermission(), true) == null) {
+      throw new IllegalStateException("Directory "+ DFSUtil.bytes2String(name) +
+          " already exists and cannot get locked child during 1000 attempts.");
     }
-    return iip;
+
+    if (parent != null && aclEntries != null) {
+      AclStorage.updateINodeAcl(dir, aclEntries, CURRENT_STATE_ID);
+    }
+    return parent;
   }
 }
-
