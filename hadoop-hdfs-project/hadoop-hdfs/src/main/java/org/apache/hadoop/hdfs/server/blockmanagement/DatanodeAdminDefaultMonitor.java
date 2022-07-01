@@ -124,7 +124,7 @@ public class DatanodeAdminDefaultMonitor extends DatanodeAdminMonitorBase
   @Override
   public void stopTrackingNode(DatanodeDescriptor dn) {
     getPendingNodes().remove(dn);
-    outOfServiceNodeBlocks.remove(dn);
+    getCancelledNodes().add(dn);
   }
 
   @Override
@@ -152,13 +152,14 @@ public class DatanodeAdminDefaultMonitor extends DatanodeAdminMonitorBase
     // Check decommission or maintenance progress.
     namesystem.writeLock();
     try {
+      processCancelledNodes();
       processPendingNodes();
       check();
     } catch (Exception e) {
       LOG.warn("DatanodeAdminMonitor caught exception when processing node.",
           e);
     } finally {
-      namesystem.writeUnlock();
+      namesystem.writeUnlock("DatanodeAdminMonitorThread");
     }
     if (numBlocksChecked + numNodesChecked > 0) {
       LOG.info("Checked {} blocks and {} nodes this tick. {} nodes are now " +
@@ -177,6 +178,20 @@ public class DatanodeAdminDefaultMonitor extends DatanodeAdminMonitorBase
         (maxConcurrentTrackedNodes == 0 ||
             outOfServiceNodeBlocks.size() < maxConcurrentTrackedNodes)) {
       outOfServiceNodeBlocks.put(getPendingNodes().poll(), null);
+    }
+  }
+
+  /**
+   * Process any nodes which have had their decommission or maintenance mode
+   * cancelled by an administrator.
+   *
+   * This method must be executed under the write lock to prevent the
+   * internal structures being modified concurrently.
+   */
+  private void processCancelledNodes() {
+    while(!getCancelledNodes().isEmpty()) {
+      DatanodeDescriptor dn = getCancelledNodes().poll();
+      outOfServiceNodeBlocks.remove(dn);
     }
   }
 
@@ -373,7 +388,7 @@ public class DatanodeAdminDefaultMonitor extends DatanodeAdminMonitorBase
         // lock.
         // Yielding is required in case of block number is greater than the
         // configured per-iteration-limit.
-        namesystem.writeUnlock();
+        namesystem.writeUnlock("processBlocksInternal");
         try {
           LOG.debug("Yielded lock during decommission/maintenance check");
           Thread.sleep(0, 500);
@@ -390,8 +405,10 @@ public class DatanodeAdminDefaultMonitor extends DatanodeAdminMonitorBase
       // Remove the block from the list if it's no longer in the block map,
       // e.g. the containing file has been deleted
       if (blockManager.blocksMap.getStoredBlock(block) == null) {
-        LOG.trace("Removing unknown block {}", block);
-        it.remove();
+        if (pruneReliableBlocks) {
+          LOG.trace("Removing unknown block {}", block);
+          it.remove();
+        }
         continue;
       }
 
