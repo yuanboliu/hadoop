@@ -18,6 +18,7 @@
 
 package org.apache.hadoop.yarn.server.nodemanager.containermanager.logaggregation;
 
+import static org.apache.hadoop.hdfs.security.token.delegation.DelegationTokenIdentifier.HDFS_DELEGATION_KIND;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
@@ -51,11 +52,13 @@ import java.io.Writer;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.Random;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.CountDownLatch;
@@ -82,6 +85,7 @@ import org.apache.hadoop.security.Credentials;
 import org.apache.hadoop.security.UserGroupInformation;
 import org.apache.hadoop.security.token.SecretManager;
 import org.apache.hadoop.security.token.Token;
+import org.apache.hadoop.security.token.TokenIdentifier;
 import org.apache.hadoop.test.GenericTestUtils;
 import org.apache.hadoop.yarn.api.protocolrecords.StartContainerRequest;
 import org.apache.hadoop.yarn.api.protocolrecords.StartContainersRequest;
@@ -142,6 +146,7 @@ import org.apache.hadoop.yarn.server.nodemanager.executor.DeletionAsUserContext;
 import org.apache.hadoop.yarn.server.utils.BuilderUtils;
 import org.apache.hadoop.yarn.util.ConverterUtils;
 import org.apache.hadoop.yarn.util.Records;
+import org.apache.hadoop.yarn.util.resource.Resources;
 import org.junit.Assert;
 import org.junit.Test;
 import org.mockito.ArgumentCaptor;
@@ -206,7 +211,9 @@ public class TestLogAggregationService extends BaseContainerManagerTest {
     logAggregationService.init(this.conf);
     logAggregationService.start();
 
-    ApplicationId application1 = BuilderUtils.newApplicationId(1234, 1);
+    Random random = new Random(System.currentTimeMillis());
+    long clusterTimeStamp = random.nextLong();
+    ApplicationId application1 = BuilderUtils.newApplicationId(clusterTimeStamp, 1);
 
     // AppLogDir should be created
     File app1LogDir =
@@ -234,31 +241,41 @@ public class TestLogAggregationService extends BaseContainerManagerTest {
     // ensure filesystems were closed
     verify(logAggregationService).closeFileSystems(
         any(UserGroupInformation.class));
-    List<Path> dirList = new ArrayList<>();
-    dirList.add(new Path(app1LogDir.toURI()));
-    verify(delSrvc, times(2)).delete(argThat(new FileDeletionMatcher(
-        delSrvc, user, null, dirList)));
-    
-    String containerIdStr = container11.toString();
-    File containerLogDir = new File(app1LogDir, containerIdStr);
-    int count = 0;
-    int maxAttempts = 50;
-    for (String fileType : new String[] { "stdout", "stderr", "syslog" }) {
-      File f = new File(containerLogDir, fileType);
-      count = 0;
-      while ((f.exists()) && (count < maxAttempts)) {
-        count++;
-        Thread.sleep(100);
+    boolean filesShouldBeDeleted =
+        this.conf.getBoolean(YarnConfiguration.LOG_AGGREGATION_ENABLE_LOCAL_CLEANUP,
+            YarnConfiguration.DEFAULT_LOG_AGGREGATION_ENABLE_LOCAL_CLEANUP);
+    if (filesShouldBeDeleted) {
+      List<Path> dirList = new ArrayList<>();
+      dirList.add(new Path(app1LogDir.toURI()));
+      verify(delSrvc, times(2)).delete(argThat(new FileDeletionMatcher(
+          delSrvc, user, null, dirList)));
+
+      String containerIdStr = container11.toString();
+      File containerLogDir = new File(app1LogDir, containerIdStr);
+      for (String fileType : new String[]{"stdout", "stderr", "syslog"}) {
+        File f = new File(containerLogDir, fileType);
+        GenericTestUtils.waitFor(() -> !f.exists(), 1000, 1000 * 50);
+        Assert.assertFalse("File [" + f + "] was not deleted", f.exists());
       }
-      Assert.assertFalse("File [" + f + "] was not deleted", f.exists());
+      Assert.assertFalse("Directory [" + app1LogDir + "] was not deleted",
+          app1LogDir.exists());
+    } else {
+      List<Path> dirList = new ArrayList<>();
+      dirList.add(new Path(app1LogDir.toURI()));
+      verify(delSrvc, never()).delete(argThat(new FileDeletionMatcher(
+          delSrvc, user, null, dirList)));
+
+      String containerIdStr = container11.toString();
+      File containerLogDir = new File(app1LogDir, containerIdStr);
+      Thread.sleep(5000);
+      for (String fileType : new String[]{"stdout", "stderr", "syslog"}) {
+        File f = new File(containerLogDir, fileType);
+        Assert.assertTrue("File [" + f + "] was not deleted", f.exists());
+      }
+      Assert.assertTrue("Directory [" + app1LogDir + "] was not deleted",
+          app1LogDir.exists());
     }
-    count = 0;
-    while ((app1LogDir.exists()) && (count < maxAttempts)) {
-      count++;
-      Thread.sleep(100);
-    }
-    Assert.assertFalse("Directory [" + app1LogDir + "] was not deleted",
-      app1LogDir.exists());
+    delSrvc.stop();
 
     Path logFilePath = logAggregationService
         .getLogAggregationFileController(conf)
@@ -294,6 +311,20 @@ public class TestLogAggregationService extends BaseContainerManagerTest {
     LogAggregationService logAggregationService = spy(
         new LogAggregationService(dispatcher, this.context, this.delSrvc,
                                   super.dirsHandler));
+    verifyLocalFileDeletion(logAggregationService);
+  }
+
+  @Test
+  public void testLocalFileRemainsAfterUploadOnCleanupDisable() throws Exception {
+    this.delSrvc = new DeletionService(createContainerExecutor());
+    delSrvc = spy(delSrvc);
+    this.delSrvc.init(conf);
+    this.conf.setBoolean(YarnConfiguration.LOG_AGGREGATION_ENABLE_LOCAL_CLEANUP, false);
+    this.conf.set(YarnConfiguration.NM_LOG_DIRS, localLogDir.getAbsolutePath());
+    this.conf.set(YarnConfiguration.NM_REMOTE_APP_LOG_DIR,
+        this.remoteRootLogDir.getAbsolutePath());
+    LogAggregationService logAggregationService = spy(
+        new LogAggregationService(dispatcher, this.context, this.delSrvc, super.dirsHandler));
     verifyLocalFileDeletion(logAggregationService);
   }
 
@@ -2266,7 +2297,7 @@ public class TestLogAggregationService extends BaseContainerManagerTest {
       long cId, ContainerType containerType) {
     ContainerId containerId = BuilderUtils.newContainerId(appAttemptId1,
         cId);
-    Resource r = BuilderUtils.newResource(1024, 1);
+    Resource r = Resources.createResource(1024);
     ContainerTokenIdentifier containerToken = new ContainerTokenIdentifier(
         containerId, context.getNodeId().toString(), user, r,
         System.currentTimeMillis() + 100000L, 123, DUMMY_RM_IDENTIFIER,
@@ -2558,6 +2589,71 @@ public class TestLogAggregationService extends BaseContainerManagerTest {
       }
     }, 1000, 20000);
     logAggregationService.stop();
+  }
+
+  @Test (timeout = 20000)
+  public void testRemoveExpiredDelegationTokensBeforeUpload() throws Exception {
+    Configuration conf = new YarnConfiguration();
+    conf.set(CommonConfigurationKeysPublic.HADOOP_SECURITY_AUTHENTICATION,
+        "kerberos");
+    UserGroupInformation.setConfiguration(conf);
+
+    ApplicationId applicationId = BuilderUtils.newApplicationId(1234, 1);
+    Application application = mockApplication();
+    this.context.getApplications().put(applicationId, application);
+
+    @SuppressWarnings("resource")
+    LogAggregationService logAggregationService =
+        new LogAggregationService(dispatcher, this.context, this.delSrvc, super.dirsHandler);
+    logAggregationService.init(this.conf);
+    logAggregationService.start();
+
+    logAggregationService.handle(new LogHandlerAppStartedEvent(applicationId,
+        this.user, null, this.acls,
+        Records.newRecord(LogAggregationContext.class)));
+
+    // Adding a valid and an expired delegation token to the credentials
+    Token renewableToken = mockRenewableToken();
+    Token expiredToken = mockExpiredToken();
+
+    Credentials credentials = new Credentials();
+    credentials.addToken(new Text("renewableToken"), renewableToken);
+    credentials.addToken(new Text("expiredToken"), expiredToken);
+
+    UserGroupInformation ugi =
+        ((AppLogAggregatorImpl) logAggregationService.getAppLogAggregators()
+            .get(applicationId)).getUgi();
+    ugi.addCredentials(credentials);
+
+    logAggregationService.handle(new LogHandlerAppFinishedEvent(applicationId));
+
+    GenericTestUtils.waitFor(() -> {
+      Collection<Token<? extends TokenIdentifier>> tokens = ugi.getCredentials().getAllTokens();
+      return tokens.size() == 1 && tokens.contains(renewableToken);
+    }, 1000, 20000);
+    logAggregationService.stop();
+  }
+
+  private Application mockApplication() {
+    Application mockApp = mock(Application.class);
+    when(mockApp.getContainers()).thenReturn(
+        new HashMap<ContainerId, Container>());
+    return mockApp;
+  }
+
+  private Token mockRenewableToken() throws IOException, InterruptedException {
+    Token renewableToken = mock(Token.class);
+    when(renewableToken.getKind()).thenReturn(HDFS_DELEGATION_KIND);
+    when(renewableToken.renew(this.conf)).thenReturn(0L);
+    return renewableToken;
+  }
+
+  private Token mockExpiredToken() throws IOException, InterruptedException {
+    Token expiredToken = mock(Token.class);
+    when(expiredToken.getKind()).thenReturn(HDFS_DELEGATION_KIND);
+    when(expiredToken.renew(this.conf))
+        .thenThrow(new SecretManager.InvalidToken(""));
+    return expiredToken;
   }
 
   @Test (timeout = 20000)

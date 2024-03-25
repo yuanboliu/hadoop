@@ -242,7 +242,10 @@ public enum Statistic {
       StoreStatisticNames.OBJECT_MULTIPART_UPLOAD_ABORTED,
       "Object multipart upload aborted",
       TYPE_DURATION),
-  OBJECT_PUT_REQUESTS(
+  OBJECT_MULTIPART_UPLOAD_LIST(
+      StoreStatisticNames.OBJECT_MULTIPART_UPLOAD_LIST,
+      "Object multipart list request issued",
+      TYPE_DURATION),  OBJECT_PUT_REQUESTS(
       StoreStatisticNames.OBJECT_PUT_REQUEST,
       "Object put/multipart upload count",
       TYPE_DURATION),
@@ -262,10 +265,6 @@ public enum Statistic {
       StoreStatisticNames.OBJECT_PUT_BYTES_PENDING,
       "number of bytes queued for upload/being actively uploaded",
       TYPE_GAUGE),
-  OBJECT_SELECT_REQUESTS(
-      StoreStatisticNames.OBJECT_SELECT_REQUESTS,
-      "Count of S3 Select requests issued",
-      TYPE_COUNTER),
   STREAM_READ_ABORTED(
       StreamStatisticNames.STREAM_READ_ABORTED,
       "Count of times the TCP stream was aborted",
@@ -308,6 +307,23 @@ public enum Statistic {
       StreamStatisticNames.STREAM_READ_OPERATIONS,
       "Count of read() operations in an input stream",
       TYPE_COUNTER),
+  STREAM_READ_VECTORED_OPERATIONS(
+          StreamStatisticNames.STREAM_READ_VECTORED_OPERATIONS,
+          "Count of readVectored() operations in an input stream.",
+          TYPE_COUNTER),
+  STREAM_READ_VECTORED_READ_BYTES_DISCARDED(
+          StreamStatisticNames.STREAM_READ_VECTORED_READ_BYTES_DISCARDED,
+          "Count of bytes discarded during readVectored() operation." +
+                  " in an input stream",
+          TYPE_COUNTER),
+  STREAM_READ_VECTORED_INCOMING_RANGES(
+          StreamStatisticNames.STREAM_READ_VECTORED_INCOMING_RANGES,
+          "Count of incoming file ranges during readVectored() operation.",
+          TYPE_COUNTER),
+  STREAM_READ_VECTORED_COMBINED_RANGES(
+          StreamStatisticNames.STREAM_READ_VECTORED_COMBINED_RANGES,
+          "Count of combined file ranges during readVectored() operation.",
+          TYPE_COUNTER),
   STREAM_READ_REMOTE_STREAM_ABORTED(
       StreamStatisticNames.STREAM_READ_REMOTE_STREAM_ABORTED,
       "Duration of aborting a remote stream during stream IO",
@@ -361,6 +377,22 @@ public enum Statistic {
       StreamStatisticNames.STREAM_READ_TOTAL_BYTES,
       "Total count of bytes read from an input stream",
       TYPE_COUNTER),
+  STREAM_READ_UNBUFFERED(
+      StreamStatisticNames.STREAM_READ_UNBUFFERED,
+      "Total count of input stream unbuffering operations",
+      TYPE_COUNTER),
+  STREAM_READ_BLOCKS_IN_FILE_CACHE(
+      StreamStatisticNames.STREAM_READ_BLOCKS_IN_FILE_CACHE,
+      "Gauge of blocks in disk cache",
+      TYPE_GAUGE),
+  STREAM_READ_ACTIVE_PREFETCH_OPERATIONS(
+      StreamStatisticNames.STREAM_READ_ACTIVE_PREFETCH_OPERATIONS,
+      "Gauge of active prefetches",
+      TYPE_GAUGE),
+  STREAM_READ_ACTIVE_MEMORY_IN_USE(
+      StreamStatisticNames.STREAM_READ_ACTIVE_MEMORY_IN_USE,
+      "Gauge of active memory in use",
+      TYPE_GAUGE),
 
   /* Stream Write statistics */
 
@@ -412,6 +444,16 @@ public enum Statistic {
   STREAM_WRITE_QUEUE_DURATION(
       StreamStatisticNames.STREAM_WRITE_QUEUE_DURATION,
       "Total queue duration of all block uploads",
+      TYPE_DURATION),
+
+  /* Stream prefetch file cache eviction */
+  STREAM_EVICT_BLOCKS_FROM_FILE_CACHE(
+      StreamStatisticNames.STREAM_EVICT_BLOCKS_FROM_FILE_CACHE,
+      "Count of blocks evicted from the disk cache",
+      TYPE_COUNTER),
+  STREAM_FILE_CACHE_EVICTION(
+      StreamStatisticNames.STREAM_FILE_CACHE_EVICTION,
+      "Duration of the eviction of an element from LRU cache that holds disk cache blocks",
       TYPE_DURATION),
 
   /* committer stats */
@@ -534,7 +576,7 @@ public enum Statistic {
       TYPE_COUNTER),
   MULTIPART_UPLOAD_ABORT_UNDER_PATH_INVOKED(
       StoreStatisticNames.MULTIPART_UPLOAD_ABORT_UNDER_PATH_INVOKED,
-      "Multipart Upload Abort Unner Path Invoked",
+      "Multipart Upload Abort Under Path Invoked",
       TYPE_COUNTER),
   MULTIPART_UPLOAD_COMPLETED(
       StoreStatisticNames.MULTIPART_UPLOAD_COMPLETED,

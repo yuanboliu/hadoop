@@ -36,7 +36,7 @@ import org.apache.hadoop.yarn.conf.YarnConfiguration;
 import org.apache.hadoop.yarn.exceptions.YarnException;
 import org.apache.hadoop.yarn.server.resourcemanager.ACLsTestBase;
 import org.apache.hadoop.yarn.server.resourcemanager.rmapp.RMAppState;
-import org.apache.hadoop.yarn.server.utils.BuilderUtils;
+import org.apache.hadoop.yarn.util.resource.Resources;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -108,7 +108,7 @@ public class TestApplicationPriorityACLs extends ACLsTestBase {
     ApplicationId applicationId = submitterClient
         .getNewApplication(newAppRequest).getApplicationId();
 
-    Resource resource = BuilderUtils.newResource(1024, 1);
+    Resource resource = Resources.createResource(1024);
 
     ContainerLaunchContext amContainerSpec = ContainerLaunchContext
         .newInstance(null, null, null, null, null, null);
@@ -177,24 +177,24 @@ public class TestApplicationPriorityACLs extends ACLsTestBase {
   @Override
   protected Configuration createConfiguration() {
     CapacitySchedulerConfiguration csConf = new CapacitySchedulerConfiguration();
-    csConf.setQueues(CapacitySchedulerConfiguration.ROOT,
+    csConf.setQueues(ROOT,
         new String[]{QUEUEA, QUEUEB, QUEUEC});
 
-    csConf.setCapacity(CapacitySchedulerConfiguration.ROOT + "." + QUEUEA, 50f);
-    csConf.setCapacity(CapacitySchedulerConfiguration.ROOT + "." + QUEUEB, 25f);
-    csConf.setCapacity(CapacitySchedulerConfiguration.ROOT + "." + QUEUEC, 25f);
+    csConf.setCapacity(A_QUEUE_PATH, 50f);
+    csConf.setCapacity(B_QUEUE_PATH, 25f);
+    csConf.setCapacity(C_QUEUE_PATH, 25f);
 
     String[] aclsForA = new String[2];
     aclsForA[0] = QUEUE_A_USER;
     aclsForA[1] = QUEUE_A_GROUP;
-    csConf.setPriorityAcls(CapacitySchedulerConfiguration.ROOT + "." + QUEUEA,
+    csConf.setPriorityAcls(A_QUEUE_PATH,
         Priority.newInstance(maxPriorityQueueA),
         Priority.newInstance(defaultPriorityQueueA), aclsForA);
 
     String[] aclsForB = new String[2];
     aclsForB[0] = QUEUE_B_USER;
     aclsForB[1] = QUEUE_B_GROUP;
-    csConf.setPriorityAcls(CapacitySchedulerConfiguration.ROOT + "." + QUEUEB,
+    csConf.setPriorityAcls(B_QUEUE_PATH,
         Priority.newInstance(maxPriorityQueueB),
         Priority.newInstance(defaultPriorityQueueB), aclsForB);
 

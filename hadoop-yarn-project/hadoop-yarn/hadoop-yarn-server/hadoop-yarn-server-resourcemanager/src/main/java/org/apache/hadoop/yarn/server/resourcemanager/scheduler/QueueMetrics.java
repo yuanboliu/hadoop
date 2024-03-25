@@ -117,6 +117,9 @@ public class QueueMetrics implements MetricsSource {
   @Metric("Reserved CPU in virtual cores") MutableGaugeInt reservedVCores;
   @Metric("# of reserved containers") MutableGaugeInt reservedContainers;
 
+  // INTERNAL ONLY
+  private static final String CONFIGURATION_VALIDATION = "yarn.configuration-validation";
+
   private final MutableGaugeInt[] runningTime;
   private TimeBucketMetrics<ApplicationId> runBuckets;
 
@@ -314,7 +317,7 @@ public class QueueMetrics implements MetricsSource {
    *  QueueMetrics (B)
    *    metrics
    *
-   * @param partition
+   * @param partition Node Partition
    * @return QueueMetrics
    */
   public synchronized QueueMetrics getPartitionQueueMetrics(String partition) {
@@ -340,12 +343,34 @@ public class QueueMetrics implements MetricsSource {
           "Metrics for queue: " + this.queueName,
           queueMetrics.tag(PARTITION_INFO, partitionJMXStr).tag(QUEUE_INFO,
               this.queueName));
-      getQueueMetrics().put(metricName, queueMetrics);
+      if (!isConfigurationValidationSet(conf)) {
+        getQueueMetrics().put(metricName, queueMetrics);
+      }
       registerPartitionMetricsCreation(metricName);
       return queueMetrics;
     } else {
       return metrics;
     }
+  }
+
+  /**
+   * Check whether we are in a configuration validation mode. INTERNAL ONLY.
+   *
+   * @param conf the configuration to check
+   * @return true if
+   */
+  public static boolean isConfigurationValidationSet(Configuration conf) {
+    return conf.getBoolean(CONFIGURATION_VALIDATION, false);
+  }
+
+  /**
+   * Set configuration validation mode. INTERNAL ONLY.
+   *
+   * @param conf the configuration to update
+   * @param value the value for the validation mode
+   */
+  public static void setConfigurationValidation(Configuration conf, boolean value) {
+    conf.setBoolean(CONFIGURATION_VALIDATION, value);
   }
 
   /**
@@ -603,7 +628,7 @@ public class QueueMetrics implements MetricsSource {
   /**
    * Set Available resources with support for resource vectors.
    *
-   * @param limit
+   * @param limit Resource.
    */
   public void setAvailableResources(Resource limit) {
     availableMB.set(limit.getMemorySize());
@@ -631,7 +656,7 @@ public class QueueMetrics implements MetricsSource {
    * resources become available.
    *
    * @param partition Node Partition
-   * @param user
+   * @param user Name of the user.
    * @param limit resource limit
    */
   public void setAvailableResourcesToUser(String partition, String user,
@@ -657,8 +682,8 @@ public class QueueMetrics implements MetricsSource {
    * Increment pending resource metrics
    *
    * @param partition Node Partition
-   * @param user
-   * @param containers
+   * @param user Name of the user.
+   * @param containers containers count.
    * @param res the TOTAL delta of resources note this is different from the
    *          other APIs which use per container resource
    */
@@ -852,8 +877,8 @@ public class QueueMetrics implements MetricsSource {
   /**
    * Allocate Resource for container size change.
    * @param partition Node Partition
-   * @param user
-   * @param res
+   * @param user Name of the user
+   * @param res Resource.
    */
   public void allocateResources(String partition, String user, Resource res) {
     allocatedMB.incr(res.getMemorySize());

@@ -196,6 +196,9 @@
 {#fsn}
   <tr><th>Last Checkpoint Time</th><td>{@if cond="{LastCheckpointTime} === 0"}Never{:else}{LastCheckpointTime|date_tostring}{/if}</td></tr>
 {/fsn}
+{#nnstat}
+  <tr><th>Last HA Transition Time</th><td>{@if cond="{LastHATransitionTime} === 0"}Never{:else}{LastHATransitionTime|date_tostring}{/if}</td></tr>
+{/nnstat}
 {#ecstat}
   <tr><th>Enabled Erasure Coding Policies</th><td>{EnabledEcPolicies}</td></tr>
 {/ecstat}
@@ -353,7 +356,8 @@
     <td ng-value="{state}">{state}</td>
     <td ng-value="{state}-{name}" class="dfshealth-node-icon dfshealth-node-{state}">{location}/{name} ({xferaddr})</td>
     <td></td>
-    <td>{#helper_relative_time value="{lastContact}"/}</td>
+    <td ng-value="{lastContact}">{#helper_relative_time value="{lastContact}"/}</td>
+    <td></td>
     <td></td>
     <td></td>
     <td></td>
@@ -402,6 +406,7 @@
       <th>Under replicated blocks</th>
       <th>Blocks with no live replicas</th>
       <th>Under Replicated Blocks <br/>In files under construction</th>
+      <th>Decommission duration</th>
     </tr>
   </thead>
   {#DecomNodes}
@@ -410,6 +415,7 @@
     <td>{underReplicatedBlocks}</td>
     <td>{decommissionOnlyReplicas}</td>
     <td>{underReplicateInOpenFiles}</td>
+    <td>{decommissionDuration}ms</td>
   </tr>
   {/DecomNodes}
 </table>
@@ -489,6 +495,7 @@ There are no reported volume failures.
 </script><script type="text/javascript" src="/static/dfs-dust.js">
 </script><script type="text/javascript" src="/static/d3-v4.1.1.min.js">
 </script><script type="text/javascript" src="dfshealth.js">
+</script><script type="text/javascript" src="/static/histogram-hostip.js">
 </script>
 </body>
 </html>

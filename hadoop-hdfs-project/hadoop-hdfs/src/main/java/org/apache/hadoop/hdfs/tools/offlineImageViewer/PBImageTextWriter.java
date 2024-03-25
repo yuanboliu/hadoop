@@ -26,9 +26,11 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.PrintStream;
 import java.io.RandomAccessFile;
-import java.io.UnsupportedEncodingException;
+import java.io.ByteArrayInputStream;
+import java.io.DataInputStream;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
@@ -50,6 +52,7 @@ import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.fs.XAttr;
 import org.apache.hadoop.fs.permission.PermissionStatus;
+import org.apache.hadoop.hdfs.XAttrHelper;
 import org.apache.hadoop.hdfs.protocol.HdfsConstants;
 import org.apache.hadoop.hdfs.server.blockmanagement.BlockStoragePolicySuite;
 import org.apache.hadoop.hdfs.server.namenode.FSImageFormatPBINode;
@@ -63,6 +66,7 @@ import org.apache.hadoop.hdfs.server.namenode.FsImageProto.INodeSection.INode;
 import org.apache.hadoop.hdfs.server.namenode.INodeId;
 import org.apache.hadoop.hdfs.server.namenode.SerialNumberManager;
 import org.apache.hadoop.io.IOUtils;
+import org.apache.hadoop.io.WritableUtils;
 import org.apache.hadoop.util.LimitInputStream;
 import org.apache.hadoop.util.Lists;
 import org.apache.hadoop.util.Time;
@@ -77,10 +81,12 @@ import org.slf4j.LoggerFactory;
 import org.apache.hadoop.util.Preconditions;
 import org.apache.hadoop.thirdparty.com.google.common.collect.ImmutableList;
 
+import static org.apache.hadoop.hdfs.server.common.HdfsServerConstants.XATTR_ERASURECODING_POLICY;
+
 /**
  * This class reads the protobuf-based fsimage and generates text output
  * for each inode to {@link PBImageTextWriter#out}. The sub-class can override
- * {@link getEntry()} to generate formatted string for each inode.
+ * {@link #getEntry(String, INode)} to generate formatted string for each inode.
  *
  * Since protobuf-based fsimage does not guarantee the order of inodes and
  * directories, PBImageTextWriter runs two-phase scans:
@@ -413,9 +419,8 @@ abstract class PBImageTextWriter implements Closeable {
       return ByteBuffer.allocate(8).putLong(value).array();
     }
 
-    private static byte[] toBytes(String value)
-        throws UnsupportedEncodingException {
-      return value.getBytes("UTF-8");
+    private static byte[] toBytes(String value) {
+      return value.getBytes(StandardCharsets.UTF_8);
     }
 
     private static long toLong(byte[] bytes) {
@@ -424,11 +429,7 @@ abstract class PBImageTextWriter implements Closeable {
     }
 
     private static String toString(byte[] bytes) throws IOException {
-      try {
-        return new String(bytes, "UTF-8");
-      } catch (UnsupportedEncodingException e) {
-        throw new IOException(e);
-      }
+      return new String(bytes, StandardCharsets.UTF_8);
     }
 
     @Override
@@ -509,6 +510,8 @@ abstract class PBImageTextWriter implements Closeable {
   private File filename;
   private int numThreads;
   private String parallelOutputFile;
+  private final XAttr ecXAttr =
+      XAttrHelper.buildXAttr(XATTR_ERASURECODING_POLICY);
 
   /**
    * Construct a PB FsImage writer to generate text file.
@@ -1029,4 +1032,23 @@ abstract class PBImageTextWriter implements Closeable {
       }
     }
   }
+
+  public String getErasureCodingPolicyName
+      (INodeSection.XAttrFeatureProto xattrFeatureProto) {
+    List<XAttr> xattrs =
+        FSImageFormatPBINode.Loader.loadXAttrs(xattrFeatureProto, stringTable);
+    for (XAttr xattr : xattrs) {
+      if (xattr.equalsIgnoreValue(ecXAttr)){
+        try{
+          ByteArrayInputStream bIn = new ByteArrayInputStream(xattr.getValue());
+          DataInputStream dIn = new DataInputStream(bIn);
+          return WritableUtils.readString(dIn);
+        } catch (IOException ioException){
+          return null;
+        }
+      }
+    }
+    return null;
+  }
+
 }

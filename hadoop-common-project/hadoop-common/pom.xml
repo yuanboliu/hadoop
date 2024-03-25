@@ -20,11 +20,11 @@
   <parent>
     <groupId>org.apache.hadoop</groupId>
     <artifactId>hadoop-project-dist</artifactId>
-    <version>3.4.0-SNAPSHOT</version>
+    <version>3.5.0-SNAPSHOT</version>
     <relativePath>../../hadoop-project-dist</relativePath>
   </parent>
   <artifactId>hadoop-common</artifactId>
-  <version>3.4.0-SNAPSHOT</version>
+  <version>3.5.0-SNAPSHOT</version>
   <description>Apache Hadoop Common</description>
   <name>Apache Hadoop Common</name>
   <packaging>jar</packaging>
@@ -40,7 +40,7 @@
   <dependencies>
     <dependency>
       <groupId>org.apache.hadoop.thirdparty</groupId>
-      <artifactId>hadoop-shaded-protobuf_3_7</artifactId>
+      <artifactId>hadoop-shaded-protobuf_3_23</artifactId>
     </dependency>
     <dependency>
       <groupId>org.apache.hadoop</groupId>
@@ -173,7 +173,19 @@
           <groupId>com.fasterxml.jackson.jaxrs</groupId>
           <artifactId>jackson-jaxrs-json-provider</artifactId>
         </exclusion>
+        <exclusion>
+          <groupId>org.codehaus.jettison</groupId>
+          <artifactId>jettison</artifactId>
+        </exclusion>
       </exclusions>
+    </dependency>
+    <dependency>
+      <!--
+      adding jettison as direct dependency (as jersey-json's jettison dependency is vulnerable with verison 1.1),
+      so those who depends on hadoop-common externally will get the non-vulnerable jettison
+      -->
+      <groupId>org.codehaus.jettison</groupId>
+      <artifactId>jettison</artifactId>
     </dependency>
     <dependency>
       <groupId>com.sun.jersey</groupId>
@@ -181,13 +193,8 @@
       <scope>compile</scope>
     </dependency>
     <dependency>
-      <groupId>commons-logging</groupId>
-      <artifactId>commons-logging</artifactId>
-      <scope>compile</scope>
-    </dependency>
-    <dependency>
-      <groupId>log4j</groupId>
-      <artifactId>log4j</artifactId>
+      <groupId>ch.qos.reload4j</groupId>
+      <artifactId>reload4j</artifactId>
       <scope>compile</scope>
     </dependency>
     <dependency>
@@ -198,11 +205,6 @@
     <dependency>
       <groupId>org.assertj</groupId>
       <artifactId>assertj-core</artifactId>
-      <scope>test</scope>
-    </dependency>
-    <dependency>
-      <groupId>org.glassfish.grizzly</groupId>
-      <artifactId>grizzly-http-servlet</artifactId>
       <scope>test</scope>
     </dependency>
     <dependency>
@@ -238,7 +240,7 @@
     </dependency>
     <dependency>
       <groupId>org.slf4j</groupId>
-      <artifactId>slf4j-log4j12</artifactId>
+      <artifactId>slf4j-reload4j</artifactId>
       <scope>compile</scope>
     </dependency>
     <dependency>
@@ -261,10 +263,11 @@
       <artifactId>re2j</artifactId>
       <scope>compile</scope>
     </dependency>
+    <!-- Needed for compilation, though no longer in production.  -->
     <dependency>
       <groupId>com.google.protobuf</groupId>
       <artifactId>protobuf-java</artifactId>
-      <scope>compile</scope>
+      <scope>${common.protobuf2.scope}</scope>
     </dependency>
     <dependency>
       <groupId>com.google.code.gson</groupId>
@@ -314,6 +317,11 @@
       <scope>test</scope>
     </dependency>
     <dependency>
+      <groupId>org.apache.sshd</groupId>
+      <artifactId>sshd-sftp</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
       <groupId>org.apache.ftpserver</groupId>
       <artifactId>ftpserver-core</artifactId>
       <scope>test</scope>
@@ -341,6 +349,14 @@
           <artifactId>jmxri</artifactId>
         </exclusion>
       </exclusions>
+    </dependency>
+    <dependency>
+      <groupId>io.netty</groupId>
+      <artifactId>netty-handler</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>io.netty</groupId>
+      <artifactId>netty-transport-native-epoll</artifactId>
     </dependency>
     <dependency>
       <groupId>io.dropwizard.metrics</groupId>
@@ -381,6 +397,11 @@
     <dependency>
       <groupId>com.squareup.okhttp3</groupId>
       <artifactId>mockwebserver</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.jetbrains.kotlin</groupId>
+      <artifactId>kotlin-stdlib-jdk8</artifactId>
       <scope>test</scope>
     </dependency>
     <dependency>
@@ -489,11 +510,11 @@
               <!--These classes have direct Protobuf references for backward compatibility reasons-->
               <excludes>
                 <exclude>**/ProtobufHelper.java</exclude>
-                <exclude>**/RpcWritable.java</exclude>
                 <exclude>**/ProtobufRpcEngineCallback.java</exclude>
                 <exclude>**/ProtobufRpcEngine.java</exclude>
                 <exclude>**/ProtobufRpcEngine2.java</exclude>
                 <exclude>**/ProtobufRpcEngineProtos.java</exclude>
+                <exclude>**/ProtobufWrapperLegacy.java</exclude>
               </excludes>
             </configuration>
           </execution>
@@ -649,9 +670,10 @@
                     <goal>exec</goal>
                 </goals>
                 <configuration>
-                    <executable>${basedir}/../../dev-support/bin/shelldocs</executable>
+                    <executable>${shell-executable}</executable>
                     <workingDirectory>src/site/markdown</workingDirectory>
                     <arguments>
+                        <argument>${basedir}/../../dev-support/bin/shelldocs</argument>
                         <argument>--skipprnorep</argument>
                         <argument>--output</argument>
                         <argument>${basedir}/src/site/markdown/UnixShellAPI.md</argument>
@@ -842,6 +864,36 @@
             </executions>
           </plugin>
           <plugin>
+            <!--Sets the skip.platformToolsetDetection to true if use.platformToolsetVersion is specified.
+            This implies that the automatic detection of which platform toolset to use will be skipped
+            and the one specified with use.platformToolsetVersion will be used.-->
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-antrun-plugin</artifactId>
+            <version>1.8</version>
+            <executions>
+              <execution>
+                <phase>validate</phase>
+                <goals>
+                  <goal>run</goal>
+                </goals>
+                <configuration>
+                  <exportAntProperties>true</exportAntProperties>
+                  <target>
+                    <condition property="skip.platformToolsetDetection" value="true" else="false">
+                      <isset property="use.platformToolsetVersion"/>
+                    </condition>
+                    <!--Unfortunately, Maven doesn't have a way to negate a flag, thus we declare a
+                     property which holds the negated value of skip.platformToolsetDetection.-->
+                    <condition property="skip.platformToolsetDetection.negated" value="false" else="true">
+                      <isset property="use.platformToolsetVersion"/>
+                    </condition>
+                    <echo>Skip platform toolset version detection = ${skip.platformToolsetDetection}</echo>
+                  </target>
+                </configuration>
+              </execution>
+            </executions>
+          </plugin>
+          <plugin>
             <groupId>org.codehaus.mojo</groupId>
             <artifactId>exec-maven-plugin</artifactId>
             <executions>
@@ -852,6 +904,7 @@
                   <goal>exec</goal>
                 </goals>
                 <configuration>
+                  <skip>${skip.platformToolsetDetection}</skip>
                   <executable>${basedir}\..\..\dev-support\bin\win-vs-upgrade.cmd</executable>
                   <arguments>
                     <argument>${basedir}\src\main\winutils</argument>
@@ -866,6 +919,7 @@
                   <goal>exec</goal>
                 </goals>
                 <configuration>
+                  <skip>${skip.platformToolsetDetection}</skip>
                   <executable>msbuild</executable>
                   <arguments>
                     <argument>${basedir}/src/main/winutils/winutils.sln</argument>
@@ -879,12 +933,34 @@
                 </configuration>
               </execution>
               <execution>
+                <id>compile-ms-winutils-using-build-tools</id>
+                <phase>compile</phase>
+                <goals>
+                  <goal>exec</goal>
+                </goals>
+                <configuration>
+                  <skip>${skip.platformToolsetDetection.negated}</skip>
+                  <executable>msbuild</executable>
+                  <arguments>
+                    <argument>${basedir}/src/main/winutils/winutils.sln</argument>
+                    <argument>/nologo</argument>
+                    <argument>/p:Configuration=Release</argument>
+                    <argument>/p:OutDir=${project.build.directory}/bin/</argument>
+                    <argument>/p:IntermediateOutputPath=${project.build.directory}/winutils/</argument>
+                    <argument>/p:WsceConfigDir=${wsce.config.dir}</argument>
+                    <argument>/p:WsceConfigFile=${wsce.config.file}</argument>
+                    <argument>/p:PlatformToolset=${use.platformToolsetVersion}</argument>
+                  </arguments>
+                </configuration>
+              </execution>
+              <execution>
                 <id>convert-ms-native-dll</id>
                 <phase>generate-sources</phase>
                 <goals>
                   <goal>exec</goal>
                 </goals>
                 <configuration>
+                  <skip>${skip.platformToolsetDetection}</skip>
                   <executable>${basedir}\..\..\dev-support\bin\win-vs-upgrade.cmd</executable>
                   <arguments>
                     <argument>${basedir}\src\main\native</argument>
@@ -899,6 +975,7 @@
                   <goal>exec</goal>
                 </goals>
                 <configuration>
+                  <skip>${skip.platformToolsetDetection}</skip>
                   <executable>msbuild</executable>
                   <arguments>
                     <argument>${basedir}/src/main/native/native.sln</argument>
@@ -916,6 +993,35 @@
                     <argument>/p:RequireIsal=${require.isal}</argument>
                     <argument>/p:CustomIsalPrefix=${isal.prefix}</argument>
                     <argument>/p:CustomIsalLib=${isal.lib}</argument>
+                  </arguments>
+                </configuration>
+              </execution>
+              <execution>
+                <id>compile-ms-native-dll-using-build-tools</id>
+                <phase>compile</phase>
+                <goals>
+                  <goal>exec</goal>
+                </goals>
+                <configuration>
+                  <skip>${skip.platformToolsetDetection.negated}</skip>
+                  <executable>msbuild</executable>
+                  <arguments>
+                    <argument>${basedir}/src/main/native/native.sln</argument>
+                    <argument>/nologo</argument>
+                    <argument>/p:Configuration=Release</argument>
+                    <argument>/p:OutDir=${project.build.directory}/bin/</argument>
+                    <argument>/p:CustomZstdPrefix=${zstd.prefix}</argument>
+                    <argument>/p:CustomZstdLib=${zstd.lib}</argument>
+                    <argument>/p:CustomZstdInclude=${zstd.include}</argument>
+                    <argument>/p:RequireZstd=${require.zstd}</argument>
+                    <argument>/p:CustomOpensslPrefix=${openssl.prefix}</argument>
+                    <argument>/p:CustomOpensslLib=${openssl.lib}</argument>
+                    <argument>/p:CustomOpensslInclude=${openssl.include}</argument>
+                    <argument>/p:RequireOpenssl=${require.openssl}</argument>
+                    <argument>/p:RequireIsal=${require.isal}</argument>
+                    <argument>/p:CustomIsalPrefix=${isal.prefix}</argument>
+                    <argument>/p:CustomIsalLib=${isal.lib}</argument>
+                    <argument>/p:PlatformToolset=${use.platformToolsetVersion}</argument>
                   </arguments>
                 </configuration>
               </execution>
@@ -988,7 +1094,6 @@
                     </goals>
                     <configuration>
                         <executable>${basedir}/../../dev-support/bin/releasedocmaker</executable>
-                        <requiresOnline>true</requiresOnline>
                         <arguments>
                             <argument>--index</argument>
                             <argument>--license</argument>
@@ -1151,7 +1256,7 @@
                 <id>src-test-compile-protoc-legacy</id>
                 <phase>generate-test-sources</phase>
                 <goals>
-                  <goal>compile</goal>
+                  <goal>test-compile</goal>
                 </goals>
                 <configuration>
                   <skip>false</skip>
@@ -1160,7 +1265,7 @@
                     com.google.protobuf:protoc:${protobuf.version}:exe:${os.detected.classifier}
                   </protocArtifact>
                   <includeDependenciesInDescriptorSet>false</includeDependenciesInDescriptorSet>
-                  <protoSourceRoot>${basedir}/src/test/proto</protoSourceRoot>
+                  <protoTestSourceRoot>${basedir}/src/test/proto</protoTestSourceRoot>
                   <outputDirectory>${project.build.directory}/generated-test-sources/java</outputDirectory>
                   <clearOutputDirectory>false</clearOutputDirectory>
                   <includes>

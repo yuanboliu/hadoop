@@ -21,6 +21,8 @@ package org.apache.hadoop.fs.s3a.commit.impl;
 import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.IOException;
+import java.io.InputStream;
+import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -32,12 +34,14 @@ import java.util.stream.IntStream;
 
 import javax.annotation.Nullable;
 
-import com.amazonaws.services.s3.model.MultipartUpload;
-import com.amazonaws.services.s3.model.PartETag;
-import com.amazonaws.services.s3.model.UploadPartRequest;
-import com.amazonaws.services.s3.model.UploadPartResult;
+import software.amazon.awssdk.core.sync.RequestBody;
+import software.amazon.awssdk.services.s3.model.CompletedPart;
+import software.amazon.awssdk.services.s3.model.MultipartUpload;
+import software.amazon.awssdk.services.s3.model.UploadPartRequest;
+import software.amazon.awssdk.services.s3.model.UploadPartResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
 
 import org.apache.commons.lang3.tuple.Pair;
 import org.apache.hadoop.fs.FileSystem;
@@ -62,6 +66,7 @@ import org.apache.hadoop.fs.s3a.statistics.CommitterStatistics;
 import org.apache.hadoop.fs.statistics.DurationTracker;
 import org.apache.hadoop.fs.statistics.IOStatistics;
 import org.apache.hadoop.fs.statistics.IOStatisticsSource;
+import org.apache.hadoop.fs.statistics.IOStatisticsContext;
 import org.apache.hadoop.mapreduce.JobContext;
 import org.apache.hadoop.util.DurationInfo;
 import org.apache.hadoop.util.Preconditions;
@@ -154,9 +159,9 @@ public class CommitOperations extends AbstractStoreOperation
    * @param tagIds list of tags
    * @return same list, now in numbered tuples
    */
-  public static List<PartETag> toPartEtags(List<String> tagIds) {
+  public static List<CompletedPart> toPartEtags(List<String> tagIds) {
     return IntStream.range(0, tagIds.size())
-        .mapToObj(i -> new PartETag(i + 1, tagIds.get(i)))
+        .mapToObj(i -> CompletedPart.builder().partNumber(i + 1).eTag(tagIds.get(i)).build())
         .collect(Collectors.toList());
   }
 
@@ -565,26 +570,30 @@ public class CommitOperations extends AbstractStoreOperation
                 numParts, length));
       }
 
-      List<PartETag> parts = new ArrayList<>((int) numParts);
+      List<CompletedPart> parts = new ArrayList<>((int) numParts);
 
       LOG.debug("File size is {}, number of parts to upload = {}",
           length, numParts);
-      for (int partNumber = 1; partNumber <= numParts; partNumber += 1) {
-        progress.progress();
-        long size = Math.min(length - offset, uploadPartSize);
-        UploadPartRequest part;
-        part = writeOperations.newUploadPartRequest(
-            destKey,
-            uploadId,
-            partNumber,
-            (int) size,
-            null,
-            localFile,
-            offset);
-        part.setLastPart(partNumber == numParts);
-        UploadPartResult partResult = writeOperations.uploadPart(part);
-        offset += uploadPartSize;
-        parts.add(partResult.getPartETag());
+
+      // Open the file to upload.
+      try (InputStream fileStream = Files.newInputStream(localFile.toPath())) {
+        for (int partNumber = 1; partNumber <= numParts; partNumber += 1) {
+          progress.progress();
+          long size = Math.min(length - offset, uploadPartSize);
+          UploadPartRequest part = writeOperations.newUploadPartRequestBuilder(
+              destKey,
+              uploadId,
+              partNumber,
+              size).build();
+          // Read from the file input stream at current position.
+          RequestBody body = RequestBody.fromInputStream(fileStream, size);
+          UploadPartResponse response = writeOperations.uploadPart(part, body, statistics);
+          offset += uploadPartSize;
+          parts.add(CompletedPart.builder()
+              .partNumber(partNumber)
+              .eTag(response.eTag())
+              .build());
+        }
       }
 
       commitData.bindCommitData(parts);
@@ -639,15 +648,18 @@ public class CommitOperations extends AbstractStoreOperation
    * @param context job context
    * @param path path for all work.
    * @param committerThreads thread pool size
+   * @param ioStatisticsContext IOStatistics context of current thread
    * @return the commit context to pass in.
    * @throws IOException failure.
    */
   public CommitContext createCommitContext(
       JobContext context,
       Path path,
-      int committerThreads) throws IOException {
+      int committerThreads,
+      IOStatisticsContext ioStatisticsContext) throws IOException {
     return new CommitContext(this, context,
-        committerThreads);
+        committerThreads,
+        ioStatisticsContext);
   }
 
   /**
@@ -668,7 +680,8 @@ public class CommitOperations extends AbstractStoreOperation
     return new CommitContext(this,
         getStoreContext().getConfiguration(),
         id,
-        committerThreads);
+        committerThreads,
+        IOStatisticsContext.getCurrentIOStatisticsContext());
   }
 
   /**

@@ -211,7 +211,7 @@ public class DatanodeManager {
   private SlowPeerTracker slowPeerTracker;
   private static Set<String> slowNodesUuidSet = Sets.newConcurrentHashSet();
   private Daemon slowPeerCollectorDaemon;
-  private final long slowPeerCollectionInterval;
+  private volatile long slowPeerCollectionInterval;
   private volatile int maxSlowPeerReportNodes;
 
   @Nullable
@@ -253,7 +253,6 @@ public class DatanodeManager {
     final boolean dataNodePeerStatsEnabledVal =
         conf.getBoolean(DFSConfigKeys.DFS_DATANODE_PEER_STATS_ENABLED_KEY,
             DFSConfigKeys.DFS_DATANODE_PEER_STATS_ENABLED_DEFAULT);
-    initSlowPeerTracker(conf, timer, dataNodePeerStatsEnabledVal);
     this.maxSlowPeerReportNodes = conf.getInt(
         DFSConfigKeys.DFS_NAMENODE_MAX_SLOWPEER_COLLECT_NODES_KEY,
         DFSConfigKeys.DFS_NAMENODE_MAX_SLOWPEER_COLLECT_NODES_DEFAULT);
@@ -261,9 +260,7 @@ public class DatanodeManager {
         DFSConfigKeys.DFS_NAMENODE_SLOWPEER_COLLECT_INTERVAL_KEY,
         DFSConfigKeys.DFS_NAMENODE_SLOWPEER_COLLECT_INTERVAL_DEFAULT,
         TimeUnit.MILLISECONDS);
-    if (slowPeerTracker.isSlowPeerTrackerEnabled()) {
-      startSlowPeerCollector();
-    }
+    initSlowPeerTracker(conf, timer, dataNodePeerStatsEnabledVal);
     this.slowDiskTracker = dataNodeDiskStatsEnabled ?
         new SlowDiskTracker(conf, timer) : null;
     this.defaultXferPort = NetUtils.createSocketAddr(
@@ -376,10 +373,16 @@ public class DatanodeManager {
     this.slowPeerTracker = dataNodePeerStatsEnabled ?
         new SlowPeerTracker(conf, timer) :
         new SlowPeerDisabledTracker(conf, timer);
+    if (slowPeerTracker.isSlowPeerTrackerEnabled()) {
+      startSlowPeerCollector();
+    } else {
+      stopSlowPeerCollector();
+    }
   }
 
   private void startSlowPeerCollector() {
     if (slowPeerCollectorDaemon != null) {
+      LOG.warn("Slow peers collection thread has been started.");
       return;
     }
     slowPeerCollectorDaemon = new Daemon(new Runnable() {
@@ -402,9 +405,11 @@ public class DatanodeManager {
       }
     });
     slowPeerCollectorDaemon.start();
+    LOG.info("Slow peers collection thread start.");
   }
 
-  public void stopSlowPeerCollector() {
+  private void stopSlowPeerCollector() {
+    LOG.info("Slow peers collection thread shutdown");
     if (slowPeerCollectorDaemon == null) {
       return;
     }
@@ -413,6 +418,20 @@ public class DatanodeManager {
       slowPeerCollectorDaemon.join();
     } catch (InterruptedException e) {
       LOG.error("Slow peers collection thread did not shutdown", e);
+    } finally {
+      slowPeerCollectorDaemon = null;
+      slowNodesUuidSet.clear();
+    }
+  }
+
+  public void restartSlowPeerCollector(long interval) {
+    Preconditions.checkNotNull(slowPeerCollectorDaemon,
+        "slowPeerCollectorDaemon thread is null, not support restart");
+    stopSlowPeerCollector();
+    Preconditions.checkNotNull(slowPeerTracker, "slowPeerTracker should not be un-assigned");
+    this.slowPeerCollectionInterval = interval;
+    if (slowPeerTracker.isSlowPeerTrackerEnabled()) {
+      startSlowPeerCollector();
     }
   }
 
@@ -504,7 +523,9 @@ public class DatanodeManager {
   }
 
   private boolean isInactive(DatanodeInfo datanode) {
-    return datanode.isDecommissioned() || datanode.isEnteringMaintenance() ||
+    return datanode.isDecommissioned() ||
+        datanode.isDecommissionInProgress() ||
+        datanode.isEnteringMaintenance() ||
         (avoidStaleDataNodesForRead && datanode.isStale(staleInterval));
   }
 
@@ -533,7 +554,7 @@ public class DatanodeManager {
   /**
    * Sort the non-striped located blocks by the distance to the target host.
    *
-   * For striped blocks, it will only move decommissioned/stale/slow
+   * For striped blocks, it will only move decommissioned/decommissioning/stale/slow
    * nodes to the bottom. For example, assume we have storage list:
    * d0, d1, d2, d3, d4, d5, d6, d7, d8, d9
    * mapping to block indices:
@@ -563,7 +584,7 @@ public class DatanodeManager {
   }
 
   /**
-   * Move decommissioned/entering_maintenance/stale/slow
+   * Move decommissioned/decommissioning/entering_maintenance/stale/slow
    * datanodes to the bottom. After sorting it will
    * update block indices and block tokens respectively.
    *
@@ -581,7 +602,8 @@ public class DatanodeManager {
       locToIndex.put(di[i], lsb.getBlockIndices()[i]);
       locToToken.put(di[i], lsb.getBlockTokens()[i]);
     }
-    // Move decommissioned/stale datanodes to the bottom
+    // Arrange the order of datanodes as follows:
+    // live(in-service) -> stale -> entering_maintenance -> decommissioning -> decommissioned
     Arrays.sort(di, comparator);
 
     // must update cache since we modified locations array
@@ -595,7 +617,7 @@ public class DatanodeManager {
   }
 
   /**
-   * Move decommissioned/entering_maintenance/stale/slow
+   * Move decommissioned/decommissioning/entering_maintenance/stale/slow
    * datanodes to the bottom. Also, sort nodes by network
    * distance.
    *
@@ -627,8 +649,8 @@ public class DatanodeManager {
     }
 
     DatanodeInfoWithStorage[] di = lb.getLocations();
-    // Move decommissioned/entering_maintenance/stale/slow
-    // datanodes to the bottom
+    // Arrange the order of datanodes as follows:
+    // live(in-service) -> stale -> entering_maintenance -> decommissioning -> decommissioned
     Arrays.sort(di, comparator);
 
     // Sort nodes by network distance only for located blocks
@@ -842,9 +864,7 @@ public class DatanodeManager {
     decrementVersionCount(nodeInfo.getSoftwareVersion());
     blockManager.getBlockReportLeaseManager().unregister(nodeInfo);
 
-    if (LOG.isDebugEnabled()) {
-      LOG.debug("remove datanode " + nodeInfo);
-    }
+    LOG.debug("remove datanode {}.", nodeInfo);
     blockManager.checkSafeMode();
   }
 
@@ -906,8 +926,8 @@ public class DatanodeManager {
     resolveUpgradeDomain(node);
 
     if (LOG.isDebugEnabled()) {
-      LOG.debug(getClass().getSimpleName() + ".addDatanode: "
-          + "node " + node + " is added to datanodeMap.");
+      LOG.debug("{}.addDatanode: node {} is added to datanodeMap.",
+          getClass().getSimpleName(), node);
     }
   }
 
@@ -918,9 +938,8 @@ public class DatanodeManager {
       host2DatanodeMap.remove(datanodeMap.remove(key));
     }
     if (LOG.isDebugEnabled()) {
-      LOG.debug(getClass().getSimpleName() + ".wipeDatanode("
-          + node + "): storage " + key 
-          + " is removed from datanodeMap.");
+      LOG.debug("{}.wipeDatanode({}): storage {} is removed from datanodeMap.",
+          getClass().getSimpleName(), node, key);
     }
   }
 
@@ -1189,10 +1208,7 @@ public class DatanodeManager {
           // The same datanode has been just restarted to serve the same data 
           // storage. We do not need to remove old data blocks, the delta will
           // be calculated on the next block report from the datanode
-          if(NameNode.stateChangeLog.isDebugEnabled()) {
-            NameNode.stateChangeLog.debug("BLOCK* registerDatanode: "
-                + "node restarted.");
-          }
+          NameNode.stateChangeLog.debug("BLOCK* registerDatanode: node restarted.");
         } else {
           // nodeS is found
           /* The registering datanode is a replacement node for the existing 
@@ -1333,8 +1349,8 @@ public class DatanodeManager {
     // Update the file names and refresh internal includes and excludes list.
     if (conf == null) {
       conf = new HdfsConfiguration();
-      this.hostConfigManager.setConf(conf);
     }
+    this.hostConfigManager.setConf(conf);
     this.hostConfigManager.refresh();
   }
   
@@ -1535,9 +1551,11 @@ public class DatanodeManager {
             "now be replicated cross-rack";
         LOG.info(message);
       } else {
-        message += "Not checking for mis-replicated blocks because this NN is " +
-            "not yet processing repl queues.";
-        LOG.debug(message);
+        if (LOG.isDebugEnabled()) {
+          message += "Not checking for mis-replicated blocks because this NN "
+              + "is not yet processing repl queues.";
+          LOG.debug(message);
+        }
       }
       hasClusterEverBeenMultiRack = true;
       if (blockManager.isPopulatingReplQueues()) {
@@ -1659,11 +1677,9 @@ public class DatanodeManager {
     }
 
     if (LOG.isDebugEnabled()) {
-      LOG.debug("getDatanodeListForReport with " +
-          "includedNodes = " + hostConfigManager.getIncludes() +
-          ", excludedNodes = " + hostConfigManager.getExcludes() +
-          ", foundNodes = " + foundNodes +
-          ", nodes = " + nodes);
+      LOG.debug("getDatanodeListForReport with includedNodes = {}, excludedNodes = {}"
+              + ", foundNodes = {}, nodes = {}.", hostConfigManager.getIncludes(),
+          hostConfigManager.getExcludes(), foundNodes, nodes);
     }
     return nodes;
   }
@@ -1713,12 +1729,15 @@ public class DatanodeManager {
             " where it is not under construction.");
       }
       final DatanodeStorageInfo[] storages = uc.getExpectedStorageLocations();
-      // Skip stale nodes during recovery
-      final List<DatanodeStorageInfo> recoveryLocations =
+      // Skip stale and dead nodes during recovery.
+      List<DatanodeStorageInfo> recoveryLocations =
           new ArrayList<>(storages.length);
-      for (DatanodeStorageInfo storage : storages) {
-        if (!storage.getDatanodeDescriptor().isStale(staleInterval)) {
-          recoveryLocations.add(storage);
+      List<Integer> storageIdx = new ArrayList<>(storages.length);
+      for (int i = 0; i < storages.length; ++i) {
+        if (!storages[i].getDatanodeDescriptor().isStale(staleInterval) &&
+            storages[i].getDatanodeDescriptor().isAlive()) {
+          recoveryLocations.add(storages[i]);
+          storageIdx.add(i);
         }
       }
       // If we are performing a truncate recovery than set recovery fields
@@ -1729,20 +1748,31 @@ public class DatanodeManager {
       ExtendedBlock primaryBlock = (copyOnTruncateRecovery) ?
           new ExtendedBlock(blockPoolId, uc.getTruncateBlock()) :
           new ExtendedBlock(blockPoolId, b);
-      // If we only get 1 replica after eliminating stale nodes, choose all
+      // If we only get 1 replica after eliminating stale and dead nodes, choose all live
       // replicas for recovery and let the primary data node handle failures.
       DatanodeInfo[] recoveryInfos;
       if (recoveryLocations.size() > 1) {
         if (recoveryLocations.size() != storages.length) {
-          LOG.info("Skipped stale nodes for recovery : "
+          LOG.info("Skipped stale and dead nodes for recovery : "
               + (storages.length - recoveryLocations.size()));
         }
-        recoveryInfos = DatanodeStorageInfo.toDatanodeInfos(recoveryLocations);
       } else {
-        // If too many replicas are stale, then choose all replicas to
+        // If too many replicas are stale, then choose all live replicas to
         // participate in block recovery.
-        recoveryInfos = DatanodeStorageInfo.toDatanodeInfos(storages);
+        recoveryLocations.clear();
+        storageIdx.clear();
+        for (int i = 0; i < storages.length; ++i) {
+          if (storages[i].getDatanodeDescriptor().isAlive()) {
+            recoveryLocations.add(storages[i]);
+            storageIdx.add(i);
+          }
+        }
+        if (recoveryLocations.size() != storages.length) {
+          LOG.info("Skipped dead nodes for recovery : {}",
+              storages.length - recoveryLocations.size());
+        }
       }
+      recoveryInfos = DatanodeStorageInfo.toDatanodeInfos(recoveryLocations);
       RecoveringBlock rBlock;
       if (truncateRecovery) {
         Block recoveryBlock = (copyOnTruncateRecovery) ? b : uc.getTruncateBlock();
@@ -1751,7 +1781,8 @@ public class DatanodeManager {
         rBlock = new RecoveringBlock(primaryBlock, recoveryInfos,
             uc.getBlockRecoveryId());
         if (b.isStriped()) {
-          rBlock = new RecoveringStripedBlock(rBlock, uc.getBlockIndices(),
+          rBlock = new RecoveringStripedBlock(rBlock,
+              uc.getBlockIndicesForSpecifiedStorages(storageIdx),
               ((BlockInfoStriped) b).getErasureCodingPolicy());
         }
       }
@@ -1831,30 +1862,41 @@ public class DatanodeManager {
     // Allocate _approximately_ maxTransfers pending tasks to DataNode.
     // NN chooses pending tasks based on the ratio between the lengths of
     // replication and erasure-coded block queues.
-    int totalReplicateBlocks = nodeinfo.getNumberOfReplicateBlocks();
-    int totalECBlocks = nodeinfo.getNumberOfBlocksToBeErasureCoded();
-    int totalBlocks = totalReplicateBlocks + totalECBlocks;
+    int replicationBlocks = nodeinfo.getNumberOfReplicateBlocks();
+    int ecBlocksToBeReplicated = nodeinfo.getNumberOfECBlocksToBeReplicated();
+    int ecBlocksToBeErasureCoded = nodeinfo.getNumberOfBlocksToBeErasureCoded();
+    int totalBlocks = replicationBlocks + ecBlocksToBeReplicated + ecBlocksToBeErasureCoded;
     if (totalBlocks > 0) {
-      int maxTransfers;
+      int maxTransfers = blockManager.getMaxReplicationStreams() - xmitsInProgress;
+      int maxECReplicatedTransfers;
       if (nodeinfo.isDecommissionInProgress()) {
-        maxTransfers = blockManager.getReplicationStreamsHardLimit()
+        maxECReplicatedTransfers = blockManager.getReplicationStreamsHardLimit()
             - xmitsInProgress;
       } else {
-        maxTransfers = blockManager.getMaxReplicationStreams()
-            - xmitsInProgress;
+        maxECReplicatedTransfers = maxTransfers;
       }
       int numReplicationTasks = (int) Math.ceil(
-          (double) (totalReplicateBlocks * maxTransfers) / totalBlocks);
-      int numECTasks = (int) Math.ceil(
-          (double) (totalECBlocks * maxTransfers) / totalBlocks);
-      if (LOG.isDebugEnabled()) {
-        LOG.debug("Pending replication tasks: " + numReplicationTasks
-            + " erasure-coded tasks: " + numECTasks);
-      }
+          (double) replicationBlocks * maxTransfers / totalBlocks);
+      int numEcReplicatedTasks = (int) Math.ceil(
+          (double) ecBlocksToBeReplicated * maxECReplicatedTransfers / totalBlocks);
+      int numECReconstructedTasks = (int) Math.ceil(
+          (double) ecBlocksToBeErasureCoded * maxTransfers / totalBlocks);
+      LOG.debug("Pending replication tasks: {} ec to be replicated tasks: {} " +
+                      "ec reconstruction tasks: {}.",
+          numReplicationTasks, numEcReplicatedTasks, numECReconstructedTasks);
       // check pending replication tasks
-      List<BlockTargetPair> pendingList = nodeinfo.getReplicationCommand(
+      List<BlockTargetPair> pendingReplicationList = nodeinfo.getReplicationCommand(
           numReplicationTasks);
-      if (pendingList != null && !pendingList.isEmpty()) {
+      List<BlockTargetPair> pendingECReplicatedList = nodeinfo.getECReplicatedCommand(
+              numEcReplicatedTasks);
+      List<BlockTargetPair> pendingList = new ArrayList<BlockTargetPair>();
+      if(pendingReplicationList != null && !pendingReplicationList.isEmpty()) {
+        pendingList.addAll(pendingReplicationList);
+      }
+      if(pendingECReplicatedList != null && !pendingECReplicatedList.isEmpty()) {
+        pendingList.addAll(pendingECReplicatedList);
+      }
+      if (!pendingList.isEmpty()) {
         // If the block is deleted, the block size will become
         // BlockCommand.NO_ACK (LONG.MAX_VALUE) . This kind of block we don't
         // need
@@ -1876,7 +1918,7 @@ public class DatanodeManager {
       }
       // check pending erasure coding tasks
       List<BlockECReconstructionInfo> pendingECList = nodeinfo
-          .getErasureCodeCommand(numECTasks);
+          .getErasureCodeCommand(numECReconstructedTasks);
       if (pendingECList != null && !pendingECList.isEmpty()) {
         cmds.add(new BlockECReconstructionCommand(
             DNA_ERASURE_CODING_RECONSTRUCTION, pendingECList));
@@ -1906,9 +1948,7 @@ public class DatanodeManager {
     if (slowPeerTracker.isSlowPeerTrackerEnabled()) {
       final Map<String, OutlierMetrics> slowPeersMap = slowPeers.getSlowPeers();
       if (!slowPeersMap.isEmpty()) {
-        if (LOG.isDebugEnabled()) {
-          LOG.debug("DataNode " + nodeReg + " reported slow peers: " + slowPeersMap);
-        }
+        LOG.debug("DataNode {} reported slow peers: {}.", nodeReg, slowPeersMap);
         for (Map.Entry<String, OutlierMetrics> slowNodeEntry : slowPeersMap.entrySet()) {
           slowPeerTracker.addReport(slowNodeEntry.getKey(), nodeReg.getIpcAddr(false),
               slowNodeEntry.getValue());
@@ -1918,10 +1958,7 @@ public class DatanodeManager {
 
     if (slowDiskTracker != null) {
       if (!slowDisks.getSlowDisks().isEmpty()) {
-        if (LOG.isDebugEnabled()) {
-          LOG.debug("DataNode " + nodeReg + " reported slow disks: " +
-              slowDisks.getSlowDisks());
-        }
+        LOG.debug("DataNode {} reported slow disks: {}.", nodeReg, slowDisks.getSlowDisks());
         slowDiskTracker.addSlowDiskReport(nodeReg.getIpcAddr(false), slowDisks);
       }
       slowDiskTracker.checkAndUpdateReportIfNecessary();
@@ -1950,9 +1987,7 @@ public class DatanodeManager {
       StorageReport[] reports, long cacheCapacity,
       long cacheUsed, int xceiverCount, int failedVolumes,
       VolumeFailureSummary volumeFailureSummary) throws IOException {
-    if (LOG.isDebugEnabled()) {
-      LOG.debug("Received handleLifeline from nodeReg = " + nodeReg);
-    }
+    LOG.debug("Received handleLifeline from nodeReg = {}.", nodeReg);
     DatanodeDescriptor nodeinfo = getDatanode(nodeReg);
     if (nodeinfo == null || !nodeinfo.isRegistered()) {
       // This can happen if the lifeline message comes when DataNode is either
@@ -2099,6 +2134,17 @@ public class DatanodeManager {
           final int xceivers = heartbeatManager
             .getInServiceXceiverCount();
           avgLoad = (double)xceivers/nodes;
+        }
+        return avgLoad;
+      }
+
+      @Override
+      public double getInServiceXceiverAverageForVolume() {
+        double avgLoad = 0;
+        final int volumes = heartbeatManager.getInServiceAvailableVolumeCount();
+        if (volumes > 0) {
+          final long xceivers = heartbeatManager.getInServiceXceiverCount();
+          avgLoad = (double)xceivers/volumes;
         }
         return avgLoad;
       }
@@ -2260,5 +2306,15 @@ public class DatanodeManager {
   public void setMaxSlowPeersToReport(int maxSlowPeersToReport) {
     Preconditions.checkNotNull(slowPeerTracker, "slowPeerTracker should not be un-assigned");
     slowPeerTracker.setMaxSlowPeersToReport(maxSlowPeersToReport);
+  }
+
+  @VisibleForTesting
+  public boolean isSlowPeerCollectorInitialized() {
+    return slowPeerCollectorDaemon == null;
+  }
+
+  @VisibleForTesting
+  public long getSlowPeerCollectionInterval() {
+    return slowPeerCollectionInterval;
   }
 }

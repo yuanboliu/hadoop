@@ -39,9 +39,9 @@ import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.fs.azurebfs.AbstractAbfsIntegrationTest;
 import org.apache.hadoop.fs.azurebfs.AzureBlobFileSystem;
 import org.apache.hadoop.fs.azurebfs.AzureBlobFileSystemStore;
-import org.apache.hadoop.fs.azurebfs.contracts.exceptions.AzureBlobFileSystemException;
 import org.apache.hadoop.fs.azurebfs.contracts.exceptions.TimeoutException;
 import org.apache.hadoop.fs.azurebfs.contracts.services.ReadBufferStatus;
+import org.apache.hadoop.fs.azurebfs.security.ContextEncryptionAdapter;
 import org.apache.hadoop.fs.azurebfs.utils.TestCachedSASToken;
 import org.apache.hadoop.fs.azurebfs.utils.TracingContext;
 import org.apache.hadoop.fs.impl.OpenFileParameters;
@@ -49,6 +49,7 @@ import org.apache.hadoop.fs.impl.OpenFileParameters;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.nullable;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
@@ -81,6 +82,12 @@ public class TestAbfsInputStream extends
   private static final int INCREASED_READ_BUFFER_AGE_THRESHOLD =
       REDUCED_READ_BUFFER_AGE_THRESHOLD * 10; // 30 sec
   private static final int ALWAYS_READ_BUFFER_SIZE_TEST_FILE_SIZE = 16 * ONE_MB;
+
+  @Override
+  public void teardown() throws Exception {
+    super.teardown();
+    ReadBufferManager.getBufferManager().testResetReadBufferManager();
+  }
 
   private AbfsRestOperation getMockRestOp() {
     AbfsRestOperation op = mock(AbfsRestOperation.class);
@@ -162,14 +169,14 @@ public class TestAbfsInputStream extends
             inputStream.getTracingContext());
   }
 
-  private void verifyReadCallCount(AbfsClient client, int count) throws
-      AzureBlobFileSystemException, InterruptedException {
+  private void verifyReadCallCount(AbfsClient client, int count)
+      throws IOException, InterruptedException {
     // ReadAhead threads are triggered asynchronously.
     // Wait a second before verifying the number of total calls.
     Thread.sleep(1000);
     verify(client, times(count)).read(any(String.class), any(Long.class),
         any(byte[].class), any(Integer.class), any(Integer.class),
-        any(String.class), any(String.class), any(TracingContext.class));
+        any(String.class), any(String.class), any(), any(TracingContext.class));
   }
 
   private void checkEvictedStatus(AbfsInputStream inputStream, int position, boolean expectedToThrowException)
@@ -235,7 +242,8 @@ public class TestAbfsInputStream extends
         .ofNullable(new OpenFileParameters().withStatus(fileStatus)), null, tracingContext);
     verify(mockClient, times(0).description((String.format(
         "FileStatus [from %s result] provided, GetFileStatus should not be invoked",
-        source)))).getPathStatus(anyString(), anyBoolean(), any(TracingContext.class));
+        source)))).getPathStatus(anyString(), anyBoolean(), any(TracingContext.class), any(
+        ContextEncryptionAdapter.class));
 
     // verify GetPathStatus invoked when FileStatus not provided
     abfsStore.openFileForRead(testFile,
@@ -243,7 +251,8 @@ public class TestAbfsInputStream extends
         tracingContext);
     verify(mockClient, times(1).description(
         "GetPathStatus should be invoked when FileStatus not provided"))
-        .getPathStatus(anyString(), anyBoolean(), any(TracingContext.class));
+        .getPathStatus(anyString(), anyBoolean(), any(TracingContext.class), nullable(
+            ContextEncryptionAdapter.class));
 
     Mockito.reset(mockClient); //clears invocation count for next test case
   }
@@ -324,7 +333,7 @@ public class TestAbfsInputStream extends
         .when(client)
         .read(any(String.class), any(Long.class), any(byte[].class),
             any(Integer.class), any(Integer.class), any(String.class),
-            any(String.class), any(TracingContext.class));
+            any(String.class), any(), any(TracingContext.class));
 
     AbfsInputStream inputStream = getAbfsInputStream(client, "testFailedReadAhead.txt");
 
@@ -358,7 +367,7 @@ public class TestAbfsInputStream extends
         .when(client)
         .read(any(String.class), any(Long.class), any(byte[].class),
             any(Integer.class), any(Integer.class), any(String.class),
-            any(String.class), any(TracingContext.class));
+            any(String.class), any(), any(TracingContext.class));
 
     AbfsInputStream inputStream = getAbfsInputStream(client, "testFailedReadAheadEviction.txt");
 
@@ -403,7 +412,7 @@ public class TestAbfsInputStream extends
         .when(client)
         .read(any(String.class), any(Long.class), any(byte[].class),
             any(Integer.class), any(Integer.class), any(String.class),
-            any(String.class), any(TracingContext.class));
+            any(String.class), any(), any(TracingContext.class));
 
     AbfsInputStream inputStream = getAbfsInputStream(client, "testOlderReadAheadFailure.txt");
 
@@ -457,7 +466,7 @@ public class TestAbfsInputStream extends
         .when(client)
         .read(any(String.class), any(Long.class), any(byte[].class),
             any(Integer.class), any(Integer.class), any(String.class),
-            any(String.class), any(TracingContext.class));
+            any(String.class), any(), any(TracingContext.class));
 
     AbfsInputStream inputStream = getAbfsInputStream(client, "testSuccessfulReadAhead.txt");
     int beforeReadCompletedListSize = ReadBufferManager.getBufferManager().getCompletedReadListSize();
@@ -494,6 +503,70 @@ public class TestAbfsInputStream extends
   }
 
   /**
+   * This test expects InProgressList is not purged by the inputStream close.
+   */
+  @Test
+  public void testStreamPurgeDuringReadAheadCallExecuting() throws Exception {
+    AbfsClient client = getMockAbfsClient();
+    AbfsRestOperation successOp = getMockRestOp();
+    final Long serverCommunicationMockLatency = 3_000L;
+    final Long readBufferTransferToInProgressProbableTime = 1_000L;
+    final Integer readBufferQueuedCount = 3;
+
+    Mockito.doAnswer(invocationOnMock -> {
+          //sleeping thread to mock the network latency from client to backend.
+          Thread.sleep(serverCommunicationMockLatency);
+          return successOp;
+        })
+        .when(client)
+        .read(any(String.class), any(Long.class), any(byte[].class),
+            any(Integer.class), any(Integer.class), any(String.class),
+            any(String.class), nullable(ContextEncryptionAdapter.class),
+            any(TracingContext.class));
+
+    final ReadBufferManager readBufferManager
+        = ReadBufferManager.getBufferManager();
+
+    final int readBufferTotal = readBufferManager.getNumBuffers();
+    final int expectedFreeListBufferCount = readBufferTotal
+        - readBufferQueuedCount;
+
+    try (AbfsInputStream inputStream = getAbfsInputStream(client,
+        "testSuccessfulReadAhead.txt")) {
+      // As this is try-with-resources block, the close() method of the created
+      // abfsInputStream object shall be called on the end of the block.
+      queueReadAheads(inputStream);
+
+      //Sleeping to give ReadBufferWorker to pick the readBuffers for processing.
+      Thread.sleep(readBufferTransferToInProgressProbableTime);
+
+      Assertions.assertThat(readBufferManager.getInProgressCopiedList())
+          .describedAs(String.format("InProgressList should have %d elements",
+              readBufferQueuedCount))
+          .hasSize(readBufferQueuedCount);
+      Assertions.assertThat(readBufferManager.getFreeListCopy())
+          .describedAs(String.format("FreeList should have %d elements",
+              expectedFreeListBufferCount))
+          .hasSize(expectedFreeListBufferCount);
+      Assertions.assertThat(readBufferManager.getCompletedReadListCopy())
+          .describedAs("CompletedList should have 0 elements")
+          .hasSize(0);
+    }
+
+    Assertions.assertThat(readBufferManager.getInProgressCopiedList())
+        .describedAs(String.format("InProgressList should have %d elements",
+            readBufferQueuedCount))
+        .hasSize(readBufferQueuedCount);
+    Assertions.assertThat(readBufferManager.getFreeListCopy())
+        .describedAs(String.format("FreeList should have %d elements",
+            expectedFreeListBufferCount))
+        .hasSize(expectedFreeListBufferCount);
+    Assertions.assertThat(readBufferManager.getCompletedReadListCopy())
+        .describedAs("CompletedList should have 0 elements")
+        .hasSize(0);
+  }
+
+  /**
    * This test expects ReadAheadManager to throw exception if the read ahead
    * thread had failed within the last thresholdAgeMilliseconds.
    * Also checks that the ReadBuffers are evicted as per the ReadBufferManager
@@ -515,7 +588,7 @@ public class TestAbfsInputStream extends
         .when(client)
         .read(any(String.class), any(Long.class), any(byte[].class),
             any(Integer.class), any(Integer.class), any(String.class),
-            any(String.class), any(TracingContext.class));
+            any(String.class), any(), any(TracingContext.class));
 
     AbfsInputStream inputStream = getAbfsInputStream(client, "testReadAheadManagerForFailedReadAhead.txt");
 
@@ -568,7 +641,7 @@ public class TestAbfsInputStream extends
         .when(client)
         .read(any(String.class), any(Long.class), any(byte[].class),
             any(Integer.class), any(Integer.class), any(String.class),
-            any(String.class), any(TracingContext.class));
+            any(String.class), any(), any(TracingContext.class));
 
     AbfsInputStream inputStream = getAbfsInputStream(client, "testReadAheadManagerForOlderReadAheadFailure.txt");
 
@@ -622,7 +695,7 @@ public class TestAbfsInputStream extends
         .when(client)
         .read(any(String.class), any(Long.class), any(byte[].class),
             any(Integer.class), any(Integer.class), any(String.class),
-            any(String.class), any(TracingContext.class));
+            any(String.class), any(), any(TracingContext.class));
 
     AbfsInputStream inputStream = getAbfsInputStream(client, "testSuccessfulReadAhead.txt");
 

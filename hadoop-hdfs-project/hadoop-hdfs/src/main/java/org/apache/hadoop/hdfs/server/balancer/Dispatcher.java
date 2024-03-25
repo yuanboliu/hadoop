@@ -164,7 +164,7 @@ public class Dispatcher {
       }
     }
 
-    /** Aloocate a single lot of items */
+    /** Allocate a single lot of items. */
     int allocate() {
       return allocate(lotSize);
     }
@@ -839,7 +839,7 @@ public class Dispatcher {
       final long size = Math.min(getBlocksSize, blocksToReceive);
       final BlocksWithLocations newBlksLocs =
           nnc.getBlocks(getDatanodeInfo(), size, getBlocksMinBlockSize,
-              hotBlockTimeInterval);
+              hotBlockTimeInterval, storageType);
 
       if (LOG.isTraceEnabled()) {
         LOG.trace("getBlocks(" + getDatanodeInfo() + ", "
@@ -1127,7 +1127,7 @@ public class Dispatcher {
     return nnc.getBytesMoved().get();
   }
 
-  long getBblocksMoved() {
+  long getBlocksMoved() {
     return nnc.getBlocksMoved().get();
   }
 
@@ -1234,7 +1234,7 @@ public class Dispatcher {
    */
   private long dispatchBlockMoves() throws InterruptedException {
     final long bytesLastMoved = getBytesMoved();
-    final long blocksLastMoved = getBblocksMoved();
+    final long blocksLastMoved = getBlocksMoved();
     final Future<?>[] futures = new Future<?>[sources.size()];
 
     int concurrentThreads = Math.min(sources.size(),
@@ -1284,7 +1284,7 @@ public class Dispatcher {
     waitForMoveCompletion(targets);
     LOG.info("Total bytes (blocks) moved in this iteration {} ({})",
         StringUtils.byteDesc(getBytesMoved() - bytesLastMoved),
-        (getBblocksMoved() - blocksLastMoved));
+        (getBlocksMoved() - blocksLastMoved));
 
     return getBytesMoved() - bytesLastMoved;
   }

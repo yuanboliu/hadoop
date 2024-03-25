@@ -28,6 +28,7 @@ import org.apache.hadoop.hdfs.server.namenode.NameNode;
 import org.apache.hadoop.hdfs.server.namenode.ha.ConfiguredFailoverProxyProvider;
 import org.apache.hadoop.hdfs.server.namenode.ha.HATestUtil;
 
+import java.io.File;
 import java.io.IOException;
 import java.net.BindException;
 import java.net.URI;
@@ -35,7 +36,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Random;
 
-public class MiniQJMHACluster {
+public class MiniQJMHACluster implements AutoCloseable {
   private MiniDFSCluster cluster;
   private MiniJournalCluster journalCluster;
   private final Configuration conf;
@@ -58,6 +59,13 @@ public class MiniQJMHACluster {
       // most QJMHACluster tests don't need DataNodes, so we'll make
       // this the default
       this.dfsBuilder = new MiniDFSCluster.Builder(conf).numDataNodes(0);
+    }
+
+    public Builder(Configuration conf, File baseDir) {
+      this.conf = conf;
+      // most QJMHACluster tests don't need DataNodes, so we'll make
+      // this the default
+      this.dfsBuilder = new MiniDFSCluster.Builder(conf, baseDir).numDataNodes(0);
     }
 
     public MiniDFSCluster.Builder getDfsBuilder() {
@@ -189,4 +197,15 @@ public class MiniQJMHACluster {
     cluster.shutdown();
     journalCluster.shutdown();
   }
+
+  @Override
+  public void close() {
+    try {
+      shutdown();
+    } catch (IOException shutdownFailure) {
+      LOG.warn("Exception while closing journal cluster", shutdownFailure);
+    }
+
+  }
+
 }

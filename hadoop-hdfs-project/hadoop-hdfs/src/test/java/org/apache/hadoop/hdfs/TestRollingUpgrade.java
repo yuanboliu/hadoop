@@ -33,6 +33,11 @@ import javax.management.ObjectName;
 import javax.management.ReflectionException;
 import javax.management.openmbean.CompositeDataSupport;
 
+import org.apache.hadoop.hdfs.protocol.HdfsConstants;
+import org.apache.hadoop.hdfs.server.namenode.NameNode;
+import org.apache.hadoop.hdfs.server.namenode.ha.HATestUtil;
+import org.junit.Rule;
+import org.junit.rules.TemporaryFolder;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.apache.hadoop.conf.Configuration;
@@ -40,9 +45,9 @@ import org.apache.hadoop.fs.FSDataOutputStream;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.FileUtil;
 import org.apache.hadoop.fs.Path;
+import org.apache.hadoop.fs.SafeModeAction;
 import org.apache.hadoop.hdfs.MiniDFSCluster.DataNodeProperties;
 import org.apache.hadoop.hdfs.protocol.HdfsConstants.RollingUpgradeAction;
-import org.apache.hadoop.hdfs.protocol.HdfsConstants.SafeModeAction;
 import org.apache.hadoop.hdfs.protocol.RollingUpgradeInfo;
 import org.apache.hadoop.hdfs.qjournal.MiniJournalCluster;
 import org.apache.hadoop.hdfs.qjournal.MiniQJMHACluster;
@@ -80,6 +85,9 @@ public class TestRollingUpgrade {
     }
   }
 
+  @Rule
+  public TemporaryFolder baseDir = new TemporaryFolder();
+
   /**
    * Test DFSAdmin Upgrade Command.
    */
@@ -87,9 +95,9 @@ public class TestRollingUpgrade {
   public void testDFSAdminRollingUpgradeCommands() throws Exception {
     // start a cluster
     final Configuration conf = new HdfsConfiguration();
-    MiniDFSCluster cluster = null;
-    try {
-      cluster = new MiniDFSCluster.Builder(conf).numDataNodes(0).build();
+    try (MiniDFSCluster cluster = new MiniDFSCluster.Builder(conf, baseDir.getRoot())
+        .numDataNodes(0)
+        .build()) {
       cluster.waitActive();
 
       final Path foo = new Path("/foo");
@@ -109,9 +117,9 @@ public class TestRollingUpgrade {
         runCmd(dfsadmin, true, "-rollingUpgrade");
 
         //start rolling upgrade
-        dfs.setSafeMode(SafeModeAction.SAFEMODE_ENTER);
+        dfs.setSafeMode(SafeModeAction.ENTER);
         runCmd(dfsadmin, true, "-rollingUpgrade", "prepare");
-        dfs.setSafeMode(SafeModeAction.SAFEMODE_LEAVE);
+        dfs.setSafeMode(SafeModeAction.LEAVE);
 
         //query rolling upgrade
         runCmd(dfsadmin, true, "-rollingUpgrade", "query");
@@ -136,9 +144,9 @@ public class TestRollingUpgrade {
         Assert.assertTrue(dfs.exists(bar));
         Assert.assertTrue(dfs.exists(baz));
 
-        dfs.setSafeMode(SafeModeAction.SAFEMODE_ENTER);
+        dfs.setSafeMode(SafeModeAction.ENTER);
         dfs.saveNamespace();
-        dfs.setSafeMode(SafeModeAction.SAFEMODE_LEAVE);
+        dfs.setSafeMode(SafeModeAction.LEAVE);
       }
 
       // Ensure directories exist after restart
@@ -149,8 +157,6 @@ public class TestRollingUpgrade {
         Assert.assertTrue(dfs.exists(bar));
         Assert.assertTrue(dfs.exists(baz));
       }
-    } finally {
-      if(cluster != null) cluster.shutdown();
     }
   }
 
@@ -173,114 +179,116 @@ public class TestRollingUpgrade {
     LOG.info("nn2Dir=" + nn2Dir);
 
     final Configuration conf = new HdfsConfiguration();
-    final MiniJournalCluster mjc = new MiniJournalCluster.Builder(conf).build();
-    mjc.waitActive();
-    setConf(conf, nn1Dir, mjc);
+    try (MiniJournalCluster mjc = new MiniJournalCluster.Builder(conf, baseDir.getRoot())
+        .build()) {
+      mjc.waitActive();
+      setConf(conf, nn1Dir, mjc);
 
-    {
-      // Start the cluster once to generate the dfs dirs
-      final MiniDFSCluster cluster = new MiniDFSCluster.Builder(conf)
-        .numDataNodes(0)
-        .manageNameDfsDirs(false)
-        .checkExitOnShutdown(false)
-        .build();
-      // Shutdown the cluster before making a copy of the namenode dir to release
-      // all file locks, otherwise, the copy will fail on some platforms.
-      cluster.shutdown();
-    }
-
-    MiniDFSCluster cluster2 = null;
-    try {
-      // Start a second NN pointed to the same quorum.
-      // We need to copy the image dir from the first NN -- or else
-      // the new NN will just be rejected because of Namespace mismatch.
-      FileUtil.fullyDelete(nn2Dir);
-      FileUtil.copy(nn1Dir, FileSystem.getLocal(conf).getRaw(),
-          new Path(nn2Dir.getAbsolutePath()), false, conf);
-
-      // Start the cluster again
-      final MiniDFSCluster cluster = new MiniDFSCluster.Builder(conf)
-        .numDataNodes(0)
-        .format(false)
-        .manageNameDfsDirs(false)
-        .checkExitOnShutdown(false)
-        .build();
-
-      final Path foo = new Path("/foo");
-      final Path bar = new Path("/bar");
-      final Path baz = new Path("/baz");
-
-      final RollingUpgradeInfo info1;
       {
-        final DistributedFileSystem dfs = cluster.getFileSystem();
-        dfs.mkdirs(foo);
-
-        //start rolling upgrade
-        dfs.setSafeMode(SafeModeAction.SAFEMODE_ENTER);
-        info1 = dfs.rollingUpgrade(RollingUpgradeAction.PREPARE);
-        dfs.setSafeMode(SafeModeAction.SAFEMODE_LEAVE);
-        LOG.info("START\n" + info1);
-
-        //query rolling upgrade
-        assertEquals(info1, dfs.rollingUpgrade(RollingUpgradeAction.QUERY));
-
-        dfs.mkdirs(bar);
+        // Start the cluster once to generate the dfs dirs
+        final MiniDFSCluster cluster = new MiniDFSCluster.Builder(conf, baseDir.getRoot())
+            .numDataNodes(0)
+            .manageNameDfsDirs(false)
+            .checkExitOnShutdown(false)
+            .build();
+        // Shutdown the cluster before making a copy of the namenode dir to release
+        // all file locks, otherwise, the copy will fail on some platforms.
         cluster.shutdown();
       }
 
-      // cluster2 takes over QJM
-      final Configuration conf2 = setConf(new Configuration(), nn2Dir, mjc);
-      cluster2 = new MiniDFSCluster.Builder(conf2)
-        .numDataNodes(0)
-        .format(false)
-        .manageNameDfsDirs(false)
-        .build();
-      final DistributedFileSystem dfs2 = cluster2.getFileSystem();
-
-      // Check that cluster2 sees the edits made on cluster1
-      Assert.assertTrue(dfs2.exists(foo));
-      Assert.assertTrue(dfs2.exists(bar));
-      Assert.assertFalse(dfs2.exists(baz));
-
-      //query rolling upgrade in cluster2
-      assertEquals(info1, dfs2.rollingUpgrade(RollingUpgradeAction.QUERY));
-
-      dfs2.mkdirs(baz);
-
-      LOG.info("RESTART cluster 2");
-      cluster2.restartNameNode();
-      assertEquals(info1, dfs2.rollingUpgrade(RollingUpgradeAction.QUERY));
-      Assert.assertTrue(dfs2.exists(foo));
-      Assert.assertTrue(dfs2.exists(bar));
-      Assert.assertTrue(dfs2.exists(baz));
-
-      //restart cluster with -upgrade should fail.
+      MiniDFSCluster cluster2 = null;
       try {
-        cluster2.restartNameNode("-upgrade");
-      } catch(IOException e) {
-        LOG.info("The exception is expected.", e);
+        // Start a second NN pointed to the same quorum.
+        // We need to copy the image dir from the first NN -- or else
+        // the new NN will just be rejected because of Namespace mismatch.
+        FileUtil.fullyDelete(nn2Dir);
+        FileUtil.copy(nn1Dir, FileSystem.getLocal(conf).getRaw(),
+            new Path(nn2Dir.getAbsolutePath()), false, conf);
+
+        // Start the cluster again
+        final MiniDFSCluster cluster = new MiniDFSCluster.Builder(conf, baseDir.getRoot())
+            .numDataNodes(0)
+            .format(false)
+            .manageNameDfsDirs(false)
+            .checkExitOnShutdown(false)
+            .build();
+
+        final Path foo = new Path("/foo");
+        final Path bar = new Path("/bar");
+        final Path baz = new Path("/baz");
+
+        final RollingUpgradeInfo info1;
+        {
+          final DistributedFileSystem dfs = cluster.getFileSystem();
+          dfs.mkdirs(foo);
+
+          //start rolling upgrade
+          dfs.setSafeMode(SafeModeAction.ENTER);
+          info1 = dfs.rollingUpgrade(RollingUpgradeAction.PREPARE);
+          dfs.setSafeMode(SafeModeAction.LEAVE);
+          LOG.info("START\n" + info1);
+
+          //query rolling upgrade
+          assertEquals(info1, dfs.rollingUpgrade(RollingUpgradeAction.QUERY));
+
+          dfs.mkdirs(bar);
+          cluster.shutdown();
+        }
+
+        // cluster2 takes over QJM
+        final Configuration conf2 = setConf(new Configuration(), nn2Dir, mjc);
+        cluster2 = new MiniDFSCluster.Builder(conf2)
+            .numDataNodes(0)
+            .format(false)
+            .manageNameDfsDirs(false)
+            .build();
+        final DistributedFileSystem dfs2 = cluster2.getFileSystem();
+
+        // Check that cluster2 sees the edits made on cluster1
+        Assert.assertTrue(dfs2.exists(foo));
+        Assert.assertTrue(dfs2.exists(bar));
+        Assert.assertFalse(dfs2.exists(baz));
+
+        //query rolling upgrade in cluster2
+        assertEquals(info1, dfs2.rollingUpgrade(RollingUpgradeAction.QUERY));
+
+        dfs2.mkdirs(baz);
+
+        LOG.info("RESTART cluster 2");
+        cluster2.restartNameNode();
+        assertEquals(info1, dfs2.rollingUpgrade(RollingUpgradeAction.QUERY));
+        Assert.assertTrue(dfs2.exists(foo));
+        Assert.assertTrue(dfs2.exists(bar));
+        Assert.assertTrue(dfs2.exists(baz));
+
+        //restart cluster with -upgrade should fail.
+        try {
+          cluster2.restartNameNode("-upgrade");
+        } catch (IOException e) {
+          LOG.info("The exception is expected.", e);
+        }
+
+        LOG.info("RESTART cluster 2 again");
+        cluster2.restartNameNode();
+        assertEquals(info1, dfs2.rollingUpgrade(RollingUpgradeAction.QUERY));
+        Assert.assertTrue(dfs2.exists(foo));
+        Assert.assertTrue(dfs2.exists(bar));
+        Assert.assertTrue(dfs2.exists(baz));
+
+        //finalize rolling upgrade
+        final RollingUpgradeInfo finalize = dfs2.rollingUpgrade(
+            RollingUpgradeAction.FINALIZE);
+        Assert.assertTrue(finalize.isFinalized());
+
+        LOG.info("RESTART cluster 2 with regular startup option");
+        cluster2.getNameNodeInfos()[0].setStartOpt(StartupOption.REGULAR);
+        cluster2.restartNameNode();
+        Assert.assertTrue(dfs2.exists(foo));
+        Assert.assertTrue(dfs2.exists(bar));
+        Assert.assertTrue(dfs2.exists(baz));
+      } finally {
+        if (cluster2 != null) cluster2.shutdown();
       }
-
-      LOG.info("RESTART cluster 2 again");
-      cluster2.restartNameNode();
-      assertEquals(info1, dfs2.rollingUpgrade(RollingUpgradeAction.QUERY));
-      Assert.assertTrue(dfs2.exists(foo));
-      Assert.assertTrue(dfs2.exists(bar));
-      Assert.assertTrue(dfs2.exists(baz));
-
-      //finalize rolling upgrade
-      final RollingUpgradeInfo finalize = dfs2.rollingUpgrade(
-          RollingUpgradeAction.FINALIZE);
-      Assert.assertTrue(finalize.isFinalized());
-
-      LOG.info("RESTART cluster 2 with regular startup option");
-      cluster2.getNameNodeInfos()[0].setStartOpt(StartupOption.REGULAR);
-      cluster2.restartNameNode();
-      Assert.assertTrue(dfs2.exists(foo));
-      Assert.assertTrue(dfs2.exists(bar));
-      Assert.assertTrue(dfs2.exists(baz));
-    } finally {
-      if (cluster2 != null) cluster2.shutdown();
     }
   }
 
@@ -310,9 +318,9 @@ public class TestRollingUpgrade {
   public void testRollback() throws Exception {
     // start a cluster
     final Configuration conf = new HdfsConfiguration();
-    MiniDFSCluster cluster = null;
-    try {
-      cluster = new MiniDFSCluster.Builder(conf).numDataNodes(1).build();
+    try (MiniDFSCluster cluster  = new MiniDFSCluster.Builder(conf, baseDir.getRoot())
+        .numDataNodes(1)
+        .build()) {
       cluster.waitActive();
 
       final Path foo = new Path("/foo");
@@ -352,8 +360,6 @@ public class TestRollingUpgrade {
 
       startRollingUpgrade(foo, bar, file, data, cluster);
       rollbackRollingUpgrade(foo, bar, file, data, cluster);
-    } finally {
-      if(cluster != null) cluster.shutdown();
     }
   }
 
@@ -375,9 +381,9 @@ public class TestRollingUpgrade {
     final DistributedFileSystem dfs = cluster.getFileSystem();
 
     //start rolling upgrade
-    dfs.setSafeMode(SafeModeAction.SAFEMODE_ENTER);
+    dfs.setSafeMode(SafeModeAction.ENTER);
     dfs.rollingUpgrade(RollingUpgradeAction.PREPARE);
-    dfs.setSafeMode(SafeModeAction.SAFEMODE_LEAVE);
+    dfs.setSafeMode(SafeModeAction.LEAVE);
 
     dfs.mkdirs(bar);
     Assert.assertTrue(dfs.exists(foo));
@@ -408,9 +414,9 @@ public class TestRollingUpgrade {
   public void testDFSAdminDatanodeUpgradeControlCommands() throws Exception {
     // start a cluster
     final Configuration conf = new HdfsConfiguration();
-    MiniDFSCluster cluster = null;
-    try {
-      cluster = new MiniDFSCluster.Builder(conf).numDataNodes(1).build();
+    try (MiniDFSCluster cluster = new MiniDFSCluster.Builder(conf, baseDir.getRoot())
+        .numDataNodes(1)
+        .build()) {
       cluster.waitActive();
       final DFSAdmin dfsadmin = new DFSAdmin(conf);
       DataNode dn = cluster.getDataNodes().get(0);
@@ -431,8 +437,6 @@ public class TestRollingUpgrade {
 
       // ping should fail.
       assertEquals(-1, dfsadmin.run(args1));
-    } finally {
-      if (cluster != null) cluster.shutdown();
     }
   }
 
@@ -468,7 +472,8 @@ public class TestRollingUpgrade {
     final Path bar = new Path("/bar");
 
     try {
-      cluster = new MiniQJMHACluster.Builder(conf).setNumNameNodes(nnCount).build();
+      cluster = new MiniQJMHACluster.Builder(conf, baseDir.getRoot())
+          .setNumNameNodes(nnCount).build();
       MiniDFSCluster dfsCluster = cluster.getDfsCluster();
       dfsCluster.waitActive();
 
@@ -528,10 +533,10 @@ public class TestRollingUpgrade {
   }
 
   private void testQuery(int nnCount) throws Exception{
-    final Configuration conf = new Configuration();
-    MiniQJMHACluster cluster = null;
-    try {
-      cluster = new MiniQJMHACluster.Builder(conf).setNumNameNodes(nnCount).build();
+    final Configuration conf = new HdfsConfiguration();
+    try (MiniQJMHACluster cluster = new MiniQJMHACluster.Builder(conf, baseDir.getRoot())
+        .setNumNameNodes(nnCount)
+        .build()) {
       MiniDFSCluster dfsCluster = cluster.getDfsCluster();
       dfsCluster.waitActive();
 
@@ -561,36 +566,28 @@ public class TestRollingUpgrade {
       // The NN should have a copy of the fsimage in case of rollbacks.
       Assert.assertTrue(dfsCluster.getNamesystem(0).getFSImage()
               .hasRollbackFSImage());
-    } finally {
-      if (cluster != null) {
-        cluster.shutdown();
-      }
     }
   }
 
   @Test (timeout = 300000)
   public void testQueryAfterRestart() throws IOException, InterruptedException {
-    final Configuration conf = new Configuration();
-    MiniDFSCluster cluster = null;
-    try {
-      cluster = new MiniDFSCluster.Builder(conf).numDataNodes(0).build();
+    final Configuration conf = new HdfsConfiguration();
+    try (MiniDFSCluster cluster = new MiniDFSCluster.Builder(conf, baseDir.getRoot())
+        .numDataNodes(0)
+        .build()) {
       cluster.waitActive();
       DistributedFileSystem dfs = cluster.getFileSystem();
 
-      dfs.setSafeMode(SafeModeAction.SAFEMODE_ENTER);
+      dfs.setSafeMode(SafeModeAction.ENTER);
       // start rolling upgrade
       dfs.rollingUpgrade(RollingUpgradeAction.PREPARE);
       queryForPreparation(dfs);
-      dfs.setSafeMode(SafeModeAction.SAFEMODE_ENTER);
+      dfs.setSafeMode(SafeModeAction.ENTER);
       dfs.saveNamespace();
-      dfs.setSafeMode(SafeModeAction.SAFEMODE_LEAVE);
+      dfs.setSafeMode(SafeModeAction.LEAVE);
 
       cluster.restartNameNodes();
       dfs.rollingUpgrade(RollingUpgradeAction.QUERY);
-    } finally {
-      if (cluster != null) {
-        cluster.shutdown();
-      }
     }
   }
 
@@ -606,14 +603,14 @@ public class TestRollingUpgrade {
 
   @Test(timeout = 60000)
   public void testRollBackImage() throws Exception {
-    final Configuration conf = new Configuration();
+    final Configuration conf = new HdfsConfiguration();
     conf.setInt(DFSConfigKeys.DFS_NAMENODE_CHECKPOINT_TXNS_KEY, 10);
     conf.setInt(DFSConfigKeys.DFS_HA_TAILEDITS_PERIOD_KEY, 1);
     conf.setInt(DFSConfigKeys.DFS_NAMENODE_CHECKPOINT_CHECK_PERIOD_KEY, 2);
     MiniQJMHACluster cluster = null;
     CheckpointFaultInjector old = CheckpointFaultInjector.getInstance();
     try {
-      cluster = new MiniQJMHACluster.Builder(conf).setNumNameNodes(2).build();
+      cluster = new MiniQJMHACluster.Builder(conf, baseDir.getRoot()).setNumNameNodes(2).build();
       MiniDFSCluster dfsCluster = cluster.getDfsCluster();
       dfsCluster.waitActive();
       dfsCluster.transitionToActive(0);
@@ -651,15 +648,15 @@ public class TestRollingUpgrade {
   }
 
   public void testCheckpoint(int nnCount) throws IOException, InterruptedException {
-    final Configuration conf = new Configuration();
+    final Configuration conf = new HdfsConfiguration();
     conf.setInt(DFSConfigKeys.DFS_HA_TAILEDITS_PERIOD_KEY, 1);
     conf.setInt(DFSConfigKeys.DFS_NAMENODE_CHECKPOINT_PERIOD_KEY, 1);
 
-    MiniQJMHACluster cluster = null;
     final Path foo = new Path("/foo");
 
-    try {
-      cluster = new MiniQJMHACluster.Builder(conf).setNumNameNodes(nnCount).build();
+    try (MiniQJMHACluster cluster = new MiniQJMHACluster.Builder(conf, baseDir.getRoot())
+        .setNumNameNodes(nnCount)
+        .build()) {
       MiniDFSCluster dfsCluster = cluster.getDfsCluster();
       dfsCluster.waitActive();
 
@@ -681,17 +678,14 @@ public class TestRollingUpgrade {
         verifyNNCheckpoint(dfsCluster, txid, i);
       }
 
-    } finally {
-      if (cluster != null) {
-        cluster.shutdown();
-      }
     }
   }
 
   /**
    * Verify that the namenode at the given index has an FSImage with a TxId up to txid-1
    */
-  private void verifyNNCheckpoint(MiniDFSCluster dfsCluster, long txid, int nnIndex) throws InterruptedException {
+  private void verifyNNCheckpoint(MiniDFSCluster dfsCluster, long txid, int nnIndex)
+      throws InterruptedException {
     int retries = 0;
     while (++retries < 5) {
       NNStorage storage = dfsCluster.getNamesystem(nnIndex).getFSImage()
@@ -721,6 +715,39 @@ public class TestRollingUpgrade {
     }
   }
 
+  @Test
+  public void testEditLogTailerRollingUpgrade() throws IOException, InterruptedException {
+    Configuration conf = new Configuration();
+    conf.setInt(DFSConfigKeys.DFS_HA_TAILEDITS_PERIOD_KEY, 1);
+    conf.setInt(DFSConfigKeys.DFS_NAMENODE_CHECKPOINT_PERIOD_KEY, 1);
+
+    HAUtil.setAllowStandbyReads(conf, true);
+
+    MiniDFSCluster cluster = new MiniDFSCluster.Builder(conf)
+        .nnTopology(MiniDFSNNTopology.simpleHATopology())
+        .numDataNodes(0)
+        .build();
+    cluster.waitActive();
+
+    cluster.transitionToActive(0);
+
+    NameNode nn1 = cluster.getNameNode(0);
+    NameNode nn2 = cluster.getNameNode(1);
+    try {
+      // RU start should trigger rollback image in standbycheckpointer
+      nn1.getRpcServer().rollingUpgrade(HdfsConstants.RollingUpgradeAction.PREPARE);
+      HATestUtil.waitForStandbyToCatchUp(nn1, nn2);
+      Assert.assertTrue(nn2.getNamesystem().isNeedRollbackFsImage());
+
+      // RU finalize should reset rollback image flag in standbycheckpointer
+      nn1.getRpcServer().rollingUpgrade(HdfsConstants.RollingUpgradeAction.FINALIZE);
+      HATestUtil.waitForStandbyToCatchUp(nn1, nn2);
+      Assert.assertFalse(nn2.getNamesystem().isNeedRollbackFsImage());
+    } finally {
+      cluster.shutdown();
+    }
+  }
+
   /**
    * In non-HA setup, after rolling upgrade prepare, the Secondary NN should
    * still be able to do checkpoint
@@ -733,7 +760,7 @@ public class TestRollingUpgrade {
 
     try {
       Configuration conf = new HdfsConfiguration();
-      cluster = new MiniDFSCluster.Builder(conf).build();
+      cluster = new MiniDFSCluster.Builder(conf, baseDir.getRoot()).build();
       cluster.waitActive();
 
       conf.set(DFSConfigKeys.DFS_NAMENODE_SECONDARY_HTTP_ADDRESS_KEY,
@@ -746,9 +773,9 @@ public class TestRollingUpgrade {
       snn.doCheckpoint();
 
       //start rolling upgrade
-      dfs.setSafeMode(SafeModeAction.SAFEMODE_ENTER);
+      dfs.setSafeMode(SafeModeAction.ENTER);
       dfs.rollingUpgrade(RollingUpgradeAction.PREPARE);
-      dfs.setSafeMode(SafeModeAction.SAFEMODE_LEAVE);
+      dfs.setSafeMode(SafeModeAction.LEAVE);
 
       dfs.mkdirs(new Path("/test/bar"));
       // do checkpoint in SNN again

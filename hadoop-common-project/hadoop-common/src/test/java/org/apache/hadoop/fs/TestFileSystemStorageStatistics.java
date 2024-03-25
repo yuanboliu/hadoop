@@ -34,6 +34,7 @@ import java.util.concurrent.TimeUnit;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertNull;
 
 /**
  * This tests basic operations of {@link FileSystemStorageStatistics} class.
@@ -52,7 +53,8 @@ public class TestFileSystemStorageStatistics {
       "bytesReadDistanceOfOneOrTwo",
       "bytesReadDistanceOfThreeOrFour",
       "bytesReadDistanceOfFiveOrLarger",
-      "bytesReadErasureCoded"
+      "bytesReadErasureCoded",
+      "remoteReadTimeMS"
   };
 
   private FileSystem.Statistics statistics =
@@ -74,6 +76,7 @@ public class TestFileSystemStorageStatistics {
     statistics.incrementBytesReadByDistance(1, RandomUtils.nextInt(0, 100));
     statistics.incrementBytesReadByDistance(3, RandomUtils.nextInt(0, 100));
     statistics.incrementBytesReadErasureCoded(RandomUtils.nextInt(0, 100));
+    statistics.increaseRemoteReadTime(RandomUtils.nextInt(0, 100));
   }
 
   @Test
@@ -98,6 +101,14 @@ public class TestFileSystemStorageStatistics {
           key, expectedStat, storageStat);
       assertEquals(expectedStat, storageStat);
     }
+  }
+
+  @Test
+  public void testStatisticsDataReferenceCleanerClassLoader() {
+    Thread thread = Thread.getAllStackTraces().keySet().stream()
+        .filter(t -> t.getName().contains("StatisticsDataReferenceCleaner")).findFirst().get();
+    ClassLoader classLoader = thread.getContextClassLoader();
+    assertNull(classLoader);
   }
 
   /**
@@ -128,6 +139,8 @@ public class TestFileSystemStorageStatistics {
       return statistics.getBytesReadByDistance(5);
     case "bytesReadErasureCoded":
       return statistics.getBytesReadErasureCoded();
+    case "remoteReadTimeMS":
+      return statistics.getRemoteReadTime();
     default:
       return 0;
     }

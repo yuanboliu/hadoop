@@ -37,6 +37,7 @@ import org.apache.hadoop.fs.BlockLocation;
 import org.apache.hadoop.fs.FSDataOutputStream;
 import org.apache.hadoop.fs.FileChecksum;
 import org.apache.hadoop.fs.FileSystem;
+import org.apache.hadoop.fs.LocalFileSystem;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.hdfs.MiniDFSCluster.DataNodeProperties;
 import org.apache.hadoop.hdfs.client.HdfsDataInputStream;
@@ -62,11 +63,12 @@ import org.apache.hadoop.hdfs.server.namenode.NameNode;
 import org.apache.hadoop.hdfs.server.namenode.NameNodeAdapter;
 import org.apache.hadoop.security.token.Token;
 import org.apache.hadoop.test.GenericTestUtils;
-import org.apache.hadoop.test.PathUtils;
 import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
+import org.junit.Rule;
 import org.junit.Test;
+import org.junit.rules.TemporaryFolder;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -90,7 +92,10 @@ public class TestDecommissionWithStriped {
   private Path decommissionDir;
   private Path hostsFile;
   private Path excludeFile;
-  private FileSystem localFileSys;
+  private LocalFileSystem localFileSys;
+
+  @Rule
+  public TemporaryFolder baseDir = new TemporaryFolder();
 
   private Configuration conf;
   private MiniDFSCluster cluster;
@@ -118,9 +123,9 @@ public class TestDecommissionWithStriped {
     conf = createConfiguration();
     // Set up the hosts/exclude files.
     localFileSys = FileSystem.getLocal(conf);
+    localFileSys.setWorkingDirectory(new Path(baseDir.getRoot().getPath()));
     Path workingDir = localFileSys.getWorkingDirectory();
-    decommissionDir = new Path(workingDir,
-        PathUtils.getTestDirName(getClass()) + "/work-dir/decommission");
+    decommissionDir = new Path(workingDir, "work-dir/decommission");
     hostsFile = new Path(decommissionDir, "hosts");
     excludeFile = new Path(decommissionDir, "exclude");
     writeConfigFile(hostsFile, null);
@@ -582,16 +587,14 @@ public class TestDecommissionWithStriped {
       localFileSys.delete(name, true);
     }
 
-    FSDataOutputStream stm = localFileSys.create(name);
-
-    if (nodes != null) {
-      for (Iterator<String> it = nodes.iterator(); it.hasNext();) {
-        String node = it.next();
-        stm.writeBytes(node);
-        stm.writeBytes("\n");
+    try (FSDataOutputStream stm = localFileSys.create(name)) {
+      if (nodes != null) {
+        for (String node: nodes) {
+          stm.writeBytes(node);
+          stm.writeBytes("\n");
+        }
       }
     }
-    stm.close();
   }
 
   private void cleanupFile(FileSystem fileSys, Path name) throws IOException {
@@ -759,7 +762,7 @@ public class TestDecommissionWithStriped {
     DatanodeInfo extraDn = getDatanodeOutOfTheBlock(blk);
     DatanodeDescriptor target = bm.getDatanodeManager()
         .getDatanode(extraDn.getDatanodeUuid());
-    dn0.addBlockToBeReplicated(targetBlk,
+    dn0.addECBlockToBeReplicated(targetBlk,
         new DatanodeStorageInfo[] {target.getStorageInfos()[0]});
 
     // dn0 replicates in success
@@ -883,7 +886,7 @@ public class TestDecommissionWithStriped {
         .getDatanode(extraDn.getDatanodeUuid());
     DatanodeDescriptor dnStartIndexDecommission = bm.getDatanodeManager()
         .getDatanode(dnLocs[decommNodeIndex].getDatanodeUuid());
-    dnStartIndexDecommission.addBlockToBeReplicated(targetBlk,
+    dnStartIndexDecommission.addECBlockToBeReplicated(targetBlk,
         new DatanodeStorageInfo[] {target.getStorageInfos()[0]});
 
     // Wait for replication success.
@@ -972,7 +975,7 @@ public class TestDecommissionWithStriped {
     DatanodeInfo extraDn = getDatanodeOutOfTheBlock(blk);
     DatanodeDescriptor target = bm.getDatanodeManager()
         .getDatanode(extraDn.getDatanodeUuid());
-    dn0.addBlockToBeReplicated(targetBlk,
+    dn0.addECBlockToBeReplicated(targetBlk,
         new DatanodeStorageInfo[] {target.getStorageInfos()[0]});
 
     // dn0 replicates in success

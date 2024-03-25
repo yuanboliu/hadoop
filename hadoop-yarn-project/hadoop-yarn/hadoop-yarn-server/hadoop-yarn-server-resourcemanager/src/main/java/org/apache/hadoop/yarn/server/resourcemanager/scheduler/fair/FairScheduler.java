@@ -41,8 +41,7 @@ import org.apache.hadoop.yarn.api.records.ResourceRequest;
 import org.apache.hadoop.yarn.api.records.SchedulingRequest;
 import org.apache.hadoop.yarn.api.records.Priority;
 import org.apache.hadoop.yarn.conf.YarnConfiguration;
-import org.apache.hadoop.yarn.exceptions
-        .SchedulerInvalidResoureRequestException;
+import org.apache.hadoop.yarn.exceptions.SchedulerInvalidResourceRequestException;
 import org.apache.hadoop.yarn.exceptions.YarnException;
 import org.apache.hadoop.yarn.exceptions.YarnRuntimeException;
 import org.apache.hadoop.yarn.proto.YarnServiceProtos.SchedulerResourceTypes;
@@ -76,6 +75,7 @@ import org.apache.hadoop.yarn.server.resourcemanager.scheduler.QueueMetrics;
 import org.apache.hadoop.yarn.server.resourcemanager.scheduler.SchedulerApplication;
 import org.apache.hadoop.yarn.server.resourcemanager.scheduler.SchedulerUtils;
 import org.apache.hadoop.yarn.server.resourcemanager.scheduler.SchedulerUtils.MaxResourceValidationResult;
+import org.apache.hadoop.yarn.server.resourcemanager.scheduler.capacity.QueuePath;
 import org.apache.hadoop.yarn.server.resourcemanager.scheduler.common.QueueEntitlement;
 import org.apache.hadoop.yarn.server.resourcemanager.scheduler.event.AppAddedSchedulerEvent;
 import org.apache.hadoop.yarn.server.resourcemanager.scheduler.event.AppAttemptAddedSchedulerEvent;
@@ -465,6 +465,12 @@ public class FairScheduler extends
    * Add a new application to the scheduler, with a given id, queue name, and
    * user. This will accept a new app even if the user or queue is above
    * configured limits, but the app will not be marked as runnable.
+   *
+   * @param applicationId  applicationId.
+   * @param queueName queue name.
+   * @param user submit application user.
+   * @param isAppRecovering true, app recover; false, app not recover.
+   * @param placementContext application placement context.
    */
   protected void addApplication(ApplicationId applicationId,
       String queueName, String user, boolean isAppRecovering,
@@ -588,6 +594,10 @@ public class FairScheduler extends
 
   /**
    * Add a new application attempt to the scheduler.
+   *
+   * @param applicationAttemptId application AttemptId.
+   * @param transferStateFromPreviousAttempt transferStateFromPreviousAttempt.
+   * @param isAttemptRecovering true, attempt recovering;false, attempt not recovering.
    */
   protected void addApplicationAttempt(
       ApplicationAttemptId applicationAttemptId,
@@ -901,7 +911,7 @@ public class FairScheduler extends
     // scheduler would clear them right away and AM
     // would not get this information.
     if (!invalidAsks.isEmpty()) {
-      throw new SchedulerInvalidResoureRequestException(String.format(
+      throw new SchedulerInvalidResourceRequestException(String.format(
               "Resource request is invalid for application %s because queue %s "
                       + "has 0 amount of resource for a resource type! "
                       + "Validation result: %s",
@@ -1353,7 +1363,11 @@ public class FairScheduler extends
     readLock.lock();
     try {
       FSQueue queue = queueMgr.getQueue(queueName);
-      if ((queue == null) || !allocConf.isReservable(queue.getQueueName())) {
+      if (queue == null) {
+        return queueName;
+      }
+      QueuePath queuePath = new QueuePath(queue.getQueueName());
+      if (!allocConf.isReservable(queuePath)) {
         return queueName;
       }
       // Use fully specified name from now on (including root. prefix)
@@ -1363,7 +1377,7 @@ public class FairScheduler extends
         queue = queueMgr.getQueue(resQName);
         if (queue == null) {
           // reservation has terminated during failover
-          if (isRecovering && allocConf.getMoveOnExpiry(queueName)) {
+          if (isRecovering && allocConf.getMoveOnExpiry(queuePath)) {
             // move to the default child queue of the plan
             return getDefaultQueueForPlanQueue(queueName);
           }
@@ -1962,7 +1976,7 @@ public class FairScheduler extends
     Set<String> planQueues = new HashSet<String>();
     for (FSQueue fsQueue : queueMgr.getQueues()) {
       String queueName = fsQueue.getName();
-      if (allocConf.isReservable(queueName)) {
+      if (allocConf.isReservable(new QueuePath(queueName))) {
         planQueues.add(queueName);
       }
     }
@@ -2003,7 +2017,7 @@ public class FairScheduler extends
 
   private String handleMoveToPlanQueue(String targetQueueName) {
     FSQueue dest = queueMgr.getQueue(targetQueueName);
-    if (dest != null && allocConf.isReservable(dest.getQueueName())) {
+    if (dest != null && allocConf.isReservable(new QueuePath(dest.getQueueName()))) {
       // use the default child reservation queue of the plan
       targetQueueName = getDefaultQueueForPlanQueue(targetQueueName);
     }

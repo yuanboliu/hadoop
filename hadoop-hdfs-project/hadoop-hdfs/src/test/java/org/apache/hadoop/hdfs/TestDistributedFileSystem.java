@@ -22,15 +22,20 @@ import static org.apache.hadoop.fs.CommonConfigurationKeys.FS_CLIENT_TOPOLOGY_RE
 import static org.apache.hadoop.hdfs.DFSConfigKeys.DFS_NAMENODE_FILE_CLOSE_NUM_COMMITTED_ALLOWED_KEY;
 import static org.apache.hadoop.hdfs.client.HdfsAdmin.TRASH_PERMISSION;
 import static org.apache.hadoop.hdfs.client.HdfsClientConfigKeys.DFS_CLIENT_CONTEXT;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.spy;
 
 import java.io.File;
 import java.io.FileNotFoundException;
@@ -103,6 +108,8 @@ import org.apache.hadoop.hdfs.protocol.HdfsConstants.StoragePolicySatisfierMode;
 import org.apache.hadoop.hdfs.protocol.LocatedBlock;
 import org.apache.hadoop.hdfs.protocol.OpenFileEntry;
 import org.apache.hadoop.hdfs.protocol.OpenFilesIterator;
+import org.apache.hadoop.hdfs.server.blockmanagement.BlockPlacementPolicy;
+import org.apache.hadoop.hdfs.server.blockmanagement.BlockPlacementPolicyRackFaultTolerant;
 import org.apache.hadoop.hdfs.server.datanode.DataNode;
 import org.apache.hadoop.hdfs.server.datanode.DataNodeTestUtils;
 import org.apache.hadoop.hdfs.server.datanode.fsdataset.FsDatasetSpi;
@@ -123,9 +130,11 @@ import org.apache.hadoop.test.Whitebox;
 import org.apache.hadoop.util.DataChecksum;
 import org.apache.hadoop.util.Time;
 import org.apache.hadoop.util.concurrent.HadoopExecutors;
+import org.apache.hadoop.util.functional.RemoteIterators;
 import org.junit.Assert;
 import org.junit.Test;
 import org.mockito.InOrder;
+import org.mockito.Mockito;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.slf4j.event.Level;
@@ -670,6 +679,44 @@ public class TestDistributedFileSystem {
     }
   }
 
+  /**
+   * This is to test that {@link DFSConfigKeys#DFS_LIST_LIMIT} works as
+   * expected when {@link DistributedFileSystem#listLocatedStatus} is called.
+   */
+  @Test
+  public void testGetListingLimit() throws Exception {
+    final Configuration conf = getTestConfiguration();
+    conf.setInt(DFSConfigKeys.DFS_LIST_LIMIT, 9);
+    try (MiniDFSCluster cluster =
+             new MiniDFSCluster.Builder(conf).numDataNodes(9).build()) {
+      cluster.waitActive();
+      ErasureCodingPolicy ecPolicy = StripedFileTestUtil.getDefaultECPolicy();
+      final DistributedFileSystem fs = cluster.getFileSystem();
+      fs.dfs = spy(fs.dfs);
+      Path dir1 = new Path("/testRep");
+      Path dir2 = new Path("/testEC");
+      fs.mkdirs(dir1);
+      fs.mkdirs(dir2);
+      fs.setErasureCodingPolicy(dir2, ecPolicy.getName());
+      for (int i = 0; i < 3; i++) {
+        DFSTestUtil.createFile(fs, new Path(dir1, String.valueOf(i)),
+            20 * 1024L, (short) 3, 1);
+        DFSTestUtil.createStripedFile(cluster, new Path(dir2,
+            String.valueOf(i)), dir2, 1, 1, false);
+      }
+
+      List<LocatedFileStatus> str = RemoteIterators.toList(fs.listLocatedStatus(dir1));
+      assertThat(str).hasSize(3);
+      Mockito.verify(fs.dfs, Mockito.times(1)).listPaths(anyString(), any(),
+          anyBoolean());
+
+      str = RemoteIterators.toList(fs.listLocatedStatus(dir2));
+      assertThat(str).hasSize(3);
+      Mockito.verify(fs.dfs, Mockito.times(4)).listPaths(anyString(), any(),
+          anyBoolean());
+    }
+  }
+
   @Test
   public void testStatistics() throws IOException {
     FileSystem.getStatistics(HdfsConstants.HDFS_URI_SCHEME,
@@ -923,6 +970,11 @@ public class TestDistributedFileSystem {
       dfs.getEZForPath(dir);
       checkStatistics(dfs, ++readOps, writeOps, 0);
       checkOpStatistics(OpType.GET_ENCRYPTION_ZONE, opCount + 1);
+
+      opCount = getOpStatistics(OpType.GET_ENCLOSING_ROOT);
+      dfs.getEnclosingRoot(dir);
+      checkStatistics(dfs, ++readOps, writeOps, 0);
+      checkOpStatistics(OpType.GET_ENCLOSING_ROOT, opCount + 1);
 
       opCount = getOpStatistics(OpType.GET_SNAPSHOTTABLE_DIRECTORY_LIST);
       dfs.getSnapshottableDirListing();
@@ -1555,6 +1607,56 @@ public class TestDistributedFileSystem {
     } finally {
       cluster.shutdown();
     }
+  }
+
+  @Test
+  public void testListFilesRecursive() throws IOException {
+    Configuration conf = getTestConfiguration();
+
+    try (MiniDFSCluster cluster = new MiniDFSCluster.Builder(conf).build();) {
+      DistributedFileSystem fs = cluster.getFileSystem();
+
+      // Create some directories and files.
+      Path dir = new Path("/dir");
+      Path subDir1 = fs.makeQualified(new Path(dir, "subDir1"));
+      Path subDir2 = fs.makeQualified(new Path(dir, "subDir2"));
+
+      fs.create(new Path(dir, "foo1")).close();
+      fs.create(new Path(dir, "foo2")).close();
+      fs.create(new Path(subDir1, "foo3")).close();
+      fs.create(new Path(subDir2, "foo4")).close();
+
+      // Mock the filesystem, and throw FNF when listing is triggered for the subdirectory.
+      FileSystem mockFs = spy(fs);
+      Mockito.doThrow(new FileNotFoundException("")).when(mockFs).listLocatedStatus(eq(subDir1));
+      List<LocatedFileStatus> str = RemoteIterators.toList(mockFs.listFiles(dir, true));
+      assertThat(str).hasSize(3);
+
+      // Mock the filesystem to depict a scenario where the directory got deleted and a file
+      // got created with the same name.
+      Mockito.doReturn(getMockedIterator(subDir1)).when(mockFs).listLocatedStatus(eq(subDir1));
+
+      str = RemoteIterators.toList(mockFs.listFiles(dir, true));
+      assertThat(str).hasSize(4);
+    }
+  }
+
+  private static RemoteIterator<LocatedFileStatus> getMockedIterator(Path subDir1) {
+    return new RemoteIterator<LocatedFileStatus>() {
+      private int remainingEntries = 1;
+
+      @Override
+      public boolean hasNext() throws IOException {
+        return remainingEntries > 0;
+      }
+
+      @Override
+      public LocatedFileStatus next() throws IOException {
+        remainingEntries--;
+        return new LocatedFileStatus(0, false, 1, 1024, 0L, 0, null, null, null, null, subDir1,
+            false, false, false, null);
+      }
+    };
   }
 
   @Test
@@ -2551,5 +2653,130 @@ public class TestDistributedFileSystem {
     }
   }
 
+  @Test
+  public void testSingleRackFailureDuringPipelineSetupMinReplicationPossible() throws Exception {
+    Configuration conf = getTestConfiguration();
+    conf.setClass(
+        DFSConfigKeys.DFS_BLOCK_REPLICATOR_CLASSNAME_KEY,
+        BlockPlacementPolicyRackFaultTolerant.class,
+        BlockPlacementPolicy.class);
+    conf.setBoolean(
+        HdfsClientConfigKeys.BlockWrite.ReplaceDatanodeOnFailure.ENABLE_KEY,
+        false);
+    conf.setInt(HdfsClientConfigKeys.BlockWrite.ReplaceDatanodeOnFailure.
+        MIN_REPLICATION, 2);
+    // 3 racks & 3 nodes. 1 per rack
+    try (MiniDFSCluster cluster = new MiniDFSCluster.Builder(conf).numDataNodes(3)
+        .racks(new String[] {"/rack1", "/rack2", "/rack3"}).build()) {
+      cluster.waitClusterUp();
+      DistributedFileSystem fs = cluster.getFileSystem();
+      // kill one DN, so only 2 racks stays with active DN
+      cluster.stopDataNode(0);
+      // create a file with replication 3, for rack fault tolerant BPP,
+      // it should allocate nodes in all 3 racks.
+      DFSTestUtil.createFile(fs, new Path("/testFile"), 1024L, (short) 3, 1024L);
+    }
+  }
+
+  @Test
+  public void testSingleRackFailureDuringPipelineSetupMinReplicationImpossible()
+      throws Exception {
+    Configuration conf = getTestConfiguration();
+    conf.setClass(DFSConfigKeys.DFS_BLOCK_REPLICATOR_CLASSNAME_KEY,
+        BlockPlacementPolicyRackFaultTolerant.class, BlockPlacementPolicy.class);
+    conf.setBoolean(HdfsClientConfigKeys.BlockWrite.ReplaceDatanodeOnFailure.ENABLE_KEY, false);
+    conf.setInt(HdfsClientConfigKeys.BlockWrite.ReplaceDatanodeOnFailure.MIN_REPLICATION, 3);
+    // 3 racks & 3 nodes. 1 per rack
+    try (MiniDFSCluster cluster = new MiniDFSCluster.Builder(conf).numDataNodes(3)
+        .racks(new String[] {"/rack1", "/rack2", "/rack3"}).build()) {
+      cluster.waitClusterUp();
+      DistributedFileSystem fs = cluster.getFileSystem();
+      // kill one DN, so only 2 racks stays with active DN
+      cluster.stopDataNode(0);
+      LambdaTestUtils.intercept(IOException.class,
+          () ->
+              DFSTestUtil.createFile(fs, new Path("/testFile"),
+                  1024L, (short) 3, 1024L));
+    }
+  }
+
+  @Test
+  public void testMultipleRackFailureDuringPipelineSetupMinReplicationPossible() throws Exception {
+    Configuration conf = getTestConfiguration();
+    conf.setClass(
+        DFSConfigKeys.DFS_BLOCK_REPLICATOR_CLASSNAME_KEY,
+        BlockPlacementPolicyRackFaultTolerant.class,
+        BlockPlacementPolicy.class);
+    conf.setBoolean(
+        HdfsClientConfigKeys.BlockWrite.ReplaceDatanodeOnFailure.ENABLE_KEY,
+        false);
+    conf.setInt(HdfsClientConfigKeys.BlockWrite.ReplaceDatanodeOnFailure.
+        MIN_REPLICATION, 1);
+    // 3 racks & 3 nodes. 1 per rack
+    try (MiniDFSCluster cluster = new MiniDFSCluster.Builder(conf).numDataNodes(3)
+        .racks(new String[] {"/rack1", "/rack2", "/rack3"}).build()) {
+      cluster.waitClusterUp();
+      DistributedFileSystem fs = cluster.getFileSystem();
+      // kill 2 DN, so only 1 racks stays with active DN
+      cluster.stopDataNode(0);
+      cluster.stopDataNode(1);
+      // create a file with replication 3, for rack fault tolerant BPP,
+      // it should allocate nodes in all 3 racks.
+      DFSTestUtil.createFile(fs, new Path("/testFile"), 1024L, (short) 3, 1024L);
+    }
+  }
+
+  @Test
+  public void testMultipleRackFailureDuringPipelineSetupMinReplicationImpossible()
+      throws Exception {
+    Configuration conf = getTestConfiguration();
+    conf.setClass(DFSConfigKeys.DFS_BLOCK_REPLICATOR_CLASSNAME_KEY,
+        BlockPlacementPolicyRackFaultTolerant.class,
+        BlockPlacementPolicy.class);
+    conf.setBoolean(
+        HdfsClientConfigKeys.BlockWrite.ReplaceDatanodeOnFailure.ENABLE_KEY,
+        false);
+    conf.setInt(HdfsClientConfigKeys.BlockWrite.ReplaceDatanodeOnFailure.
+        MIN_REPLICATION, 2);
+    // 3 racks & 3 nodes. 1 per rack
+    try (MiniDFSCluster cluster = new MiniDFSCluster.Builder(conf).numDataNodes(3)
+        .racks(new String[] {"/rack1", "/rack2", "/rack3"}).build()) {
+      cluster.waitClusterUp();
+      DistributedFileSystem fs = cluster.getFileSystem();
+      // kill 2 DN, so only 1 rack stays with active DN
+      cluster.stopDataNode(0);
+      cluster.stopDataNode(1);
+      LambdaTestUtils.intercept(IOException.class,
+          () ->
+              DFSTestUtil.createFile(fs, new Path("/testFile"),
+                  1024L, (short) 3, 1024L));
+    }
+  }
+
+  @Test
+  public void testAllRackFailureDuringPipelineSetup() throws Exception {
+    Configuration conf = getTestConfiguration();
+    conf.setClass(
+        DFSConfigKeys.DFS_BLOCK_REPLICATOR_CLASSNAME_KEY,
+        BlockPlacementPolicyRackFaultTolerant.class,
+        BlockPlacementPolicy.class);
+    conf.setBoolean(
+        HdfsClientConfigKeys.BlockWrite.ReplaceDatanodeOnFailure.ENABLE_KEY,
+        false);
+    // 3 racks & 3 nodes. 1 per rack
+    try (MiniDFSCluster cluster = new MiniDFSCluster.Builder(conf).numDataNodes(3)
+        .racks(new String[] {"/rack1", "/rack2", "/rack3"}).build()) {
+      cluster.waitClusterUp();
+      DistributedFileSystem fs = cluster.getFileSystem();
+      // shutdown all DNs
+      cluster.shutdownDataNodes();
+      // create a file with replication 3, for rack fault tolerant BPP,
+      // it should allocate nodes in all 3 rack but fail because no DNs are present.
+      LambdaTestUtils.intercept(IOException.class,
+          () ->
+          DFSTestUtil.createFile(fs, new Path("/testFile"),
+              1024L, (short) 3, 1024L));
+    }
+  }
 
 }

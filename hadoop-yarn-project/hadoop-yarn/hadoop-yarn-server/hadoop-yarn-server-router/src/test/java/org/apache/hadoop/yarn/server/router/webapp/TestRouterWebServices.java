@@ -200,6 +200,12 @@ public class TestRouterWebServices extends BaseRouterWebServicesTest {
 
     ContainerInfo containerInfo = getContainer(user);
     Assert.assertNotNull(containerInfo);
+
+    Response response19 = updateSchedulerConfiguration(user);
+    Assert.assertNotNull(response19);
+
+    Response response20 = getSchedulerConfiguration(user);
+    Assert.assertNotNull(response20);
   }
 
   /**
@@ -328,7 +334,7 @@ public class TestRouterWebServices extends BaseRouterWebServicesTest {
 
     Assert.assertNotNull(client1.interceptor);
     Assert.assertNotNull(client2.interceptor);
-    Assert.assertTrue(client1.interceptor == client2.interceptor);
+    Assert.assertSame(client1.interceptor, client2.interceptor);
   }
 
 }

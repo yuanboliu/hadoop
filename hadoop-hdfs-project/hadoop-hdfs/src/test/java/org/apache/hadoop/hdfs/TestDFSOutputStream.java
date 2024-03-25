@@ -49,6 +49,7 @@ import org.apache.hadoop.hdfs.protocol.ExtendedBlock;
 import org.apache.hadoop.hdfs.protocol.HdfsConstants;
 import org.apache.hadoop.hdfs.protocol.HdfsFileStatus;
 import org.apache.hadoop.hdfs.protocol.datatransfer.BlockConstructionStage;
+import org.apache.hadoop.hdfs.protocol.datatransfer.PacketHeader;
 import org.apache.hadoop.hdfs.protocol.datatransfer.PacketReceiver;
 import org.apache.hadoop.hdfs.server.blockmanagement.BlockManager;
 import org.apache.hadoop.hdfs.server.blockmanagement.DatanodeDescriptor;
@@ -58,6 +59,7 @@ import org.apache.hadoop.io.IOUtils;
 import org.apache.hadoop.test.GenericTestUtils;
 import org.apache.hadoop.test.PathUtils;
 import org.apache.hadoop.test.Whitebox;
+import org.apache.hadoop.util.DataChecksum;
 import org.junit.AfterClass;
 import org.junit.Assert;
 import org.junit.BeforeClass;
@@ -68,8 +70,9 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 import static org.mockito.ArgumentMatchers.anyBoolean;
-import static org.mockito.ArgumentMatchers.anyLong;
 import org.mockito.Mockito;
+
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 
@@ -274,6 +277,8 @@ public class TestDFSOutputStream {
   public void testCongestionBackoff() throws IOException {
     DfsClientConf dfsClientConf = mock(DfsClientConf.class);
     DFSClient client = mock(DFSClient.class);
+    Configuration conf = mock(Configuration.class);
+    when(client.getConfiguration()).thenReturn(conf);
     when(client.getConf()).thenReturn(dfsClientConf);
     when(client.getTracer()).thenReturn(FsTracer.get(new Configuration()));
     client.clientRunning = true;
@@ -305,6 +310,8 @@ public class TestDFSOutputStream {
   public void testCongestionAckDelay() {
     DfsClientConf dfsClientConf = mock(DfsClientConf.class);
     DFSClient client = mock(DFSClient.class);
+    Configuration conf = mock(Configuration.class);
+    when(client.getConfiguration()).thenReturn(conf);
     when(client.getConf()).thenReturn(dfsClientConf);
     when(client.getTracer()).thenReturn(FsTracer.get(new Configuration()));
     client.clientRunning = true;
@@ -324,7 +331,7 @@ public class TestDFSOutputStream {
     ArrayList<DatanodeInfo> congestedNodes = (ArrayList<DatanodeInfo>)
             Whitebox.getInternalState(stream, "congestedNodes");
     int backOffMaxTime = (int)
-            Whitebox.getInternalState(stream, "CONGESTION_BACK_OFF_MAX_TIME_IN_MS");
+            Whitebox.getInternalState(stream, "congestionBackOffMaxTimeInMs");
     DFSPacket[] packet = new DFSPacket[100];
     AtomicBoolean isDelay = new AtomicBoolean(true);
 
@@ -433,7 +440,7 @@ public class TestDFSOutputStream {
         EnumSet.of(CreateFlag.CREATE), (short) 3, 1024, null , 1024, null);
     DFSOutputStream spyDFSOutputStream = Mockito.spy(dfsOutputStream);
     spyDFSOutputStream.closeThreads(anyBoolean());
-    verify(spyClient, times(1)).endFileLease(anyLong());
+    verify(spyClient, times(1)).endFileLease(anyString());
   }
 
   @Test
@@ -501,6 +508,45 @@ public class TestDFSOutputStream {
         assertFalse(isFileClosed("/testExceptionInCloseWithoutRecoverLease"));
       }
     }
+  }
+
+  @Test(timeout=60000)
+  public void testFirstPacketSizeInNewBlocks() throws IOException {
+    final long blockSize = (long) 1024 * 1024;
+    MiniDFSCluster dfsCluster = cluster;
+    DistributedFileSystem fs = dfsCluster.getFileSystem();
+    Configuration dfsConf = fs.getConf();
+
+    EnumSet<CreateFlag> flags = EnumSet.of(CreateFlag.CREATE);
+    try(FSDataOutputStream fos = fs.create(new Path("/testfile.dat"),
+        FsPermission.getDefault(),
+        flags, 512, (short)3, blockSize, null)) {
+
+      DataChecksum crc32c = DataChecksum.newDataChecksum(
+          DataChecksum.Type.CRC32C, 512);
+
+      long loop = 0;
+      Random r = new Random();
+      byte[] buf = new byte[(int) blockSize];
+      r.nextBytes(buf);
+      fos.write(buf);
+      fos.hflush();
+
+      int chunkSize = crc32c.getBytesPerChecksum() + crc32c.getChecksumSize();
+      int packetContentSize = (dfsConf.getInt(DFS_CLIENT_WRITE_PACKET_SIZE_KEY,
+          DFS_CLIENT_WRITE_PACKET_SIZE_DEFAULT) -
+          PacketHeader.PKT_MAX_HEADER_LEN) / chunkSize * chunkSize;
+
+      while (loop < 20) {
+        r.nextBytes(buf);
+        fos.write(buf);
+        fos.hflush();
+        loop++;
+        Assert.assertEquals(((DFSOutputStream) fos.getWrappedStream()).packetSize,
+            packetContentSize);
+      }
+    }
+    fs.delete(new Path("/testfile.dat"), true);
   }
 
   @AfterClass

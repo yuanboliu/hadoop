@@ -17,7 +17,6 @@
  */
 package org.apache.hadoop.hdfs.tools.offlineImageViewer;
 
-import org.apache.hadoop.thirdparty.com.google.common.base.Charsets;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
 import io.netty.channel.ChannelFutureListener;
@@ -37,13 +36,14 @@ import org.apache.hadoop.util.StringUtils;
 
 import java.io.FileNotFoundException;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
 
-import static io.netty.handler.codec.http.HttpHeaders.Names.CONNECTION;
-import static io.netty.handler.codec.http.HttpHeaders.Names.CONTENT_LENGTH;
-import static io.netty.handler.codec.http.HttpHeaders.Names.CONTENT_TYPE;
-import static io.netty.handler.codec.http.HttpHeaders.Values.CLOSE;
+import static io.netty.handler.codec.http.HttpHeaderNames.CONNECTION;
+import static io.netty.handler.codec.http.HttpHeaderNames.CONTENT_LENGTH;
+import static io.netty.handler.codec.http.HttpHeaderNames.CONTENT_TYPE;
+import static io.netty.handler.codec.http.HttpHeaderValues.CLOSE;
 import static io.netty.handler.codec.http.HttpResponseStatus.BAD_REQUEST;
 import static io.netty.handler.codec.http.HttpResponseStatus.FORBIDDEN;
 import static io.netty.handler.codec.http.HttpResponseStatus.INTERNAL_SERVER_ERROR;
@@ -124,7 +124,7 @@ class FSImageHandler extends SimpleChannelInboundHandler<HttpRequest> {
 
     DefaultFullHttpResponse resp = new DefaultFullHttpResponse(HTTP_1_1,
         HttpResponseStatus.OK, Unpooled.wrappedBuffer(content
-            .getBytes(Charsets.UTF_8)));
+            .getBytes(StandardCharsets.UTF_8)));
     resp.headers().set(CONTENT_TYPE, APPLICATION_JSON_UTF8);
     resp.headers().set(CONTENT_LENGTH, resp.content().readableBytes());
     resp.headers().set(CONNECTION, CLOSE);
@@ -142,7 +142,7 @@ class FSImageHandler extends SimpleChannelInboundHandler<HttpRequest> {
     Exception e = cause instanceof Exception ? (Exception) cause : new
         Exception(cause);
     final String output = JsonUtil.toJsonString(e);
-    ByteBuf content = Unpooled.wrappedBuffer(output.getBytes(Charsets.UTF_8));
+    ByteBuf content = Unpooled.wrappedBuffer(output.getBytes(StandardCharsets.UTF_8));
     final DefaultFullHttpResponse resp = new DefaultFullHttpResponse(
             HTTP_1_1, INTERNAL_SERVER_ERROR, content);
 

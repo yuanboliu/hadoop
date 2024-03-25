@@ -81,21 +81,21 @@ public class TestDatanodeReport {
       datanode.setUpgradeDomain(ud1);
       hostsFileWriter.initIncludeHosts(
           new DatanodeAdminProperties[]{datanode});
-      client.refreshNodes();
+      cluster.getNamesystem().getBlockManager().getDatanodeManager().refreshNodes(conf);
       DatanodeInfo[] all = client.datanodeReport(DatanodeReportType.ALL);
       assertEquals(all[0].getUpgradeDomain(), ud1);
 
       datanode.setUpgradeDomain(null);
       hostsFileWriter.initIncludeHosts(
           new DatanodeAdminProperties[]{datanode});
-      client.refreshNodes();
+      cluster.getNamesystem().getBlockManager().getDatanodeManager().refreshNodes(conf);
       all = client.datanodeReport(DatanodeReportType.ALL);
       assertEquals(all[0].getUpgradeDomain(), null);
 
       datanode.setUpgradeDomain(ud2);
       hostsFileWriter.initIncludeHosts(
           new DatanodeAdminProperties[]{datanode});
-      client.refreshNodes();
+      cluster.getNamesystem().getBlockManager().getDatanodeManager().refreshNodes(conf);
       all = client.datanodeReport(DatanodeReportType.ALL);
       assertEquals(all[0].getUpgradeDomain(), ud2);
     } finally {
@@ -160,7 +160,7 @@ public class TestDatanodeReport {
       cluster.waitActive();
       DistributedFileSystem fs = cluster.getFileSystem();
       Path p = new Path("/testDatanodeReportMissingBlock");
-      DFSTestUtil.writeFile(fs, p, new String("testdata"));
+      DFSTestUtil.writeFile(fs, p, "testdata");
       LocatedBlock lb = fs.getClient().getLocatedBlocks(p.toString(), 0).get(0);
       assertEquals(3, lb.getLocations().length);
       ExtendedBlock b = lb.getBlock();
@@ -172,19 +172,8 @@ public class TestDatanodeReport {
         // all bad datanodes
       }
       cluster.triggerHeartbeats(); // IBR delete ack
-      int retries = 0;
-      while (true) {
-        lb = fs.getClient().getLocatedBlocks(p.toString(), 0).get(0);
-        if (0 != lb.getLocations().length) {
-          retries++;
-          if (retries > 7) {
-            Assert.fail("getLocatedBlocks failed after 7 retries");
-          }
-          Thread.sleep(2000);
-        } else {
-          break;
-        }
-      }
+      lb = fs.getClient().getLocatedBlocks(p.toString(), 0).get(0);
+      assertEquals(0, lb.getLocations().length);
     } finally {
       cluster.shutdown();
     }

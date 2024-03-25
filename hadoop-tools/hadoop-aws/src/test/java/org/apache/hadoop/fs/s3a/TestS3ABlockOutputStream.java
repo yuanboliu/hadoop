@@ -24,11 +24,12 @@ import org.apache.hadoop.fs.s3a.audit.AuditTestSupport;
 import org.apache.hadoop.fs.s3a.commit.PutTracker;
 import org.apache.hadoop.fs.s3a.impl.PutObjectOptions;
 import org.apache.hadoop.fs.s3a.statistics.impl.EmptyS3AStatisticsContext;
+import org.apache.hadoop.fs.s3a.test.MinimalWriteOperationHelperCallbacks;
+import org.apache.hadoop.fs.statistics.IOStatisticsContext;
 import org.apache.hadoop.util.Progressable;
 import org.junit.Before;
 import org.junit.Test;
 
-import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.util.concurrent.ExecutorService;
 
@@ -67,7 +68,11 @@ public class TestS3ABlockOutputStream extends AbstractS3AMockTest {
             .withProgress(progressable)
             .withPutTracker(putTracker)
             .withWriteOperations(oHelper)
-            .withPutOptions(PutObjectOptions.keepingDirs());
+            .withPutOptions(PutObjectOptions.keepingDirs())
+            .withIOStatisticsAggregator(
+                IOStatisticsContext.getCurrentIOStatisticsContext()
+                    .getAggregator());
+
     return builder;
   }
 
@@ -97,17 +102,16 @@ public class TestS3ABlockOutputStream extends AbstractS3AMockTest {
         conf,
         new EmptyS3AStatisticsContext(),
         noopAuditor(conf),
-        AuditTestSupport.NOOP_SPAN);
-    ByteArrayInputStream inputStream = new ByteArrayInputStream(
-        "a".getBytes());
+        AuditTestSupport.NOOP_SPAN,
+        new MinimalWriteOperationHelperCallbacks());
     // first one works
     String key = "destKey";
-    woh.newUploadPartRequest(key,
-        "uploadId", 1, 1024, inputStream, null, 0L);
+    woh.newUploadPartRequestBuilder(key,
+        "uploadId", 1, 1024);
     // but ask past the limit and a PathIOE is raised
     intercept(PathIOException.class, key,
-        () -> woh.newUploadPartRequest(key,
-            "uploadId", 50000, 1024, inputStream, null, 0L));
+        () -> woh.newUploadPartRequestBuilder(key,
+            "uploadId", 50000, 1024));
   }
 
   static class StreamClosedException extends IOException {}

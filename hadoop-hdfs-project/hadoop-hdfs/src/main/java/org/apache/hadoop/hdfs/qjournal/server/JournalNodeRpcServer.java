@@ -114,6 +114,8 @@ public class JournalNodeRpcServer implements QJournalProtocol,
         .setVerbose(false)
         .build();
 
+    this.server.addTerseExceptions(NewerTxnIdException.class);
+    this.server.addTerseExceptions(JournaledEditsCache.CacheMissException.class);
 
     //Adding InterQJournalProtocolPB to server
     InterQJournalProtocolServerSideTranslatorPB
@@ -123,7 +125,7 @@ public class JournalNodeRpcServer implements QJournalProtocol,
     BlockingService interQJournalProtocolService = InterQJournalProtocolService
         .newReflectiveBlockingService(qJournalProtocolServerSideTranslatorPB);
 
-    DFSUtil.addPBProtocol(confCopy, InterQJournalProtocolPB.class,
+    DFSUtil.addInternalPBProtocol(confCopy, InterQJournalProtocolPB.class,
         interQJournalProtocolService, server);
 
 

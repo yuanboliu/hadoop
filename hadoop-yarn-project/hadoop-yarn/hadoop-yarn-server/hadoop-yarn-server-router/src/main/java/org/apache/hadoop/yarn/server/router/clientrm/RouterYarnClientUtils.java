@@ -35,6 +35,11 @@ import org.apache.hadoop.yarn.api.protocolrecords.GetQueueUserAclsInfoResponse;
 import org.apache.hadoop.yarn.api.protocolrecords.ReservationListResponse;
 import org.apache.hadoop.yarn.api.protocolrecords.GetAllResourceTypeInfoResponse;
 import org.apache.hadoop.yarn.api.protocolrecords.GetQueueInfoResponse;
+import org.apache.hadoop.yarn.api.protocolrecords.GetAllResourceProfilesResponse;
+import org.apache.hadoop.yarn.api.protocolrecords.GetResourceProfileResponse;
+import org.apache.hadoop.yarn.api.protocolrecords.GetAttributesToNodesResponse;
+import org.apache.hadoop.yarn.api.protocolrecords.GetClusterNodeAttributesResponse;
+import org.apache.hadoop.yarn.api.protocolrecords.GetNodesToAttributesResponse;
 import org.apache.hadoop.yarn.api.records.ApplicationId;
 import org.apache.hadoop.yarn.api.records.ApplicationReport;
 import org.apache.hadoop.yarn.api.records.ApplicationResourceUsageReport;
@@ -46,6 +51,11 @@ import org.apache.hadoop.yarn.api.records.QueueUserACLInfo;
 import org.apache.hadoop.yarn.api.records.ReservationAllocationState;
 import org.apache.hadoop.yarn.api.records.ResourceTypeInfo;
 import org.apache.hadoop.yarn.api.records.QueueInfo;
+import org.apache.hadoop.yarn.api.records.Resource;
+import org.apache.hadoop.yarn.api.records.NodeAttributeKey;
+import org.apache.hadoop.yarn.api.records.NodeToAttributeValue;
+import org.apache.hadoop.yarn.api.records.NodeAttribute;
+import org.apache.hadoop.yarn.api.records.NodeAttributeInfo;
 import org.apache.hadoop.yarn.server.uam.UnmanagedApplicationManager;
 import org.apache.hadoop.yarn.util.Records;
 import org.apache.hadoop.yarn.util.resource.Resources;
@@ -70,6 +80,9 @@ public final class RouterYarnClientUtils {
           tmp.getNumNodeManagers() + metrics.getNumNodeManagers());
       tmp.setNumActiveNodeManagers(
           tmp.getNumActiveNodeManagers() + metrics.getNumActiveNodeManagers());
+      tmp.setNumDecommissioningNodeManagers(
+          tmp.getNumDecommissioningNodeManagers() + metrics
+              .getNumDecommissioningNodeManagers());
       tmp.setNumDecommissionedNodeManagers(
           tmp.getNumDecommissionedNodeManagers() + metrics
               .getNumDecommissionedNodeManagers());
@@ -80,6 +93,9 @@ public final class RouterYarnClientUtils {
       tmp.setNumUnhealthyNodeManagers(
           tmp.getNumUnhealthyNodeManagers() + metrics
               .getNumUnhealthyNodeManagers());
+      tmp.setNumShutdownNodeManagers(
+          tmp.getNumShutdownNodeManagers() + metrics
+              .getNumShutdownNodeManagers());
     }
     return GetClusterMetricsResponse.newInstance(tmp);
   }
@@ -407,6 +423,47 @@ public final class RouterYarnClientUtils {
           if (queueInfo.getAccessibleNodeLabels() != null) {
             accessibleNodeLabels.addAll(queueInfo.getAccessibleNodeLabels());
           }
+
+          // set min resourceVCore
+          queueInfo.setMinResourceVCore(queueInfo.getMinResourceVCore() +
+              response.getQueueInfo().getMinResourceVCore());
+
+          // set min resourceMemory
+          queueInfo.setMinResourceMemory(queueInfo.getMinResourceMemory() +
+              response.getQueueInfo().getMinResourceMemory());
+
+          // set max resourceVCore
+          queueInfo.setMinResourceVCore(queueInfo.getMaxResourceVCore() +
+              response.getQueueInfo().getMaxResourceVCore());
+
+          // set max resourceMemory
+          queueInfo.setMinResourceMemory(queueInfo.getMaxResourceMemory() +
+              response.getQueueInfo().getMaxResourceMemory());
+
+          // set reserved resourceVCore
+          queueInfo.setReservedResourceVCore(queueInfo.getReservedResourceVCore() +
+              response.getQueueInfo().getMaxResourceVCore());
+
+          // set reserved resourceMemory
+          queueInfo.setReservedResourceMemory(queueInfo.getReservedResourceMemory() +
+              response.getQueueInfo().getMaxResourceMemory());
+
+          // set maxRunningApp
+          queueInfo.setMaxRunningApp(queueInfo.getMaxRunningApp() +
+              response.getQueueInfo().getMaxRunningApp());
+
+          // set steadyFairShareVCore
+          queueInfo.setSteadyFairShareVCore(queueInfo.getSteadyFairShareVCore() +
+              response.getQueueInfo().getSteadyFairShareVCore());
+
+          // set steadyFairShareMemory
+          queueInfo.setSteadyFairShareMemory(queueInfo.getSteadyFairShareMemory() +
+              response.getQueueInfo().getSteadyFairShareMemory());
+
+          // set Weight
+          queueInfo.setWeight(queueInfo.getWeight() +
+              response.getQueueInfo().getWeight());
+
           if (response.getQueueInfo() != null) {
             accessibleNodeLabels.addAll(response.getQueueInfo().getAccessibleNodeLabels());
           }
@@ -417,5 +474,102 @@ public final class RouterYarnClientUtils {
     queueResponse.setQueueInfo(queueInfo);
     return queueResponse;
   }
-}
 
+  /**
+   * Merges a list of GetAllResourceProfilesResponse.
+   *
+   * @param responses a list of GetAllResourceProfilesResponse to merge.
+   * @return the merged GetAllResourceProfilesResponse.
+   */
+  public static GetAllResourceProfilesResponse mergeClusterResourceProfilesResponse(
+      Collection<GetAllResourceProfilesResponse> responses) {
+    GetAllResourceProfilesResponse profilesResponse =
+        Records.newRecord(GetAllResourceProfilesResponse.class);
+    Map<String, Resource> profilesMap = new HashMap<>();
+    for (GetAllResourceProfilesResponse response : responses) {
+      if (response != null && response.getResourceProfiles() != null) {
+        for (Map.Entry<String, Resource> entry : response.getResourceProfiles().entrySet()) {
+          String key = entry.getKey();
+          Resource r1 = profilesMap.getOrDefault(key, null);
+          Resource r2 = entry.getValue();
+          Resource rAdd = r1 == null ? r2 : Resources.add(r1, r2);
+          profilesMap.put(key, rAdd);
+        }
+      }
+    }
+    profilesResponse.setResourceProfiles(profilesMap);
+    return profilesResponse;
+  }
+
+  /**
+   * Merges a list of GetResourceProfileResponse.
+   *
+   * @param responses a list of GetResourceProfileResponse to merge.
+   * @return the merged GetResourceProfileResponse.
+   */
+  public static GetResourceProfileResponse mergeClusterResourceProfileResponse(
+      Collection<GetResourceProfileResponse> responses) {
+    GetResourceProfileResponse profileResponse =
+        Records.newRecord(GetResourceProfileResponse.class);
+    Resource resource = Resource.newInstance(0, 0);
+    for (GetResourceProfileResponse response : responses) {
+      if (response != null && response.getResource() != null) {
+        Resource responseResource = response.getResource();
+        resource = Resources.add(resource, responseResource);
+      }
+    }
+    profileResponse.setResource(resource);
+    return profileResponse;
+  }
+
+  /**
+   * Merges a list of GetAttributesToNodesResponse.
+   *
+   * @param responses a list of GetAttributesToNodesResponse to merge.
+   * @return the merged GetAttributesToNodesResponse.
+   */
+  public static GetAttributesToNodesResponse mergeAttributesToNodesResponse(
+      Collection<GetAttributesToNodesResponse> responses) {
+    Map<NodeAttributeKey, List<NodeToAttributeValue>> nodeAttributeMap = new HashMap<>();
+    for (GetAttributesToNodesResponse response : responses) {
+      if (response != null && response.getAttributesToNodes() != null) {
+        nodeAttributeMap.putAll(response.getAttributesToNodes());
+      }
+    }
+    return GetAttributesToNodesResponse.newInstance(nodeAttributeMap);
+  }
+
+  /**
+   * Merges a list of GetClusterNodeAttributesResponse.
+   *
+   * @param responses a list of GetClusterNodeAttributesResponse to merge.
+   * @return the merged GetClusterNodeAttributesResponse.
+   */
+  public static GetClusterNodeAttributesResponse mergeClusterNodeAttributesResponse(
+      Collection<GetClusterNodeAttributesResponse> responses) {
+    Set<NodeAttributeInfo> nodeAttributeInfo = new HashSet<>();
+    for (GetClusterNodeAttributesResponse response : responses) {
+      if (response != null && response.getNodeAttributes() != null) {
+        nodeAttributeInfo.addAll(response.getNodeAttributes());
+      }
+    }
+    return GetClusterNodeAttributesResponse.newInstance(nodeAttributeInfo);
+  }
+
+  /**
+   * Merges a list of GetNodesToAttributesResponse.
+   *
+   * @param responses a list of GetNodesToAttributesResponse to merge.
+   * @return the merged GetNodesToAttributesResponse.
+   */
+  public static GetNodesToAttributesResponse mergeNodesToAttributesResponse(
+      Collection<GetNodesToAttributesResponse> responses) {
+    Map<String, Set<NodeAttribute>> attributesMap = new HashMap<>();
+    for (GetNodesToAttributesResponse response : responses) {
+      if (response != null && response.getNodeToAttributes() != null) {
+        attributesMap.putAll(response.getNodeToAttributes());
+      }
+    }
+    return GetNodesToAttributesResponse.newInstance(attributesMap);
+  }
+}

@@ -91,6 +91,7 @@ import org.apache.hadoop.hdfs.server.federation.router.RouterRpcServer;
 import org.apache.hadoop.hdfs.server.namenode.FSImage;
 import org.apache.hadoop.hdfs.server.namenode.NameNode;
 import org.apache.hadoop.hdfs.server.namenode.ha.ConfiguredFailoverProxyProvider;
+import org.apache.hadoop.hdfs.server.namenode.ha.ObserverReadProxyProvider;
 import org.apache.hadoop.hdfs.server.protocol.NamespaceInfo;
 import org.apache.hadoop.http.HttpConfig;
 import org.apache.hadoop.net.NetUtils;
@@ -131,9 +132,9 @@ public class MiniRouterDFSCluster {
   /** Mini cluster. */
   private MiniDFSCluster cluster;
 
-  protected static final long DEFAULT_HEARTBEAT_INTERVAL_MS =
+  public static final long DEFAULT_HEARTBEAT_INTERVAL_MS =
       TimeUnit.SECONDS.toMillis(5);
-  protected static final long DEFAULT_CACHE_INTERVAL_MS =
+  public static final long DEFAULT_CACHE_INTERVAL_MS =
       TimeUnit.SECONDS.toMillis(5);
   /** Heartbeat interval in milliseconds. */
   private long heartbeatInterval;
@@ -233,16 +234,40 @@ public class MiniRouterDFSCluster {
       return DistributedFileSystem.get(conf);
     }
 
+    public FileSystem getFileSystem(Configuration configuration) throws  IOException {
+      configuration.addResource(conf);
+      return DistributedFileSystem.get(configuration);
+    }
+
+    public FileSystem getFileSystemWithObserverReadProxyProvider() throws IOException {
+      return getFileSystemWithProxyProvider(ObserverReadProxyProvider.class.getName());
+    }
+
+    public FileSystem getFileSystemWithConfiguredFailoverProxyProvider() throws IOException {
+      return getFileSystemWithProxyProvider(ConfiguredFailoverProxyProvider.class.getName());
+    }
+
+    private FileSystem getFileSystemWithProxyProvider(
+        String proxyProviderClassName) throws IOException {
+      conf.set(DFS_NAMESERVICES,
+          conf.get(DFS_NAMESERVICES)+ ",router-service");
+      conf.set(DFS_HA_NAMENODES_KEY_PREFIX + ".router-service", "router1");
+      conf.set(DFS_NAMENODE_RPC_ADDRESS_KEY+ ".router-service.router1",
+          getFileSystemURI().toString());
+
+      conf.set(HdfsClientConfigKeys.Failover.PROXY_PROVIDER_KEY_PREFIX
+          + "." + "router-service", proxyProviderClassName);
+      DistributedFileSystem.setDefaultUri(conf, "hdfs://router-service");
+
+      return DistributedFileSystem.get(conf);
+    }
+
     public DFSClient getClient(UserGroupInformation user)
         throws IOException, URISyntaxException, InterruptedException {
 
       LOG.info("Connecting to router at {}", fileSystemUri);
-      return user.doAs(new PrivilegedExceptionAction<DFSClient>() {
-        @Override
-        public DFSClient run() throws IOException {
-          return new DFSClient(fileSystemUri, conf);
-        }
-      });
+      return user.doAs((PrivilegedExceptionAction<DFSClient>)
+          () -> new DFSClient(fileSystemUri, conf));
     }
 
     public RouterClient getAdminClient() throws IOException {
@@ -384,12 +409,8 @@ public class MiniRouterDFSCluster {
         throws IOException, URISyntaxException, InterruptedException {
 
       LOG.info("Connecting to namenode at {}", fileSystemUri);
-      return user.doAs(new PrivilegedExceptionAction<DFSClient>() {
-        @Override
-        public DFSClient run() throws IOException {
-          return new DFSClient(fileSystemUri, conf);
-        }
-      });
+      return user.doAs((PrivilegedExceptionAction<DFSClient>)
+          () -> new DFSClient(fileSystemUri, conf));
     }
 
     public DFSClient getClient() throws IOException, URISyntaxException {
@@ -814,6 +835,7 @@ public class MiniRouterDFSCluster {
           .numDataNodes(numDNs)
           .nnTopology(topology)
           .dataNodeConfOverlays(dnConfs)
+          .checkExitOnShutdown(false)
           .storageTypes(storageTypes)
           .racks(racks)
           .build();
@@ -1047,6 +1069,27 @@ public class MiniRouterDFSCluster {
   }
 
   /**
+   * Switch a namenode in a nameservice to be the observer.
+   * @param nsId Nameservice identifier.
+   * @param nnId Namenode identifier.
+   */
+  public void switchToObserver(String nsId, String nnId) {
+    try {
+      int total = cluster.getNumNameNodes();
+      NameNodeInfo[] nns = cluster.getNameNodeInfos();
+      for (int i = 0; i < total; i++) {
+        NameNodeInfo nn = nns[i];
+        if (nn.getNameserviceId().equals(nsId) &&
+            nn.getNamenodeId().equals(nnId)) {
+          cluster.transitionToObserver(i);
+        }
+      }
+    } catch (Throwable e) {
+      LOG.error("Cannot transition to active", e);
+    }
+  }
+
+  /**
    * Stop the federated HDFS cluster.
    */
   public void shutdown() {
@@ -1167,5 +1210,14 @@ public class MiniRouterDFSCluster {
     } catch (Exception e) {
       throw new IOException("Cannot wait for the namenodes", e);
     }
+  }
+
+  /**
+   * Get cache flush interval in milliseconds.
+   *
+   * @return Cache flush interval in milliseconds.
+   */
+  public long getCacheFlushInterval() {
+    return cacheFlushInterval;
   }
 }

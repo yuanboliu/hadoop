@@ -20,7 +20,11 @@ package org.apache.hadoop.fs.azurebfs.services;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
+import org.apache.hadoop.fs.impl.BackReference;
 import org.apache.hadoop.util.Preconditions;
+
+import org.apache.hadoop.fs.azurebfs.security.ContextEncryptionAdapter;
 
 /**
  * Class to hold extra input stream configs.
@@ -35,6 +39,8 @@ public class AbfsInputStreamContext extends AbfsStreamContext {
 
   private boolean tolerateOobAppends;
 
+  private boolean isReadAheadEnabled = true;
+
   private boolean alwaysReadBufferSize;
 
   private int readAheadBlockSize;
@@ -47,7 +53,14 @@ public class AbfsInputStreamContext extends AbfsStreamContext {
 
   private boolean optimizeFooterRead;
 
+  private int footerReadBufferSize;
+
   private boolean bufferedPreadDisabled;
+
+  /** A BackReference to the FS instance that created this OutputStream. */
+  private BackReference fsBackRef;
+
+  private ContextEncryptionAdapter contextEncryptionAdapter = null;
 
   public AbfsInputStreamContext(final long sasTokenRenewPeriodForStreamsInSeconds) {
     super(sasTokenRenewPeriodForStreamsInSeconds);
@@ -69,6 +82,12 @@ public class AbfsInputStreamContext extends AbfsStreamContext {
   public AbfsInputStreamContext withTolerateOobAppends(
           final boolean tolerateOobAppends) {
     this.tolerateOobAppends = tolerateOobAppends;
+    return this;
+  }
+
+  public AbfsInputStreamContext isReadAheadEnabled(
+          final boolean isReadAheadEnabled) {
+    this.isReadAheadEnabled = isReadAheadEnabled;
     return this;
   }
 
@@ -96,6 +115,11 @@ public class AbfsInputStreamContext extends AbfsStreamContext {
     return this;
   }
 
+  public AbfsInputStreamContext withFooterReadBufferSize(final int footerReadBufferSize) {
+    this.footerReadBufferSize = footerReadBufferSize;
+    return this;
+  }
+
   public AbfsInputStreamContext withShouldReadBufferSizeAlways(
       final boolean alwaysReadBufferSize) {
     this.alwaysReadBufferSize = alwaysReadBufferSize;
@@ -113,6 +137,18 @@ public class AbfsInputStreamContext extends AbfsStreamContext {
     this.bufferedPreadDisabled = bufferedPreadDisabled;
     return this;
   }
+
+  public AbfsInputStreamContext withAbfsBackRef(
+      final BackReference fsBackRef) {
+    this.fsBackRef = fsBackRef;
+    return this;
+  }
+
+    public AbfsInputStreamContext withEncryptionAdapter(
+        ContextEncryptionAdapter contextEncryptionAdapter){
+      this.contextEncryptionAdapter = contextEncryptionAdapter;
+      return this;
+    }
 
   public AbfsInputStreamContext build() {
     if (readBufferSize > readAheadBlockSize) {
@@ -141,6 +177,10 @@ public class AbfsInputStreamContext extends AbfsStreamContext {
     return tolerateOobAppends;
   }
 
+  public boolean isReadAheadEnabled() {
+    return isReadAheadEnabled;
+  }
+
   public int getReadAheadRange() {
     return readAheadRange;
   }
@@ -157,6 +197,10 @@ public class AbfsInputStreamContext extends AbfsStreamContext {
     return this.optimizeFooterRead;
   }
 
+  public int getFooterReadBufferSize() {
+    return footerReadBufferSize;
+  }
+
   public boolean shouldReadBufferSizeAlways() {
     return alwaysReadBufferSize;
   }
@@ -168,4 +212,12 @@ public class AbfsInputStreamContext extends AbfsStreamContext {
   public boolean isBufferedPreadDisabled() {
     return bufferedPreadDisabled;
   }
+
+  public BackReference getFsBackRef() {
+    return fsBackRef;
+  }
+
+    public ContextEncryptionAdapter getEncryptionAdapter() {
+      return contextEncryptionAdapter;
+    }
 }

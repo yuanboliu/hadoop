@@ -19,6 +19,8 @@ package org.apache.hadoop.hdfs.server.blockmanagement;
 
 import static org.apache.hadoop.hdfs.DFSConfigKeys.DFS_NAMENODE_BLOCKPLACEMENTPOLICY_EXCLUDE_SLOW_NODES_ENABLED_DEFAULT;
 import static org.apache.hadoop.hdfs.DFSConfigKeys.DFS_NAMENODE_BLOCKPLACEMENTPOLICY_EXCLUDE_SLOW_NODES_ENABLED_KEY;
+import static org.apache.hadoop.hdfs.DFSConfigKeys.DFS_NAMENODE_BLOCKPLACEMENTPOLICY_MIN_BLOCKS_FOR_WRITE_DEFAULT;
+import static org.apache.hadoop.hdfs.DFSConfigKeys.DFS_NAMENODE_BLOCKPLACEMENTPOLICY_MIN_BLOCKS_FOR_WRITE_KEY;
 import static org.apache.hadoop.hdfs.DFSConfigKeys.DFS_NAMENODE_REDUNDANCY_CONSIDERLOADBYSTORAGETYPE_DEFAULT;
 import static org.apache.hadoop.hdfs.DFSConfigKeys.DFS_NAMENODE_REDUNDANCY_CONSIDERLOADBYSTORAGETYPE_KEY;
 import static org.apache.hadoop.util.Time.monotonicNow;
@@ -82,6 +84,7 @@ public class BlockPlacementPolicyDefault extends BlockPlacementPolicy {
     NOT_IN_SERVICE("the node is not in service"),
     NODE_STALE("the node is stale"),
     NODE_TOO_BUSY("the node is too busy"),
+    NODE_TOO_BUSY_BY_VOLUME("the node is too busy based on volume load"),
     TOO_MANY_NODES_ON_RACK("the rack has too many chosen nodes"),
     NOT_ENOUGH_STORAGE_SPACE("not enough storage space to place the block"),
     NO_REQUIRED_STORAGE_TYPE("required storage types are unavailable"),
@@ -101,6 +104,7 @@ public class BlockPlacementPolicyDefault extends BlockPlacementPolicy {
   protected boolean considerLoad;
   private boolean considerLoadByStorageType;
   protected double considerLoadFactor;
+  private boolean considerLoadByVolume = false;
   private boolean preferLocalNode;
   private boolean dataNodePeerStatsEnabled;
   private volatile boolean excludeSlowNodesEnabled;
@@ -109,7 +113,8 @@ public class BlockPlacementPolicyDefault extends BlockPlacementPolicy {
   private FSClusterStats stats;
   protected long heartbeatInterval;   // interval for DataNode heartbeats
   private long staleInterval;   // interval used to identify stale DataNodes
-  
+  private volatile int minBlocksForWrite; // minimum number of blocks required for write operations.
+
   /**
    * A miss of that many heartbeats is tolerated for replica deletion policy.
    */
@@ -131,6 +136,10 @@ public class BlockPlacementPolicyDefault extends BlockPlacementPolicy {
     this.considerLoadFactor = conf.getDouble(
         DFSConfigKeys.DFS_NAMENODE_REDUNDANCY_CONSIDERLOAD_FACTOR,
         DFSConfigKeys.DFS_NAMENODE_REDUNDANCY_CONSIDERLOAD_FACTOR_DEFAULT);
+    this.considerLoadByVolume = conf.getBoolean(
+        DFSConfigKeys.DFS_NAMENODE_REDUNDANCY_CONSIDERLOADBYVOLUME_KEY,
+        DFSConfigKeys.DFS_NAMENODE_REDUNDANCY_CONSIDERLOADBYVOLUME_DEFAULT
+    );
     this.stats = stats;
     this.clusterMap = clusterMap;
     this.host2datanodeMap = host2datanodeMap;
@@ -155,6 +164,9 @@ public class BlockPlacementPolicyDefault extends BlockPlacementPolicy {
     this.excludeSlowNodesEnabled = conf.getBoolean(
         DFS_NAMENODE_BLOCKPLACEMENTPOLICY_EXCLUDE_SLOW_NODES_ENABLED_KEY,
         DFS_NAMENODE_BLOCKPLACEMENTPOLICY_EXCLUDE_SLOW_NODES_ENABLED_DEFAULT);
+    this.minBlocksForWrite = conf.getInt(
+        DFS_NAMENODE_BLOCKPLACEMENTPOLICY_MIN_BLOCKS_FOR_WRITE_KEY,
+        DFS_NAMENODE_BLOCKPLACEMENTPOLICY_MIN_BLOCKS_FOR_WRITE_DEFAULT);
   }
 
   @Override
@@ -238,8 +250,8 @@ public class BlockPlacementPolicyDefault extends BlockPlacementPolicy {
       return getPipeline(writer,
           results.toArray(new DatanodeStorageInfo[results.size()]));
     } catch (NotEnoughReplicasException nr) {
-      LOG.debug("Failed to choose with favored nodes (={}), disregard favored"
-          + " nodes hint and retry.", favoredNodes, nr);
+      LOG.debug("Failed to choose with favored nodes (={}), disregard favored nodes hint and retry",
+          favoredNodes, nr);
       // Fall back to regular block placement disregarding favored nodes hint
       return chooseTarget(src, numOfReplicas, writer, 
           new ArrayList<DatanodeStorageInfo>(numOfReplicas), false, 
@@ -715,17 +727,19 @@ public class BlockPlacementPolicyDefault extends BlockPlacementPolicy {
         DatanodeDescriptor nextNode = resultStorage.getDatanodeDescriptor();
         if (nextNode != localMachine) {
           if (LOG.isDebugEnabled()) {
-            LOG.debug("Failed to choose from local rack (location = " + localRack
-                + "), retry with the rack of the next replica (location = "
-                + nextNode.getNetworkLocation() + ")", e);
+            LOG.debug("Failed to choose from local rack (location = {}), retry with the rack "
+                + "of the next replica (location = {})", localRack,
+                nextNode.getNetworkLocation(), e);
           }
           return chooseFromNextRack(nextNode, excludedNodes, blocksize,
               maxNodesPerRack, results, avoidStaleNodes, storageTypes);
         }
       }
 
-      LOG.debug("Failed to choose from local rack (location = {}); the second"
-          + " replica is not found, retry choosing randomly", localRack, e);
+      if (LOG.isDebugEnabled()) {
+        LOG.debug("Failed to choose from local rack (location = {}); the second"
+            + " replica is not found, retry choosing randomly", localRack, e);
+      }
 
       //the second replica is not found, randomly choose one from the network
       return chooseRandom(NodeBase.ROOT, excludedNodes, blocksize,
@@ -745,9 +759,10 @@ public class BlockPlacementPolicyDefault extends BlockPlacementPolicy {
       return chooseRandom(nextRack, excludedNodes, blocksize, maxNodesPerRack,
           results, avoidStaleNodes, storageTypes);
     } catch (NotEnoughReplicasException e) {
-      LOG.debug("Failed to choose from the next rack (location = {}), "
-          + "retry choosing randomly", nextRack, e);
-        // otherwise randomly choose one from the network
+      LOG.debug("Failed to choose from the next rack (location = {}), retry choosing randomly",
+          nextRack, e);
+
+      // otherwise randomly choose one from the network
       return chooseRandom(NodeBase.ROOT, excludedNodes, blocksize,
           maxNodesPerRack, results, avoidStaleNodes, storageTypes);
     }
@@ -775,10 +790,8 @@ public class BlockPlacementPolicyDefault extends BlockPlacementPolicy {
           excludedNodes, blocksize, maxReplicasPerRack, results,
           avoidStaleNodes, storageTypes);
     } catch (NotEnoughReplicasException e) {
-      if (LOG.isDebugEnabled()) {
-        LOG.debug("Failed to choose remote rack (location = ~"
-            + localMachine.getNetworkLocation() + "), fallback to local rack", e);
-      }
+      LOG.debug("Failed to choose remote rack (location = ~{}), fallback to local rack",
+          localMachine.getNetworkLocation(), e);
       chooseRandom(numOfReplicas-(results.size()-oldNumOfReplicas),
                    localMachine.getNetworkLocation(), excludedNodes, blocksize, 
                    maxReplicasPerRack, results, avoidStaleNodes, storageTypes);
@@ -952,7 +965,7 @@ public class BlockPlacementPolicyDefault extends BlockPlacementPolicy {
       List<DatanodeStorageInfo> results,
       StorageType storageType) {
     DatanodeStorageInfo storage =
-        dnd.chooseStorage4Block(storageType, blockSize);
+        dnd.chooseStorage4Block(storageType, blockSize, minBlocksForWrite);
     if (storage != null) {
       results.add(storage);
     } else {
@@ -1005,6 +1018,16 @@ public class BlockPlacementPolicyDefault extends BlockPlacementPolicy {
       logNodeIsNotChosen(node, NodeNotChosenReason.NODE_TOO_BUSY,
           "(load: " + nodeLoad + " > " + maxLoad + ")");
       return true;
+    }
+    if (considerLoadByVolume) {
+      final int numVolumesAvailable = node.getNumVolumesAvailable();
+      final double maxLoadForVolumes = considerLoadFactor * numVolumesAvailable *
+          stats.getInServiceXceiverAverageForVolume();
+      if (maxLoadForVolumes > 0.0 && nodeLoad > maxLoadForVolumes) {
+        logNodeIsNotChosen(node, NodeNotChosenReason.NODE_TOO_BUSY_BY_VOLUME,
+            "(load: " + nodeLoad + " > " + maxLoadForVolumes + ") ");
+        return true;
+      }
     }
     return false;
   }
@@ -1068,12 +1091,13 @@ public class BlockPlacementPolicyDefault extends BlockPlacementPolicy {
                          int maxTargetPerRack, boolean considerLoad,
                          List<DatanodeStorageInfo> results,
                          boolean avoidStaleNodes) {
-    // check if the node is (being) decommissioned
+    // check if the node is in state 'In Service'
     if (!node.isInService()) {
       logNodeIsNotChosen(node, NodeNotChosenReason.NOT_IN_SERVICE);
       return false;
     }
 
+    // check if the target is a stale node
     if (avoidStaleNodes) {
       if (node.isStale(this.staleInterval)) {
         logNodeIsNotChosen(node, NodeNotChosenReason.NODE_STALE);
@@ -1201,7 +1225,7 @@ public class BlockPlacementPolicyDefault extends BlockPlacementPolicy {
     DatanodeStorageInfo minSpaceStorage = null;
 
     // Pick the node with the oldest heartbeat or with the least free space,
-    // if all hearbeats are within the tolerable heartbeat interval
+    // if all heartbeats are within the tolerable heartbeat interval
     for(DatanodeStorageInfo storage : pickupReplicaSet(moreThanOne,
         exactlyOne, rackMap)) {
       if (!excessTypes.contains(storage.getStorageType())) {
@@ -1276,8 +1300,7 @@ public class BlockPlacementPolicyDefault extends BlockPlacementPolicy {
       firstOne = false;
       if (cur == null) {
         LOG.debug(
-            "No excess replica can be found. excessTypes: {}. "
-                + "moreThanOne: {}. exactlyOne: {}.",
+            "No excess replica can be found. excessTypes: {}. moreThanOne: {}. exactlyOne: {}.",
             excessTypes, moreThanOne, exactlyOne);
         break;
       }
@@ -1368,5 +1391,15 @@ public class BlockPlacementPolicyDefault extends BlockPlacementPolicy {
   @Override
   public boolean getExcludeSlowNodesEnabled() {
     return excludeSlowNodesEnabled;
+  }
+
+  @Override
+  public void setMinBlocksForWrite(int minBlocksForWrite) {
+    this.minBlocksForWrite = minBlocksForWrite;
+  }
+
+  @Override
+  public int getMinBlocksForWrite() {
+    return minBlocksForWrite;
   }
 }

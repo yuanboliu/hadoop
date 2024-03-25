@@ -56,6 +56,7 @@ import javax.servlet.http.HttpServletRequestWrapper;
 import javax.servlet.http.HttpServletResponse;
 
 import org.apache.hadoop.classification.VisibleForTesting;
+import org.apache.hadoop.jmx.JMXJsonServletNaNFiltered;
 import org.apache.hadoop.util.Preconditions;
 import org.apache.hadoop.thirdparty.com.google.common.collect.ImmutableMap;
 import com.sun.jersey.spi.container.servlet.ServletContainer;
@@ -97,7 +98,7 @@ import org.eclipse.jetty.server.SecureRequestCustomizer;
 import org.eclipse.jetty.server.Server;
 import org.eclipse.jetty.server.ServerConnector;
 import org.eclipse.jetty.server.SslConnectionFactory;
-import org.eclipse.jetty.server.handler.AllowSymLinkAliasChecker;
+import org.eclipse.jetty.server.SymlinkAllowedResourceAliasChecker;
 import org.eclipse.jetty.server.handler.ContextHandlerCollection;
 import org.eclipse.jetty.server.handler.HandlerCollection;
 import org.eclipse.jetty.server.handler.RequestLogHandler;
@@ -116,6 +117,9 @@ import org.eclipse.jetty.util.thread.QueuedThreadPool;
 import org.eclipse.jetty.webapp.WebAppContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
+import static org.apache.hadoop.fs.CommonConfigurationKeysPublic.JMX_NAN_FILTER;
+import static org.apache.hadoop.fs.CommonConfigurationKeysPublic.JMX_NAN_FILTER_DEFAULT;
 
 /**
  * Create a Jetty embedded server to answer http requests. The primary goal is
@@ -144,7 +148,7 @@ public final class HttpServer2 implements FilterContainer {
 
   public static final String HTTP_SOCKET_BACKLOG_SIZE_KEY =
       "hadoop.http.socket.backlog.size";
-  public static final int HTTP_SOCKET_BACKLOG_SIZE_DEFAULT = 128;
+  public static final int HTTP_SOCKET_BACKLOG_SIZE_DEFAULT = 500;
   public static final String HTTP_MAX_THREADS_KEY = "hadoop.http.max.threads";
   public static final String HTTP_ACCEPTOR_COUNT_KEY =
       "hadoop.http.acceptor.count";
@@ -497,7 +501,12 @@ public final class HttpServer2 implements FilterContainer {
               prefix -> this.conf.get(prefix + "type")
                   .equals(PseudoAuthenticationHandler.TYPE))
       ) {
-        server.initSpnego(conf, hostName, usernameConfKey, keytabConfKey);
+        server.initSpnego(
+            conf,
+            hostName,
+            getFilterProperties(conf, authFilterConfigurationPrefixes),
+            usernameConfKey,
+            keytabConfKey);
       }
 
       for (URI ep : endpoints) {
@@ -780,7 +789,7 @@ public final class HttpServer2 implements FilterContainer {
       }
     }
 
-    addDefaultServlets();
+    addDefaultServlets(conf);
     addPrometheusServlet(conf);
     addAsyncProfilerServlet(contexts, conf);
   }
@@ -939,7 +948,7 @@ public final class HttpServer2 implements FilterContainer {
       handler.setHttpOnly(true);
       handler.getSessionCookieConfig().setSecure(true);
       logContext.setSessionHandler(handler);
-      logContext.addAliasCheck(new AllowSymLinkAliasChecker());
+      logContext.addAliasCheck(new SymlinkAllowedResourceAliasChecker(logContext));
       setContextAttributes(logContext, conf);
       addNoCacheFilter(logContext);
       defaultContexts.put(logContext, true);
@@ -958,7 +967,7 @@ public final class HttpServer2 implements FilterContainer {
     handler.setHttpOnly(true);
     handler.getSessionCookieConfig().setSecure(true);
     staticContext.setSessionHandler(handler);
-    staticContext.addAliasCheck(new AllowSymLinkAliasChecker());
+    staticContext.addAliasCheck(new SymlinkAllowedResourceAliasChecker(staticContext));
     setContextAttributes(staticContext, conf);
     defaultContexts.put(staticContext, true);
   }
@@ -971,12 +980,17 @@ public final class HttpServer2 implements FilterContainer {
 
   /**
    * Add default servlets.
+   * @param configuration the hadoop configuration
    */
-  protected void addDefaultServlets() {
+  protected void addDefaultServlets(Configuration configuration) {
     // set up default servlets
     addServlet("stacks", "/stacks", StackServlet.class);
     addServlet("logLevel", "/logLevel", LogLevel.Servlet.class);
-    addServlet("jmx", "/jmx", JMXJsonServlet.class);
+    addServlet("jmx", "/jmx",
+        configuration.getBoolean(JMX_NAN_FILTER, JMX_NAN_FILTER_DEFAULT)
+            ? JMXJsonServletNaNFiltered.class
+            : JMXJsonServlet.class
+    );
     addServlet("conf", "/conf", ConfServlet.class);
   }
 
@@ -1340,8 +1354,12 @@ public final class HttpServer2 implements FilterContainer {
   }
 
   private void initSpnego(Configuration conf, String hostName,
-      String usernameConfKey, String keytabConfKey) throws IOException {
+      Properties authFilterConfigurationPrefixes, String usernameConfKey, String keytabConfKey)
+      throws IOException {
     Map<String, String> params = new HashMap<>();
+    for (Map.Entry<Object, Object> entry : authFilterConfigurationPrefixes.entrySet()) {
+      params.put(String.valueOf(entry.getKey()), String.valueOf(entry.getValue()));
+    }
     String principalInConf = conf.get(usernameConfKey);
     if (principalInConf != null && !principalInConf.isEmpty()) {
       params.put("kerberos.principal", SecurityUtil.getServerPrincipal(
@@ -1967,4 +1985,8 @@ public final class HttpServer2 implements FilterContainer {
     return metrics;
   }
 
+  @VisibleForTesting
+  List<ServerConnector> getListeners() {
+    return listeners;
+  }
 }

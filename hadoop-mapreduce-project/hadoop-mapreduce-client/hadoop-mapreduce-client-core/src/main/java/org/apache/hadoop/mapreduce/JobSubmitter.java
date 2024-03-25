@@ -22,6 +22,7 @@ import java.io.IOException;
 import java.net.InetAddress;
 import java.net.URI;
 import java.net.URISyntaxException;
+import java.nio.charset.StandardCharsets;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -63,7 +64,6 @@ import org.apache.hadoop.util.JsonSerialization;
 import org.apache.hadoop.util.ReflectionUtils;
 import org.apache.hadoop.yarn.api.records.ReservationId;
 
-import org.apache.hadoop.thirdparty.com.google.common.base.Charsets;
 
 @InterfaceAudience.Private
 @InterfaceStability.Unstable
@@ -71,7 +71,6 @@ class JobSubmitter {
   protected static final Logger LOG =
       LoggerFactory.getLogger(JobSubmitter.class);
   private static final String SHUFFLE_KEYGEN_ALGORITHM = "HmacSHA1";
-  private static final int SHUFFLE_KEY_LENGTH = 64;
   private FileSystem jtFs;
   private ClientProtocol submitClient;
   private String submitHostName;
@@ -177,7 +176,9 @@ class JobSubmitter {
         KeyGenerator keyGen;
         try {
           keyGen = KeyGenerator.getInstance(SHUFFLE_KEYGEN_ALGORITHM);
-          keyGen.init(SHUFFLE_KEY_LENGTH);
+          int shuffleKeyLength =
+              conf.getInt(MRJobConfig.SHUFFLE_KEY_LENGTH, MRJobConfig.DEFAULT_SHUFFLE_KEY_LENGTH);
+          keyGen.init(shuffleKeyLength);
         } catch (NoSuchAlgorithmException e) {
           throw new IOException("Error generating shuffle secret key", e);
         }
@@ -408,7 +409,7 @@ class JobSubmitter {
 
         for(Map.Entry<String, String> ent: nm.entrySet()) {
           credentials.addSecretKey(new Text(ent.getKey()), ent.getValue()
-              .getBytes(Charsets.UTF_8));
+              .getBytes(StandardCharsets.UTF_8));
         }
       } catch (JsonMappingException | JsonParseException e) {
         LOG.warn("couldn't parse Token Cache JSON file with user secret keys");

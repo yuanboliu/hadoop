@@ -32,6 +32,8 @@ import org.apache.hadoop.fs.azurebfs.AbstractAbfsIntegrationTest;
 import org.apache.hadoop.fs.azurebfs.AzureBlobFileSystem;
 import org.apache.hadoop.fs.azurebfs.AzureBlobFileSystemStore;
 import org.apache.hadoop.fs.azurebfs.utils.TracingContext;
+
+import org.assertj.core.api.Assertions;
 import org.junit.Test;
 
 import static org.apache.hadoop.fs.azurebfs.constants.FileSystemConfigurations.ONE_MB;
@@ -106,6 +108,25 @@ public class ITestAbfsInputStream extends AbstractAbfsIntegrationTest {
     }
   }
 
+  /**
+   * Testing the back reference being passed down to AbfsInputStream.
+   */
+  @Test
+  public void testAzureBlobFileSystemBackReferenceInInputStream()
+      throws IOException {
+    Path path = path(getMethodName());
+    // Create a file then open it to verify if this input stream contains any
+    // back reference.
+    try (FSDataOutputStream out = getFileSystem().create(path);
+        FSDataInputStream in = getFileSystem().open(path)) {
+      AbfsInputStream abfsInputStream = (AbfsInputStream) in.getWrappedStream();
+
+      Assertions.assertThat(abfsInputStream.getFsBackRef().isNull())
+          .describedAs("BackReference in input stream should not be null")
+          .isFalse();
+    }
+  }
+
   private void testExceptionInOptimization(final FileSystem fs,
       final Path testFilePath,
       final int seekPos, final int length, final byte[] fileContent)
@@ -148,6 +169,10 @@ public class ITestAbfsInputStream extends AbstractAbfsIntegrationTest {
     final AzureBlobFileSystem fs = getFileSystem();
     getAbfsStore(fs).getAbfsConfiguration()
         .setReadSmallFilesCompletely(readSmallFilesCompletely);
+    getAbfsStore(fs).getAbfsConfiguration()
+        .setOptimizeFooterRead(false);
+    getAbfsStore(fs).getAbfsConfiguration()
+        .setIsChecksumValidationEnabled(true);
     return fs;
   }
 
@@ -156,6 +181,8 @@ public class ITestAbfsInputStream extends AbstractAbfsIntegrationTest {
     final AzureBlobFileSystem fs = getFileSystem();
     getAbfsStore(fs).getAbfsConfiguration()
         .setOptimizeFooterRead(optimizeFooterRead);
+    getAbfsStore(fs).getAbfsConfiguration()
+        .setIsChecksumValidationEnabled(true);
     if (fileSize <= getAbfsStore(fs).getAbfsConfiguration()
         .getReadBufferSize()) {
       getAbfsStore(fs).getAbfsConfiguration()

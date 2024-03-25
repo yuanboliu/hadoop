@@ -19,6 +19,7 @@ package org.apache.hadoop.hdfs.server.datanode;
 
 import static org.apache.hadoop.hdfs.DFSConfigKeys.DFS_HEARTBEAT_INTERVAL_KEY;
 import static org.apache.hadoop.test.MetricsAsserts.assertCounter;
+import static org.apache.hadoop.test.MetricsAsserts.assertInverseQuantileGauges;
 import static org.apache.hadoop.test.MetricsAsserts.assertQuantileGauges;
 import static org.apache.hadoop.test.MetricsAsserts.getLongCounter;
 import static org.apache.hadoop.test.MetricsAsserts.getMetrics;
@@ -37,6 +38,8 @@ import java.util.List;
 import java.util.function.Supplier;
 
 import net.jcip.annotations.NotThreadSafe;
+
+import org.apache.hadoop.fs.FSDataInputStream;
 import org.apache.hadoop.fs.StorageType;
 import org.apache.hadoop.hdfs.MiniDFSNNTopology;
 import org.apache.hadoop.net.unix.DomainSocket;
@@ -380,6 +383,7 @@ public class TestDataNodeMetrics {
   @Test(timeout=120000)
   public void testDataNodeTimeSpend() throws Exception {
     Configuration conf = new HdfsConfiguration();
+    conf.set(DFSConfigKeys.DFS_METRICS_PERCENTILES_INTERVALS_KEY, "" + 60);
     MiniDFSCluster cluster = new MiniDFSCluster.Builder(conf).build();
     try {
       final FileSystem fs = cluster.getFileSystem();
@@ -391,6 +395,7 @@ public class TestDataNodeMetrics {
 
       final long startWriteValue = getLongCounter("TotalWriteTime", rb);
       final long startReadValue = getLongCounter("TotalReadTime", rb);
+      assertCounter("ReadTransferRateNumOps", 0L, rb);
       final AtomicInteger x = new AtomicInteger(0);
 
       // Lets Metric system update latest metrics
@@ -410,6 +415,8 @@ public class TestDataNodeMetrics {
           MetricsRecordBuilder rbNew = getMetrics(datanode.getMetrics().name());
           final long endWriteValue = getLongCounter("TotalWriteTime", rbNew);
           final long endReadValue = getLongCounter("TotalReadTime", rbNew);
+          assertCounter("ReadTransferRateNumOps", 1L, rbNew);
+          assertInverseQuantileGauges("ReadTransferRate60s", rbNew, "Rate");
           return endWriteValue > startWriteValue
               && endReadValue > startReadValue;
         }
@@ -548,7 +555,7 @@ public class TestDataNodeMetrics {
       cluster.waitActive();
       DistributedFileSystem fs = cluster.getFileSystem();
       Path p = new Path("/testShouldThrowTMP");
-      DFSTestUtil.writeFile(fs, p, new String("testdata"));
+      DFSTestUtil.writeFile(fs, p, "testdata");
       //Before DN throws too many open files
       verifyBlockLocations(fs, p, 1);
       Mockito.doThrow(new FileNotFoundException("Too many open files")).
@@ -744,6 +751,69 @@ public class TestDataNodeMetrics {
       if (cluster != null) {
         cluster.shutdown();
       }
+    }
+  }
+
+  @Test
+  public void testDataNodeReadWriteXceiversCount() throws Exception {
+    try (MiniDFSCluster cluster = new MiniDFSCluster.Builder(new HdfsConfiguration()).build()) {
+      cluster.waitActive();
+      FileSystem fs = cluster.getFileSystem();
+      List<DataNode> datanodes = cluster.getDataNodes();
+      assertEquals(1, datanodes.size());
+      DataNode datanode = datanodes.get(0);
+
+      // Test DataNodeWriteActiveXceiversCount Metric
+      long writeXceiversCount = MetricsAsserts.getIntGauge("DataNodeWriteActiveXceiversCount",
+          getMetrics(datanode.getMetrics().name()));
+      assertEquals(0, writeXceiversCount);
+
+      Path path = new Path("/testDataNodeReadWriteXceiversCount.txt");
+      try (FSDataOutputStream output = fs.create(path)) {
+        output.write(new byte[1024]);
+        output.hsync();
+        GenericTestUtils.waitFor(new Supplier<Boolean>() {
+          @Override
+          public Boolean get() {
+            int writeXceiversCount = MetricsAsserts.getIntGauge("DataNodeWriteActiveXceiversCount",
+                getMetrics(datanode.getMetrics().name()));
+            return writeXceiversCount == 1;
+          }
+        }, 100, 10000);
+      }
+      GenericTestUtils.waitFor(new Supplier<Boolean>() {
+        @Override
+        public Boolean get() {
+          int writeXceiversCount = MetricsAsserts.getIntGauge("DataNodeWriteActiveXceiversCount",
+              getMetrics(datanode.getMetrics().name()));
+          return writeXceiversCount == 0;
+        }
+      }, 100, 10000);
+
+      // Test DataNodeReadActiveXceiversCount Metric
+      long readXceiversCount = MetricsAsserts.getIntGauge("DataNodeReadActiveXceiversCount",
+          getMetrics(datanode.getMetrics().name()));
+      assertEquals(0, readXceiversCount);
+      try (FSDataInputStream input = fs.open(path)) {
+        byte[] byteArray = new byte[1024];
+        input.read(byteArray);
+        GenericTestUtils.waitFor(new Supplier<Boolean>() {
+          @Override
+          public Boolean get() {
+            int readXceiversCount = MetricsAsserts.getIntGauge("DataNodeReadActiveXceiversCount",
+                getMetrics(datanode.getMetrics().name()));
+            return readXceiversCount == 1;
+          }
+        }, 100, 10000);
+      }
+      GenericTestUtils.waitFor(new Supplier<Boolean>() {
+        @Override
+        public Boolean get() {
+          int readXceiversCount = MetricsAsserts.getIntGauge("DataNodeReadActiveXceiversCount",
+              getMetrics(datanode.getMetrics().name()));
+          return readXceiversCount == 0;
+        }
+      }, 100, 10000);
     }
   }
 }

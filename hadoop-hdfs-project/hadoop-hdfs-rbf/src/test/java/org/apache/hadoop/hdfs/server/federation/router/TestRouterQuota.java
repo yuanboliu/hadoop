@@ -31,6 +31,8 @@ import java.util.Collections;
 import java.util.EnumSet;
 import java.util.List;
 import java.util.UUID;
+import java.util.Arrays;
+import java.util.function.Predicate;
 
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.CreateFlag;
@@ -73,8 +75,6 @@ import org.apache.hadoop.util.Time;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
-
-import java.util.function.Supplier;
 
 /**
  * Tests quota behaviors in Router-based Federation.
@@ -210,21 +210,17 @@ public class TestRouterQuota {
     routerClient.create("/ssquota/file", true).close();
     routerClient.create("/ssquota/subdir/file", true).close();
 
-    GenericTestUtils.waitFor(new Supplier<Boolean>() {
-
-      @Override
-      public Boolean get() {
-        boolean isDsQuotaViolated = false;
-        try {
-          // append data to trigger NSQuotaExceededException
-          appendData("/ssquota/file", routerClient, BLOCK_SIZE);
-          appendData("/ssquota/subdir/file", routerClient, BLOCK_SIZE);
-        } catch (DSQuotaExceededException e) {
-          isDsQuotaViolated = true;
-        } catch (IOException ignored) {
-        }
-        return isDsQuotaViolated;
+    GenericTestUtils.waitFor(() -> {
+      boolean isDsQuotaViolated = false;
+      try {
+        // append data to trigger NSQuotaExceededException
+        appendData("/ssquota/file", routerClient, BLOCK_SIZE);
+        appendData("/ssquota/subdir/file", routerClient, BLOCK_SIZE);
+      } catch (DSQuotaExceededException e) {
+        isDsQuotaViolated = true;
+      } catch (IOException ignored) {
       }
+      return isDsQuotaViolated;
     }, 5000, 60000);
 
     // append data to destination path in real FileSystem should be okay
@@ -1172,6 +1168,34 @@ public class TestRouterQuota {
     assertEquals(ssQuota * 2, quotaUsage.getSpaceQuota());
     assertEquals(0, quotaUsage.getFileAndDirectoryCount());
     assertEquals(0, quotaUsage.getSpaceConsumed());
+  }
+
+  @Test
+  public void testAndByStorageType() {
+    long[] typeQuota = new long[StorageType.values().length];
+    Arrays.fill(typeQuota, HdfsConstants.QUOTA_DONT_SET);
+
+    Predicate<StorageType> predicate = new Predicate<StorageType>() {
+      @Override
+      public boolean test(StorageType storageType) {
+        return typeQuota[storageType.ordinal()] == HdfsConstants.QUOTA_DONT_SET;
+      }
+    };
+
+    assertTrue(Quota.andByStorageType(predicate));
+
+    // This is a value to test for,
+    // as long as it is not equal to HdfsConstants.QUOTA_DONT_SET
+    typeQuota[0] = HdfsConstants.QUOTA_RESET;
+    assertFalse(Quota.andByStorageType(predicate));
+
+    Arrays.fill(typeQuota, HdfsConstants.QUOTA_DONT_SET);
+    typeQuota[1] = HdfsConstants.QUOTA_RESET;
+    assertFalse(Quota.andByStorageType(predicate));
+
+    Arrays.fill(typeQuota, HdfsConstants.QUOTA_DONT_SET);
+    typeQuota[typeQuota.length-1] = HdfsConstants.QUOTA_RESET;
+    assertFalse(Quota.andByStorageType(predicate));
   }
 
   /**

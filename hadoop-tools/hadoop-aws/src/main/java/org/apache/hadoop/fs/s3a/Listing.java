@@ -18,7 +18,8 @@
 
 package org.apache.hadoop.fs.s3a;
 
-import com.amazonaws.services.s3.model.S3ObjectSummary;
+import software.amazon.awssdk.services.s3.model.CommonPrefix;
+import software.amazon.awssdk.services.s3.model.S3Object;
 
 import org.apache.hadoop.classification.InterfaceAudience;
 import org.apache.hadoop.classification.VisibleForTesting;
@@ -31,7 +32,9 @@ import org.apache.hadoop.fs.s3a.impl.AbstractStoreOperation;
 import org.apache.hadoop.fs.s3a.impl.ListingOperationCallbacks;
 import org.apache.hadoop.fs.s3a.impl.StoreContext;
 import org.apache.hadoop.fs.statistics.IOStatistics;
+import org.apache.hadoop.fs.statistics.IOStatisticsAggregator;
 import org.apache.hadoop.fs.statistics.IOStatisticsSource;
+import org.apache.hadoop.fs.statistics.IOStatisticsContext;
 import org.apache.hadoop.fs.statistics.impl.IOStatisticsStore;
 import org.apache.hadoop.fs.store.audit.AuditSpan;
 import org.apache.hadoop.util.functional.RemoteIterators;
@@ -256,7 +259,7 @@ public class Listing extends AbstractStoreOperation {
     }
 
     S3ListRequest request = createListObjectsRequest(key, "/", span);
-    LOG.debug("listStatus: doing listObjects for directory {}", key);
+    LOG.debug("listStatus: doing listObjects for directory \"{}\"", key);
 
     // return the results obtained from s3.
     return createFileStatusListingIterator(
@@ -275,19 +278,19 @@ public class Listing extends AbstractStoreOperation {
   }
 
   /**
-   * Interface to implement by the logic deciding whether to accept a summary
+   * Interface to implement the logic deciding whether to accept a s3Object
    * entry or path as a valid file or directory.
    */
   interface FileStatusAcceptor {
 
     /**
-     * Predicate to decide whether or not to accept a summary entry.
+     * Predicate to decide whether or not to accept a s3Object entry.
      * @param keyPath qualified path to the entry
-     * @param summary summary entry
+     * @param s3Object s3Object entry
      * @return true if the entry is accepted (i.e. that a status entry
      * should be generated.
      */
-    boolean accept(Path keyPath, S3ObjectSummary summary);
+    boolean accept(Path keyPath, S3Object s3Object);
 
     /**
      * Predicate to decide whether or not to accept a prefix.
@@ -333,7 +336,7 @@ public class Listing extends AbstractStoreOperation {
    * Thread safety: None.
    */
   class FileStatusListingIterator
-      implements RemoteIterator<S3AFileStatus>, IOStatisticsSource {
+      implements RemoteIterator<S3AFileStatus>, IOStatisticsSource, Closeable {
 
     /** Source of objects. */
     private final ObjectListingIterator source;
@@ -404,6 +407,14 @@ public class Listing extends AbstractStoreOperation {
     }
 
     /**
+     * Close, if called, will update
+     * the thread statistics context with the value.
+     */
+    @Override
+    public void close() {
+      source.close();
+    }
+    /**
      * Try to retrieve another batch.
      * Note that for the initial batch,
      * {@link ObjectListingIterator} does not generate a request;
@@ -441,21 +452,21 @@ public class Listing extends AbstractStoreOperation {
       int added = 0, ignored = 0;
       // list to fill in with results. Initial size will be list maximum.
       List<S3AFileStatus> stats = new ArrayList<>(
-          objects.getObjectSummaries().size() +
+          objects.getS3Objects().size() +
               objects.getCommonPrefixes().size());
       // objects
-      for (S3ObjectSummary summary : objects.getObjectSummaries()) {
-        String key = summary.getKey();
+      for (S3Object s3Object : objects.getS3Objects()) {
+        String key = s3Object.key();
         Path keyPath = getStoreContext().getContextAccessors().keyToPath(key);
         if (LOG.isDebugEnabled()) {
-          LOG.debug("{}: {}", keyPath, stringify(summary));
+          LOG.debug("{}: {}", keyPath, stringify(s3Object));
         }
         // Skip over keys that are ourselves and old S3N _$folder$ files
-        if (acceptor.accept(keyPath, summary) && filter.accept(keyPath)) {
-          S3AFileStatus status = createFileStatus(keyPath, summary,
+        if (acceptor.accept(keyPath, s3Object) && filter.accept(keyPath)) {
+          S3AFileStatus status = createFileStatus(keyPath, s3Object,
                   listingOperationCallbacks.getDefaultBlockSize(keyPath),
                   getStoreContext().getUsername(),
-              summary.getETag(), null, isCSEEnabled);
+                  s3Object.eTag(), null, isCSEEnabled);
           LOG.debug("Adding: {}", status);
           stats.add(status);
           added++;
@@ -466,11 +477,11 @@ public class Listing extends AbstractStoreOperation {
       }
 
       // prefixes: always directories
-      for (String prefix : objects.getCommonPrefixes()) {
+      for (CommonPrefix prefix : objects.getCommonPrefixes()) {
         Path keyPath = getStoreContext()
                 .getContextAccessors()
-                .keyToPath(prefix);
-        if (acceptor.accept(keyPath, prefix) && filter.accept(keyPath)) {
+                .keyToPath(prefix.prefix());
+        if (acceptor.accept(keyPath, prefix.prefix()) && filter.accept(keyPath)) {
           S3AFileStatus status = new S3AFileStatus(Tristate.FALSE, keyPath,
               getStoreContext().getUsername());
           LOG.debug("Adding directory: {}", status);
@@ -545,6 +556,11 @@ public class Listing extends AbstractStoreOperation {
 
     private final AuditSpan span;
 
+    /**
+     * Context statistics aggregator.
+     */
+    private final IOStatisticsAggregator aggregator;
+
     /** The most recent listing results. */
     private S3ListResult objects;
 
@@ -601,6 +617,8 @@ public class Listing extends AbstractStoreOperation {
       this.span = span;
       this.s3ListResultFuture = listingOperationCallbacks
           .listObjectsAsync(request, iostats, span);
+      this.aggregator = IOStatisticsContext.getCurrentIOStatisticsContext()
+          .getAggregator();
     }
 
     /**
@@ -693,11 +711,12 @@ public class Listing extends AbstractStoreOperation {
     }
 
     /**
-     * Close, if actually called, will close the span
-     * this listing was created with.
+     * Close, if called, will update
+     * the thread statistics context with the value.
      */
     @Override
     public void close() {
+      aggregator.aggregate(getIOStatistics());
     }
   }
 
@@ -713,18 +732,18 @@ public class Listing extends AbstractStoreOperation {
     }
 
     /**
-     * Reject a summary entry if the key path is the qualified Path, or
+     * Reject a s3Object entry if the key path is the qualified Path, or
      * it ends with {@code "_$folder$"}.
      * @param keyPath key path of the entry
-     * @param summary summary entry
+     * @param s3Object s3Object entry
      * @return true if the entry is accepted (i.e. that a status entry
      * should be generated.
      */
     @Override
-    public boolean accept(Path keyPath, S3ObjectSummary summary) {
+    public boolean accept(Path keyPath, S3Object s3Object) {
       return !keyPath.equals(qualifiedPath)
-          && !summary.getKey().endsWith(S3N_FOLDER_SUFFIX)
-          && !objectRepresentsDirectory(summary.getKey());
+          && !s3Object.key().endsWith(S3N_FOLDER_SUFFIX)
+          && !objectRepresentsDirectory(s3Object.key());
     }
 
     /**
@@ -749,8 +768,8 @@ public class Listing extends AbstractStoreOperation {
    */
   static class AcceptAllButS3nDirs implements FileStatusAcceptor {
 
-    public boolean accept(Path keyPath, S3ObjectSummary summary) {
-      return !summary.getKey().endsWith(S3N_FOLDER_SUFFIX);
+    public boolean accept(Path keyPath, S3Object s3Object) {
+      return !s3Object.key().endsWith(S3N_FOLDER_SUFFIX);
     }
 
     public boolean accept(Path keyPath, String prefix) {
@@ -781,17 +800,17 @@ public class Listing extends AbstractStoreOperation {
     }
 
     /**
-     * Reject a summary entry if the key path is the qualified Path, or
+     * Reject a s3Object entry if the key path is the qualified Path, or
      * it ends with {@code "_$folder$"}.
      * @param keyPath key path of the entry
-     * @param summary summary entry
+     * @param s3Object s3Object entry
      * @return true if the entry is accepted (i.e. that a status entry
      * should be generated.)
      */
     @Override
-    public boolean accept(Path keyPath, S3ObjectSummary summary) {
+    public boolean accept(Path keyPath, S3Object s3Object) {
       return !keyPath.equals(qualifiedPath) &&
-          !summary.getKey().endsWith(S3N_FOLDER_SUFFIX);
+          !s3Object.key().endsWith(S3N_FOLDER_SUFFIX);
     }
 
     /**

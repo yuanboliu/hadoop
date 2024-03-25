@@ -26,6 +26,7 @@ import org.apache.hadoop.classification.InterfaceAudience;
 import org.apache.hadoop.classification.InterfaceStability;
 import org.apache.hadoop.crypto.CryptoProtocolVersion;
 import org.apache.hadoop.fs.BatchedRemoteIterator.BatchedEntries;
+import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.fs.PathIsNotEmptyDirectoryException;
 import org.apache.hadoop.ha.HAServiceProtocol;
 import org.apache.hadoop.hdfs.AddBlockFlag;
@@ -759,11 +760,19 @@ public interface ClientProtocol {
    * the last call to renewLease(), the NameNode assumes the
    * client has died.
    *
+   * @param namespaces The full Namespace list that the renewLease rpc
+   *                   should be forwarded by RBF.
+   *                   Tips: NN side, this value should be null.
+   *                         RBF side, if this value is null, this rpc will
+   *                         be forwarded to all available namespaces,
+   *                         else this rpc will be forwarded to
+   *                         the special namespaces.
+   *
    * @throws org.apache.hadoop.security.AccessControlException permission denied
    * @throws IOException If an I/O error occurred
    */
   @Idempotent
-  void renewLease(String clientName) throws IOException;
+  void renewLease(String clientName, List<String> namespaces) throws IOException;
 
   /**
    * Start lease recovery.
@@ -1879,5 +1888,12 @@ public interface ClientProtocol {
   @Idempotent
   @ReadOnly
   DatanodeInfo[] getSlowDatanodeReport() throws IOException;
+
+  /**
+   * Get the enclosing root for a path.
+   */
+  @Idempotent
+  @ReadOnly(isCoordinated = true)
+  Path getEnclosingRoot(String src) throws IOException;
 
 }

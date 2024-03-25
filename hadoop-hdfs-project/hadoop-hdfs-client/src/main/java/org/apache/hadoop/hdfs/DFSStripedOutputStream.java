@@ -293,9 +293,7 @@ public class DFSStripedOutputStream extends DFSOutputStream
                          DataChecksum checksum, String[] favoredNodes)
                          throws IOException {
     super(dfsClient, src, stat, flag, progress, checksum, favoredNodes, false);
-    if (LOG.isDebugEnabled()) {
-      LOG.debug("Creating DFSStripedOutputStream for " + src);
-    }
+    LOG.debug("Creating DFSStripedOutputStream for {}", src);
 
     ecPolicy = stat.getErasureCodingPolicy();
     final int numParityBlocks = ecPolicy.getNumParityUnits();
@@ -402,10 +400,10 @@ public class DFSStripedOutputStream extends DFSOutputStream
 
     final int failCount = failedStreamers.size() + newFailed.size();
     if (LOG.isDebugEnabled()) {
-      LOG.debug("checkStreamers: " + streamers);
-      LOG.debug("healthy streamer count=" + (numAllBlocks - failCount));
-      LOG.debug("original failed streamers: " + failedStreamers);
-      LOG.debug("newly failed streamers: " + newFailed);
+      LOG.debug("checkStreamers: {}", streamers);
+      LOG.debug("healthy streamer count={}", (numAllBlocks - failCount));
+      LOG.debug("original failed streamers: {}", failedStreamers);
+      LOG.debug("newly failed streamers: {}", newFailed);
     }
     if (failCount > (numAllBlocks - numDataBlocks)) {
       closeAllStreamers();
@@ -673,9 +671,9 @@ public class DFSStripedOutputStream extends DFSOutputStream
       // for healthy streamers, wait till all of them have fetched the new block
       // and flushed out all the enqueued packets.
       flushAllInternals();
+      // recheck failed streamers again after the flush
+      newFailed = checkStreamers();
     }
-    // recheck failed streamers again after the flush
-    newFailed = checkStreamers();
     while (newFailed.size() > 0) {
       failedStreamers.addAll(newFailed);
       coordinator.clearFailureStates();
@@ -1055,7 +1053,7 @@ public class DFSStripedOutputStream extends DFSOutputStream
       }
     }
 
-    dfsClient.endFileLease(fileId);
+    dfsClient.endFileLease(getUniqKey());
     final IOException ioe = b.build();
     if (ioe != null) {
       throw ioe;

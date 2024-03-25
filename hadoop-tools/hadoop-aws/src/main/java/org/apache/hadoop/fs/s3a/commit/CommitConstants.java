@@ -39,6 +39,8 @@ public final class CommitConstants {
    * {@value}.
    */
   public static final String MAGIC = "__magic";
+  public static final String JOB_ID_PREFIX = "job-";
+  public static final String MAGIC_PATH_PREFIX = MAGIC + "_" + JOB_ID_PREFIX;
 
   /**
    * Marker of the start of a directory tree for calculating
@@ -280,10 +282,12 @@ public final class CommitConstants {
   /**
    * Default configuration value for
    * {@link #FS_S3A_COMMITTER_ABORT_PENDING_UPLOADS}.
+   * It is disabled by default to support concurrent writes on the same
+   * parent directory but different partition/sub directory.
    * Value: {@value}.
    */
   public static final boolean DEFAULT_FS_S3A_COMMITTER_ABORT_PENDING_UPLOADS =
-      true;
+      false;
 
   /**
    * The limit to the number of committed objects tracked during
@@ -353,5 +357,25 @@ public final class CommitConstants {
    */
   public static final String OPT_SUMMARY_REPORT_DIR =
       OPT_PREFIX + "summary.report.directory";
+
+  /**
+   * Experimental feature to collect thread level IO statistics.
+   * When set the committers will reset the statistics in
+   * task setup and propagate to the job committer.
+   * The job comitter will include those and its own statistics.
+   * Do not use if the execution engine is collecting statistics,
+   * as the multiple reset() operations will result in incomplete
+   * statistics.
+   * Value: {@value}.
+   */
+  public static final String S3A_COMMITTER_EXPERIMENTAL_COLLECT_IOSTATISTICS =
+      OPT_PREFIX + "experimental.collect.iostatistics";
+
+  /**
+   * Default value for {@link #S3A_COMMITTER_EXPERIMENTAL_COLLECT_IOSTATISTICS}.
+   * Value: {@value}.
+   */
+  public static final boolean S3A_COMMITTER_EXPERIMENTAL_COLLECT_IOSTATISTICS_DEFAULT =
+      false;
 
 }

@@ -704,7 +704,7 @@ public class DataStorage extends Storage {
   }
 
   /**
-   * Analize which and whether a transition of the fs state is required
+   * Analyze which and whether a transition of the fs state is required
    * and perform it if necessary.
    * 
    * Rollback if the rollback startup option was specified.
@@ -1403,7 +1403,7 @@ public class DataStorage extends Storage {
   }
 
   /**
-   * Get the BlockPoolSliceStorage from {@link bpStorageMap}.
+   * Get the BlockPoolSliceStorage from {@link #bpStorageMap}.
    * If the object is not found, create a new object and put it to the map.
    */
   synchronized BlockPoolSliceStorage getBlockPoolSliceStorage(

@@ -137,8 +137,8 @@ public class TestChildQueueOrder {
               " alloc=" + allocation + " node=" + node.getNodeName());
         }
         final Resource allocatedResource = Resources.createResource(allocation);
-        if (queue instanceof ParentQueue) {
-          ((ParentQueue)queue).allocateResource(clusterResource, 
+        if (queue instanceof AbstractParentQueue) {
+          ((AbstractParentQueue)queue).allocateResource(clusterResource,
               allocatedResource, RMNodeLabelsManager.NO_LABEL);
         } else {
           FiCaSchedulerApp app1 = getMockApplication(0, "");
@@ -204,19 +204,20 @@ public class TestChildQueueOrder {
   private void setupSortedQueues(CapacitySchedulerConfiguration conf) {
 
     // Define queues
-    csConf.setQueues(CapacitySchedulerConfiguration.ROOT, new String[] {A, B, C, D});
+    final QueuePath root = new QueuePath(CapacitySchedulerConfiguration.ROOT);
+    csConf.setQueues(root, new String[] {A, B, C, D});
 
     final String Q_A = CapacitySchedulerConfiguration.ROOT + "." + A;
-    conf.setCapacity(Q_A, 25);
+    conf.setCapacity(new QueuePath(Q_A), 25);
 
     final String Q_B = CapacitySchedulerConfiguration.ROOT + "." + B;
-    conf.setCapacity(Q_B, 25);
+    conf.setCapacity(new QueuePath(Q_B), 25);
 
     final String Q_C = CapacitySchedulerConfiguration.ROOT + "." + C;
-    conf.setCapacity(Q_C, 25);
+    conf.setCapacity(new QueuePath(Q_C), 25);
 
     final String Q_D = CapacitySchedulerConfiguration.ROOT + "." + D;
-    conf.setCapacity(Q_D, 25);
+    conf.setCapacity(new QueuePath(Q_D), 25);
   }
 
   @Test

@@ -24,7 +24,6 @@ import com.ctc.wstx.io.SystemId;
 import com.ctc.wstx.stax.WstxInputFactory;
 import com.fasterxml.jackson.core.JsonFactory;
 import com.fasterxml.jackson.core.JsonGenerator;
-import org.apache.hadoop.classification.VisibleForTesting;
 
 import java.io.BufferedInputStream;
 import java.io.DataInput;
@@ -44,6 +43,7 @@ import java.net.URI;
 import java.net.URISyntaxException;
 import java.net.URL;
 import java.net.URLConnection;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -83,10 +83,10 @@ import javax.xml.transform.TransformerFactory;
 import javax.xml.transform.dom.DOMSource;
 import javax.xml.transform.stream.StreamResult;
 
-import org.apache.hadoop.thirdparty.com.google.common.base.Charsets;
 import org.apache.commons.collections.map.UnmodifiableMap;
 import org.apache.hadoop.classification.InterfaceAudience;
 import org.apache.hadoop.classification.InterfaceStability;
+import org.apache.hadoop.classification.VisibleForTesting;
 import org.apache.hadoop.fs.CommonConfigurationKeysPublic;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
@@ -98,17 +98,18 @@ import org.apache.hadoop.security.UserGroupInformation;
 import org.apache.hadoop.security.alias.CredentialProvider;
 import org.apache.hadoop.security.alias.CredentialProvider.CredentialEntry;
 import org.apache.hadoop.security.alias.CredentialProviderFactory;
+import org.apache.hadoop.thirdparty.com.google.common.base.Strings;
+import org.apache.hadoop.util.Preconditions;
 import org.apache.hadoop.util.ReflectionUtils;
 import org.apache.hadoop.util.StringInterner;
 import org.apache.hadoop.util.StringUtils;
+import org.apache.hadoop.util.XMLUtils;
+
 import org.codehaus.stax2.XMLStreamReader2;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.w3c.dom.Document;
 import org.w3c.dom.Element;
-
-import org.apache.hadoop.util.Preconditions;
-import org.apache.hadoop.thirdparty.com.google.common.base.Strings;
 
 import static org.apache.commons.lang3.StringUtils.isBlank;
 import static org.apache.commons.lang3.StringUtils.isNotBlank;
@@ -2338,8 +2339,8 @@ public class Configuration implements Iterable<Map.Entry<String,String>>,
     }
     return StringUtils.getTrimmedStringCollection(valueString);
   }
-  
-  /** 
+
+  /**
    * Get the comma delimited values of the <code>name</code> property as 
    * an array of <code>String</code>s, trimmed of the leading and trailing whitespace.
    * If no such property is specified then an empty array is returned.
@@ -2902,7 +2903,7 @@ public class Configuration implements Iterable<Map.Entry<String,String>>,
         LOG.info("found resource " + name + " at " + url);
       }
 
-      return new InputStreamReader(url.openStream(), Charsets.UTF_8);
+      return new InputStreamReader(url.openStream(), StandardCharsets.UTF_8);
     } catch (Exception e) {
       return null;
     }
@@ -3593,16 +3594,18 @@ public class Configuration implements Iterable<Map.Entry<String,String>>,
    * </ul>
    * @param propertyName xml property name.
    * @param out the writer to write to.
+   * @param config configuration.
    * @throws IOException raised on errors performing I/O.
    */
-  public void writeXml(@Nullable String propertyName, Writer out)
+  public void writeXml(@Nullable String propertyName, Writer out, Configuration config)
       throws IOException, IllegalArgumentException {
-    Document doc = asXmlDocument(propertyName);
+    ConfigRedactor redactor = config != null ? new ConfigRedactor(this) : null;
+    Document doc = asXmlDocument(propertyName, redactor);
 
     try {
       DOMSource source = new DOMSource(doc);
       StreamResult result = new StreamResult(out);
-      TransformerFactory transFactory = TransformerFactory.newInstance();
+      TransformerFactory transFactory = XMLUtils.newSecureTransformerFactory();
       Transformer transformer = transFactory.newTransformer();
 
       // Important to not hold Configuration log while writing result, since
@@ -3614,11 +3617,16 @@ public class Configuration implements Iterable<Map.Entry<String,String>>,
     }
   }
 
+  public void writeXml(@Nullable String propertyName, Writer out)
+      throws IOException, IllegalArgumentException {
+    writeXml(propertyName, out, null);
+  }
+
   /**
    * Return the XML DOM corresponding to this Configuration.
    */
-  private synchronized Document asXmlDocument(@Nullable String propertyName)
-      throws IOException, IllegalArgumentException {
+  private synchronized Document asXmlDocument(@Nullable String propertyName,
+      ConfigRedactor redactor) throws IOException, IllegalArgumentException {
     Document doc;
     try {
       doc = DocumentBuilderFactory
@@ -3641,13 +3649,13 @@ public class Configuration implements Iterable<Map.Entry<String,String>>,
             propertyName + " not found");
       } else {
         // given property is found, write single property
-        appendXMLProperty(doc, conf, propertyName);
+        appendXMLProperty(doc, conf, propertyName, redactor);
         conf.appendChild(doc.createTextNode("\n"));
       }
     } else {
       // append all elements
       for (Enumeration<Object> e = properties.keys(); e.hasMoreElements();) {
-        appendXMLProperty(doc, conf, (String)e.nextElement());
+        appendXMLProperty(doc, conf, (String)e.nextElement(), redactor);
         conf.appendChild(doc.createTextNode("\n"));
       }
     }
@@ -3663,7 +3671,7 @@ public class Configuration implements Iterable<Map.Entry<String,String>>,
    * @param propertyName
    */
   private synchronized void appendXMLProperty(Document doc, Element conf,
-      String propertyName) {
+      String propertyName, ConfigRedactor redactor) {
     // skip writing if given property name is empty or null
     if (!Strings.isNullOrEmpty(propertyName)) {
       String value = properties.getProperty(propertyName);
@@ -3676,8 +3684,11 @@ public class Configuration implements Iterable<Map.Entry<String,String>>,
         propNode.appendChild(nameNode);
 
         Element valueNode = doc.createElement("value");
-        valueNode.appendChild(doc.createTextNode(
-            properties.getProperty(propertyName)));
+        String propertyValue = properties.getProperty(propertyName);
+        if (redactor != null) {
+          propertyValue = redactor.redactXml(propertyName, propertyValue);
+        }
+        valueNode.appendChild(doc.createTextNode(propertyValue));
         propNode.appendChild(valueNode);
 
         Element finalNode = doc.createElement("final");

@@ -22,12 +22,14 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
+import java.net.ProtocolException;
 import java.net.URL;
 import java.util.List;
 
 import javax.net.ssl.HttpsURLConnection;
 import javax.net.ssl.SSLSocketFactory;
 
+import org.apache.hadoop.classification.VisibleForTesting;
 import org.apache.hadoop.fs.azurebfs.utils.UriUtils;
 import org.apache.hadoop.security.ssl.DelegatingSSLSocketFactory;
 
@@ -43,14 +45,15 @@ import org.apache.hadoop.fs.azurebfs.constants.HttpHeaderConfigurations;
 import org.apache.hadoop.fs.azurebfs.contracts.services.AbfsPerfLoggable;
 import org.apache.hadoop.fs.azurebfs.contracts.services.ListResultSchema;
 
+import static org.apache.hadoop.fs.azurebfs.constants.AbfsHttpConstants.EXPECT_100_JDK_ERROR;
+import static org.apache.hadoop.fs.azurebfs.constants.AbfsHttpConstants.HUNDRED_CONTINUE;
+import static org.apache.hadoop.fs.azurebfs.constants.HttpHeaderConfigurations.EXPECT;
+
 /**
  * Represents an HTTP operation.
  */
 public class AbfsHttpOperation implements AbfsPerfLoggable {
   private static final Logger LOG = LoggerFactory.getLogger(AbfsHttpOperation.class);
-
-  private static final int CONNECT_TIMEOUT = 30 * 1000;
-  private static final int READ_TIMEOUT = 30 * 1000;
 
   private static final int CLEAN_UP_BUFFER_SIZE = 64 * 1024;
 
@@ -73,14 +76,14 @@ public class AbfsHttpOperation implements AbfsPerfLoggable {
 
   // metrics
   private int bytesSent;
+  private int expectedBytesToBeSent;
   private long bytesReceived;
 
-  // optional trace enabled metrics
-  private final boolean isTraceEnabled;
   private long connectionTimeMs;
   private long sendRequestTimeMs;
   private long recvResponseTimeMs;
   private boolean shouldMask = false;
+  private boolean connectionDisconnectedOnError = false;
 
   public static AbfsHttpOperation getAbfsHttpOperationWithFixedResult(
       final URL url,
@@ -100,7 +103,6 @@ public class AbfsHttpOperation implements AbfsPerfLoggable {
   protected AbfsHttpOperation(final URL url,
       final String method,
       final int httpStatus) {
-    this.isTraceEnabled = LOG.isTraceEnabled();
     this.url = url;
     this.method = method;
     this.statusCode = httpStatus;
@@ -155,6 +157,10 @@ public class AbfsHttpOperation implements AbfsPerfLoggable {
     return bytesSent;
   }
 
+  public int getExpectedBytesToBeSent() {
+    return expectedBytesToBeSent;
+  }
+
   public long getBytesReceived() {
     return bytesReceived;
   }
@@ -180,14 +186,12 @@ public class AbfsHttpOperation implements AbfsPerfLoggable {
     sb.append(getClientRequestId());
     sb.append(",rid=");
     sb.append(requestId);
-    if (isTraceEnabled) {
-      sb.append(",connMs=");
-      sb.append(connectionTimeMs);
-      sb.append(",sendMs=");
-      sb.append(sendRequestTimeMs);
-      sb.append(",recvMs=");
-      sb.append(recvResponseTimeMs);
-    }
+    sb.append(",connMs=");
+    sb.append(connectionTimeMs);
+    sb.append(",sendMs=");
+    sb.append(sendRequestTimeMs);
+    sb.append(",recvMs=");
+    sb.append(recvResponseTimeMs);
     sb.append(",sent=");
     sb.append(bytesSent);
     sb.append(",recv=");
@@ -210,18 +214,16 @@ public class AbfsHttpOperation implements AbfsPerfLoggable {
       .append(" ci=")
       .append(getClientRequestId())
       .append(" ri=")
-      .append(requestId);
+      .append(requestId)
 
-    if (isTraceEnabled) {
-      sb.append(" ct=")
-        .append(connectionTimeMs)
-        .append(" st=")
-        .append(sendRequestTimeMs)
-        .append(" rt=")
-        .append(recvResponseTimeMs);
-    }
+      .append(" ct=")
+      .append(connectionTimeMs)
+      .append(" st=")
+      .append(sendRequestTimeMs)
+      .append(" rt=")
+      .append(recvResponseTimeMs)
 
-    sb.append(" bs=")
+      .append(" bs=")
       .append(bytesSent)
       .append(" br=")
       .append(bytesReceived)
@@ -258,12 +260,13 @@ public class AbfsHttpOperation implements AbfsPerfLoggable {
    * @param url The full URL including query string parameters.
    * @param method The HTTP method (PUT, PATCH, POST, GET, HEAD, or DELETE).
    * @param requestHeaders The HTTP request headers.READ_TIMEOUT
-   *
+   * @param connectionTimeout The Connection Timeout value to be used while establishing http connection
+   * @param readTimeout The Read Timeout value to be used with http connection while making a request
    * @throws IOException if an error occurs.
    */
-  public AbfsHttpOperation(final URL url, final String method, final List<AbfsHttpHeader> requestHeaders)
+  public AbfsHttpOperation(final URL url, final String method, final List<AbfsHttpHeader> requestHeaders,
+                           final int connectionTimeout, final int readTimeout)
       throws IOException {
-    this.isTraceEnabled = LOG.isTraceEnabled();
     this.url = url;
     this.method = method;
 
@@ -276,13 +279,12 @@ public class AbfsHttpOperation implements AbfsPerfLoggable {
       }
     }
 
-    this.connection.setConnectTimeout(CONNECT_TIMEOUT);
-    this.connection.setReadTimeout(READ_TIMEOUT);
-
+    this.connection.setConnectTimeout(connectionTimeout);
+    this.connection.setReadTimeout(readTimeout);
     this.connection.setRequestMethod(method);
 
     for (AbfsHttpHeader header : requestHeaders) {
-      this.connection.setRequestProperty(header.getName(), header.getValue());
+      setRequestProperty(header.getName(), header.getValue());
     }
   }
 
@@ -311,19 +313,58 @@ public class AbfsHttpOperation implements AbfsPerfLoggable {
     // send the request body
 
     long startTime = 0;
-    if (this.isTraceEnabled) {
-      startTime = System.nanoTime();
-    }
-    try (OutputStream outputStream = this.connection.getOutputStream()) {
-      // update bytes sent before they are sent so we may observe
-      // attempted sends as well as successful sends via the
-      // accompanying statusCode
+    startTime = System.nanoTime();
+    OutputStream outputStream = null;
+    // Updates the expected bytes to be sent based on length.
+    this.expectedBytesToBeSent = length;
+    try {
+      try {
+        /* Without expect header enabled, if getOutputStream() throws
+           an exception, it gets caught by the restOperation. But with
+           expect header enabled we return back without throwing an exception
+           for the correct response code processing.
+         */
+        outputStream = getConnOutputStream();
+      } catch (IOException e) {
+        connectionDisconnectedOnError = true;
+        /* If getOutputStream fails with an expect-100 exception , we return back
+           without throwing an exception to the caller. Else, we throw back the exception.
+         */
+        String expectHeader = getConnProperty(EXPECT);
+        if (expectHeader != null && expectHeader.equals(HUNDRED_CONTINUE)
+            && e instanceof ProtocolException
+            && EXPECT_100_JDK_ERROR.equals(e.getMessage())) {
+          LOG.debug("Getting output stream failed with expect header enabled, returning back ", e);
+          /*
+           * In case expect-100 assertion has failed, headers and inputStream should not
+           * be parsed. Reason being, conn.getHeaderField(), conn.getHeaderFields(),
+           * conn.getInputStream() will lead to repeated server call.
+           * ref: https://bugs.openjdk.org/browse/JDK-8314978.
+           * Reading conn.responseCode() and conn.getResponseMessage() is safe in
+           * case of Expect-100 error. Reason being, in JDK, it stores the responseCode
+           * in the HttpUrlConnection object before throwing exception to the caller.
+           */
+          this.statusCode = getConnResponseCode();
+          this.statusDescription = getConnResponseMessage();
+          return;
+        } else {
+          LOG.debug("Getting output stream failed without expect header enabled, throwing exception ", e);
+          throw e;
+        }
+      }
+      // update bytes sent for successful as well as failed attempts via the
+      // accompanying statusCode.
       this.bytesSent = length;
+
+      // If this fails with or without expect header enabled,
+      // it throws an IOException.
       outputStream.write(buffer, offset, length);
     } finally {
-      if (this.isTraceEnabled) {
-        this.sendRequestTimeMs = elapsedTimeMs(startTime);
+      // Closing the opened output stream
+      if (outputStream != null) {
+        outputStream.close();
       }
+      this.sendRequestTimeMs = elapsedTimeMs(startTime);
     }
   }
 
@@ -337,20 +378,25 @@ public class AbfsHttpOperation implements AbfsPerfLoggable {
    * @throws IOException if an error occurs.
    */
   public void processResponse(final byte[] buffer, final int offset, final int length) throws IOException {
+    if (connectionDisconnectedOnError) {
+      LOG.debug("This connection was not successful or has been disconnected, "
+          + "hence not parsing headers and inputStream");
+      return;
+    }
+    processConnHeadersAndInputStreams(buffer, offset, length);
+  }
 
+  void processConnHeadersAndInputStreams(final byte[] buffer,
+      final int offset,
+      final int length) throws IOException {
     // get the response
     long startTime = 0;
-    if (this.isTraceEnabled) {
-      startTime = System.nanoTime();
-    }
+    startTime = System.nanoTime();
 
-    this.statusCode = this.connection.getResponseCode();
+    this.statusCode = getConnResponseCode();
+    this.recvResponseTimeMs = elapsedTimeMs(startTime);
 
-    if (this.isTraceEnabled) {
-      this.recvResponseTimeMs = elapsedTimeMs(startTime);
-    }
-
-    this.statusDescription = this.connection.getResponseMessage();
+    this.statusDescription = getConnResponseMessage();
 
     this.requestId = this.connection.getHeaderField(HttpHeaderConfigurations.X_MS_REQUEST_ID);
     if (this.requestId == null) {
@@ -365,15 +411,11 @@ public class AbfsHttpOperation implements AbfsPerfLoggable {
       return;
     }
 
-    if (this.isTraceEnabled) {
-      startTime = System.nanoTime();
-    }
+    startTime = System.nanoTime();
 
     if (statusCode >= HttpURLConnection.HTTP_BAD_REQUEST) {
       processStorageErrorResponse();
-      if (this.isTraceEnabled) {
-        this.recvResponseTimeMs += elapsedTimeMs(startTime);
-      }
+      this.recvResponseTimeMs += elapsedTimeMs(startTime);
       this.bytesReceived = this.connection.getHeaderFieldLong(HttpHeaderConfigurations.CONTENT_LENGTH, 0);
     } else {
       // consume the input stream to release resources
@@ -415,9 +457,7 @@ public class AbfsHttpOperation implements AbfsPerfLoggable {
         LOG.debug("IO Error: ", ex);
         throw ex;
       } finally {
-        if (this.isTraceEnabled) {
-          this.recvResponseTimeMs += elapsedTimeMs(startTime);
-        }
+        this.recvResponseTimeMs += elapsedTimeMs(startTime);
         this.bytesReceived = totalBytesRead;
       }
     }
@@ -433,9 +473,6 @@ public class AbfsHttpOperation implements AbfsPerfLoggable {
    * @throws IOException if an error occurs.
    */
   private HttpURLConnection openConnection() throws IOException {
-    if (!isTraceEnabled) {
-      return (HttpURLConnection) url.openConnection();
-    }
     long start = System.nanoTime();
     try {
       return (HttpURLConnection) url.openConnection();
@@ -541,6 +578,63 @@ public class AbfsHttpOperation implements AbfsPerfLoggable {
    */
   private boolean isNullInputStream(InputStream stream) {
     return stream == null ? true : false;
+  }
+
+  /**
+   * Gets the connection request property for a key.
+   * @param key The request property key.
+   * @return request peoperty value.
+   */
+  String getConnProperty(String key) {
+    return connection.getRequestProperty(key);
+  }
+
+  /**
+   * Gets the connection url.
+   * @return url.
+   */
+  URL getConnUrl() {
+    return connection.getURL();
+  }
+
+  /**
+   * Gets the connection request method.
+   * @return request method.
+   */
+  String getConnRequestMethod() {
+    return connection.getRequestMethod();
+  }
+
+  /**
+   * Gets the connection response code.
+   * @return response code.
+   * @throws IOException
+   */
+  Integer getConnResponseCode() throws IOException {
+    return connection.getResponseCode();
+  }
+
+  /**
+   * Gets the connection output stream.
+   * @return output stream.
+   * @throws IOException
+   */
+  OutputStream getConnOutputStream() throws IOException {
+    return connection.getOutputStream();
+  }
+
+  /**
+   * Gets the connection response message.
+   * @return response message.
+   * @throws IOException
+   */
+  String getConnResponseMessage() throws IOException {
+    return connection.getResponseMessage();
+  }
+
+  @VisibleForTesting
+  Boolean getConnectionDisconnectedOnError() {
+    return connectionDisconnectedOnError;
   }
 
   public static class AbfsHttpOperationWithFixedResult extends AbfsHttpOperation {
