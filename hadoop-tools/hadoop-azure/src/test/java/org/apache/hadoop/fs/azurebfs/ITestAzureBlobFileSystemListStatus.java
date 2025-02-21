@@ -40,6 +40,8 @@ import org.apache.hadoop.fs.LocatedFileStatus;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.fs.azurebfs.constants.FSOperationType;
 import org.apache.hadoop.fs.azurebfs.constants.HttpHeaderConfigurations;
+import org.apache.hadoop.fs.azurebfs.contracts.services.DfsListResultEntrySchema;
+import org.apache.hadoop.fs.azurebfs.contracts.services.DfsListResultSchema;
 import org.apache.hadoop.fs.azurebfs.contracts.services.ListResultEntrySchema;
 import org.apache.hadoop.fs.azurebfs.contracts.services.ListResultSchema;
 import org.apache.hadoop.fs.azurebfs.services.AbfsClient;
@@ -80,8 +82,8 @@ public class ITestAzureBlobFileSystemListStatus extends
   public void testListPath() throws Exception {
     Configuration config = new Configuration(this.getRawConfiguration());
     config.set(AZURE_LIST_MAX_RESULTS, "5000");
-    try (final AzureBlobFileSystem fs = (AzureBlobFileSystem) FileSystem
-        .newInstance(getFileSystem().getUri(), config)) {
+    final AzureBlobFileSystem fs = (AzureBlobFileSystem) FileSystem
+        .newInstance(getFileSystem().getUri(), config);
       final List<Future<Void>> tasks = new ArrayList<>();
 
       ExecutorService es = Executors.newFixedThreadPool(10);
@@ -108,7 +110,10 @@ public class ITestAzureBlobFileSystemListStatus extends
                       fs.getFileSystemId(), FSOperationType.LISTSTATUS, true, 0));
       FileStatus[] files = fs.listStatus(new Path("/"));
       assertEquals(TEST_FILES_NUMBER, files.length /* user directory */);
-    }
+    fs.registerListener(
+            new TracingHeaderValidator(getConfiguration().getClientCorrelationId(),
+                    fs.getFileSystemId(), FSOperationType.GET_ATTR, true, 0));
+    fs.close();
   }
 
   /**
@@ -117,6 +122,7 @@ public class ITestAzureBlobFileSystemListStatus extends
    */
   @Test
   public void testListPathTracingContext() throws Exception {
+    assumeDfsServiceType();
     final AzureBlobFileSystem fs = getFileSystem();
     final AzureBlobFileSystem spiedFs = Mockito.spy(fs);
     final AzureBlobFileSystemStore spiedStore = Mockito.spy(fs.getAbfsStore());
@@ -133,18 +139,18 @@ public class ITestAzureBlobFileSystemListStatus extends
     AbfsClientTestUtil.setMockAbfsRestOperationForListPathOperation(spiedClient,
         (httpOperation) -> {
 
-          ListResultEntrySchema entry = new ListResultEntrySchema()
+          ListResultEntrySchema entry = new DfsListResultEntrySchema()
               .withName("a")
               .withIsDirectory(true);
           List<ListResultEntrySchema> paths = new ArrayList<>();
           paths.add(entry);
           paths.clear();
-          entry = new ListResultEntrySchema()
+          entry = new DfsListResultEntrySchema()
               .withName("abc.txt")
               .withIsDirectory(false);
           paths.add(entry);
-          ListResultSchema schema1 = new ListResultSchema().withPaths(paths);
-          ListResultSchema schema2 = new ListResultSchema().withPaths(paths);
+          ListResultSchema schema1 = new DfsListResultSchema().withPaths(paths);
+          ListResultSchema schema2 = new DfsListResultSchema().withPaths(paths);
 
           when(httpOperation.getListResultSchema()).thenReturn(schema1)
               .thenReturn(schema2);

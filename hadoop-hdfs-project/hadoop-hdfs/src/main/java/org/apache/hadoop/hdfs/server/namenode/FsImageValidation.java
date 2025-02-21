@@ -32,6 +32,7 @@ import org.apache.hadoop.hdfs.server.namenode.top.metrics.TopMetrics;
 import org.apache.hadoop.hdfs.server.namenode.visitor.INodeCountVisitor;
 import org.apache.hadoop.hdfs.server.namenode.visitor.INodeCountVisitor.Counts;
 import org.apache.hadoop.hdfs.server.protocol.NamespaceInfo;
+import org.apache.hadoop.hdfs.util.RwLockMode;
 import org.apache.hadoop.util.GSet;
 import org.apache.hadoop.util.StringUtils;
 import org.apache.hadoop.util.Tool;
@@ -214,6 +215,7 @@ public class FsImageValidation {
     initConf(conf);
 
     // check INodeReference
+    NameNode.initMetrics(conf, HdfsServerConstants.NamenodeRole.NAMENODE); // to avoid NPE
     final FSNamesystem namesystem = checkINodeReference(conf, errorCount);
 
     // check INodeMap
@@ -272,18 +274,20 @@ public class FsImageValidation {
 
       final FSImageFormat.LoaderDelegator loader
           = FSImageFormat.newLoader(conf, namesystem);
-      namesystem.writeLock();
+      namesystem.writeLock(RwLockMode.GLOBAL);
       namesystem.getFSDirectory().writeLock();
       try {
         loader.load(fsImageFile, false);
+        fsImage.setLastAppliedTxId(loader);
       } finally {
         namesystem.getFSDirectory().writeUnlock();
-        namesystem.writeUnlock("loadImage");
+        namesystem.writeUnlock(RwLockMode.GLOBAL, "loadImage");
       }
     }
     t.cancel();
-    Cli.println("Loaded %s %s successfully in %s",
-        FS_IMAGE, fsImageFile, StringUtils.formatTime(now() - loadStart));
+    Cli.println("Loaded %s %s with txid %d successfully in %s",
+        FS_IMAGE, fsImageFile, namesystem.getFSImage().getLastAppliedTxId(),
+        StringUtils.formatTime(now() - loadStart));
     return namesystem;
   }
 

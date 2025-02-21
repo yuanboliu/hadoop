@@ -40,9 +40,10 @@ import org.apache.hadoop.fs.s3a.S3AFileSystem;
 import org.apache.hadoop.fs.s3a.S3AInputStream;
 import org.apache.hadoop.fs.s3a.S3ATestUtils;
 import org.apache.hadoop.fs.s3a.Statistic;
+import org.apache.hadoop.fs.s3a.impl.streams.InputStreamType;
 import org.apache.hadoop.fs.statistics.IOStatistics;
 
-import static org.apache.hadoop.fs.FSExceptionMessages.EOF_IN_READ_FULLY;
+import static org.apache.hadoop.fs.Options.OpenFileOptions.FS_OPTION_OPENFILE_FOOTER_CACHE;
 import static org.apache.hadoop.fs.Options.OpenFileOptions.FS_OPTION_OPENFILE_READ_POLICY;
 import static org.apache.hadoop.fs.Options.OpenFileOptions.FS_OPTION_OPENFILE_READ_POLICY_RANDOM;
 import static org.apache.hadoop.fs.Options.OpenFileOptions.FS_OPTION_OPENFILE_READ_POLICY_SEQUENTIAL;
@@ -52,12 +53,11 @@ import static org.apache.hadoop.fs.contract.ContractTestUtils.readStream;
 import static org.apache.hadoop.fs.contract.ContractTestUtils.skip;
 import static org.apache.hadoop.fs.contract.ContractTestUtils.writeTextFile;
 import static org.apache.hadoop.fs.s3a.Constants.CHECKSUM_VALIDATION;
-import static org.apache.hadoop.fs.s3a.Constants.PREFETCH_ENABLED_DEFAULT;
-import static org.apache.hadoop.fs.s3a.Constants.PREFETCH_ENABLED_KEY;
 import static org.apache.hadoop.fs.s3a.S3ATestUtils.assertStreamIsNotChecksummed;
 import static org.apache.hadoop.fs.s3a.S3ATestUtils.disableFilesystemCaching;
 import static org.apache.hadoop.fs.s3a.S3ATestUtils.getS3AInputStream;
 import static org.apache.hadoop.fs.s3a.S3ATestUtils.removeBaseAndBucketOverrides;
+import static org.apache.hadoop.fs.s3a.S3ATestUtils.streamType;
 import static org.apache.hadoop.fs.s3a.Statistic.STREAM_READ_BYTES_READ_CLOSE;
 import static org.apache.hadoop.fs.s3a.Statistic.STREAM_READ_OPENED;
 import static org.apache.hadoop.fs.s3a.Statistic.STREAM_READ_SEEK_BYTES_SKIPPED;
@@ -92,10 +92,6 @@ public class ITestS3AOpenCost extends AbstractS3ACostTest {
    * Is prefetching enabled?
    */
   private boolean prefetching;
-
-  public ITestS3AOpenCost() {
-    super(true);
-  }
 
   @Override
   public Configuration createConfiguration() {
@@ -181,6 +177,7 @@ public class ITestS3AOpenCost extends AbstractS3ACostTest {
             fs.openFile(testFile)
                 .must(FS_OPTION_OPENFILE_READ_POLICY,
                     FS_OPTION_OPENFILE_READ_POLICY_WHOLE_FILE)
+                .must(FS_OPTION_OPENFILE_FOOTER_CACHE, false)
                 .mustLong(FS_OPTION_OPENFILE_LENGTH, fileLength)
                 .build()
                 .get(),
@@ -438,7 +435,7 @@ public class ITestS3AOpenCost extends AbstractS3ACostTest {
         final FileRange range = FileRange.createFileRange(0, longLen);
         in.readVectored(Arrays.asList(range), (i) -> bb);
         interceptFuture(EOFException.class,
-            EOF_IN_READ_FULLY,
+            "",
             ContractTestUtils.VECTORED_READ_OPERATION_TEST_TIMEOUT_SECONDS,
             TimeUnit.SECONDS,
             range.getData());
@@ -455,8 +452,7 @@ public class ITestS3AOpenCost extends AbstractS3ACostTest {
    * @return true if the fs has prefetching enabled.
    */
   private boolean prefetching()  {
-    return getFileSystem().getConf().getBoolean(
-        PREFETCH_ENABLED_KEY, PREFETCH_ENABLED_DEFAULT);
+    return InputStreamType.Prefetch == streamType(getFileSystem());
   }
 
   /**

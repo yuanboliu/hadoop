@@ -34,6 +34,7 @@ import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.fs.PathIOException;
 import org.apache.hadoop.fs.RemoteIterator;
 import org.apache.hadoop.fs.permission.FsPermission;
+import org.apache.hadoop.fs.s3a.api.PerformanceFlagEnum;
 import org.apache.hadoop.fs.s3a.auth.MarshalledCredentialBinding;
 import org.apache.hadoop.fs.s3a.auth.MarshalledCredentials;
 import org.apache.hadoop.fs.s3a.auth.delegation.EncryptionSecrets;
@@ -44,6 +45,7 @@ import org.apache.hadoop.fs.s3a.impl.S3ExpressStorage;
 import org.apache.hadoop.fs.s3a.impl.StatusProbeEnum;
 import org.apache.hadoop.fs.s3a.impl.StoreContext;
 import org.apache.hadoop.fs.s3a.impl.StoreContextBuilder;
+import org.apache.hadoop.fs.s3a.impl.streams.InputStreamType;
 import org.apache.hadoop.fs.s3a.prefetch.S3APrefetchingInputStream;
 import org.apache.hadoop.fs.s3a.statistics.BlockOutputStreamStatistics;
 import org.apache.hadoop.fs.s3a.statistics.S3AInputStreamStatistics;
@@ -102,6 +104,8 @@ import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 import static org.apache.hadoop.fs.contract.ContractTestUtils.createFile;
+import static org.apache.hadoop.fs.impl.FlagSet.createFlagSet;
+import static org.apache.hadoop.fs.s3a.impl.streams.InputStreamType.Prefetch;
 import static org.apache.hadoop.fs.s3a.impl.CallableSupplier.submit;
 import static org.apache.hadoop.fs.s3a.impl.CallableSupplier.waitForCompletion;
 import static org.apache.hadoop.fs.s3a.impl.S3ExpressStorage.STORE_CAPABILITY_S3_EXPRESS_STORAGE;
@@ -116,6 +120,7 @@ import static org.apache.hadoop.fs.s3a.S3ATestConstants.*;
 import static org.apache.hadoop.fs.s3a.Constants.*;
 import static org.apache.hadoop.fs.s3a.S3AUtils.buildEncryptionSecrets;
 import static org.apache.hadoop.test.LambdaTestUtils.intercept;
+import static org.apache.hadoop.util.functional.FunctionalIO.uncheckIOExceptions;
 import static org.apache.hadoop.util.functional.RemoteIterators.mappingRemoteIterator;
 import static org.apache.hadoop.util.functional.RemoteIterators.toList;
 import static org.junit.Assert.*;
@@ -601,12 +606,13 @@ public final class S3ATestUtils {
   /**
    * Create a test path, using the value of
    * {@link S3ATestConstants#TEST_UNIQUE_FORK_ID} if it is set.
+   * This path is *not* qualified.
    * @param defVal default value
    * @return a path
    */
   public static Path createTestPath(Path defVal) {
     String testUniqueForkId =
-        System.getProperty(S3ATestConstants.TEST_UNIQUE_FORK_ID);
+        System.getProperty(TEST_UNIQUE_FORK_ID);
     return testUniqueForkId == null ? defVal :
         new Path("/" + testUniqueForkId, "test");
   }
@@ -630,6 +636,36 @@ public final class S3ATestUtils {
     for (S3ATestUtils.MetricDiff metric : metrics) {
       log.info(metric.toString());
     }
+  }
+
+  /**
+   * Unset encryption options.
+   * @param conf configuration
+   */
+  public static void unsetEncryption(Configuration conf) {
+    removeBaseAndBucketOverrides(conf, S3_ENCRYPTION_ALGORITHM);
+  }
+
+  /**
+   * Removes all encryption-related properties.
+   *
+   * <p>This method unsets various encryption settings specific to the test bucket. It removes
+   * bucket-specific overrides for multiple encryption-related properties, including both
+   * client-side and server-side encryption settings.
+   *
+   * @param conf The Configuration object from which to remove the encryption properties.
+   *             This object will be modified by this method.
+   */
+  public static void unsetAllEncryptionPropertiesForBaseAndBucket(Configuration conf) {
+    removeBaseAndBucketOverrides(getTestBucketName(conf),
+        conf,
+        S3_ENCRYPTION_ALGORITHM,
+        S3_ENCRYPTION_KEY,
+        SERVER_SIDE_ENCRYPTION_ALGORITHM,
+        SERVER_SIDE_ENCRYPTION_KEY,
+        S3_ENCRYPTION_CSE_CUSTOM_KEYRING_CLASS_NAME,
+        S3_ENCRYPTION_CSE_V1_COMPATIBILITY_ENABLED,
+        S3_ENCRYPTION_CSE_KMS_REGION);
   }
 
   /**
@@ -689,17 +725,8 @@ public final class S3ATestUtils {
     }
     conf.set(BUFFER_DIR, tmpDir);
 
-    // directory marker policy
-    String directoryRetention = getTestProperty(
-        conf,
-        DIRECTORY_MARKER_POLICY,
-        DEFAULT_DIRECTORY_MARKER_POLICY);
-    conf.set(DIRECTORY_MARKER_POLICY, directoryRetention);
-
-    boolean prefetchEnabled =
-        getTestPropertyBool(conf, PREFETCH_ENABLED_KEY, PREFETCH_ENABLED_DEFAULT);
-    conf.setBoolean(PREFETCH_ENABLED_KEY, prefetchEnabled);
-
+    conf.set(INPUT_STREAM_TYPE,
+        getTestProperty(conf, INPUT_STREAM_TYPE, INPUT_STREAM_TYPE_DEFAULT));
     return conf;
   }
 
@@ -991,6 +1018,9 @@ public final class S3ATestUtils {
         .setMultiObjectDeleteEnabled(multiDelete)
         .setUseListV1(false)
         .setContextAccessors(accessors)
+        .setPerformanceFlags(createFlagSet(
+            PerformanceFlagEnum.class,
+            FS_S3A_PERFORMANCE_FLAGS))
         .build();
   }
 
@@ -1052,8 +1082,7 @@ public final class S3ATestUtils {
     List<CompletableFuture<Path>> futures = new ArrayList<>(paths.size()
         + dirs.size());
 
-    // create directories. With dir marker retention, that adds more entries
-    // to cause deletion issues
+    // create directories.
     try (DurationInfo ignore =
              new DurationInfo(LOG, "Creating %d directories", dirs.size())) {
       for (Path path : dirs) {
@@ -1119,6 +1148,25 @@ public final class S3ATestUtils {
     assume("store is not AWS S3",
         !NetworkBinding.isAwsEndpoint(fs.getConf()
             .getTrimmed(ENDPOINT, DEFAULT_ENDPOINT)));
+  }
+
+  /**
+   * Modify the config by setting the performance flags and return the modified config.
+   *
+   * @param conf The configuration object.
+   * @param flagStr The performance flag string.
+   * @return The modified configuration object.
+   */
+  public static Configuration setPerformanceFlags(final Configuration conf,
+      final String flagStr) {
+    removeBaseAndBucketOverrides(
+        conf,
+        FS_S3A_CREATE_PERFORMANCE,
+        FS_S3A_PERFORMANCE_FLAGS);
+    if (flagStr != null) {
+      conf.set(FS_S3A_PERFORMANCE_FLAGS, flagStr);
+    }
+    return conf;
   }
 
   /**
@@ -1733,9 +1781,57 @@ public final class S3ATestUtils {
   /**
    * Disable Prefetching streams from S3AFileSystem in tests.
    * @param conf Configuration to remove the prefetch property from.
+   * @return patched config
    */
-  public static void disablePrefetching(Configuration conf) {
-    removeBaseAndBucketOverrides(conf, PREFETCH_ENABLED_KEY);
+  public static Configuration disablePrefetching(Configuration conf) {
+    removeBaseAndBucketOverrides(conf,
+        PREFETCH_ENABLED_KEY,
+        INPUT_STREAM_TYPE);
+    return conf;
+  }
+
+
+  /**
+   *Enable Prefetching streams from S3AFileSystem in tests.
+   * @param conf Configuration to update
+   * @return patched config
+   */
+  public static Configuration enablePrefetching(Configuration conf) {
+    removeBaseAndBucketOverrides(conf,
+        PREFETCH_ENABLED_KEY,
+        INPUT_STREAM_TYPE);
+    conf.setEnum(INPUT_STREAM_TYPE, Prefetch);
+    return conf;
+  }
+
+  /**
+   * Probe for a filesystem having a specific stream type;
+   * this is done through filesystem capabilities.
+   * @param fs filesystem
+   * @param type stream type
+   * @return true if the fs has the specific type.
+   */
+  public static boolean hasInputStreamType(FileSystem fs, InputStreamType type) {
+    return uncheckIOExceptions(() ->
+        fs.hasPathCapability(new Path("/"),
+            type.capability()));
+  }
+
+  /**
+   * What is the stream type of this filesystem?
+   * @param fs filesystem to probe
+   * @return the stream type
+   */
+  public static InputStreamType streamType(S3AFileSystem fs) {
+    return fs.getS3AInternals().getStore().streamType();
+  }
+  /**
+   * Skip root tests if the system properties/config says so.
+   * @param conf configuration to check
+   */
+  public static void maybeSkipRootTests(Configuration conf) {
+    assume("Root tests disabled",
+        getTestPropertyBool(conf, ROOT_TESTS_ENABLED, DEFAULT_ROOT_TESTS_ENABLED));
   }
 
   /**

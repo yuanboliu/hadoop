@@ -50,6 +50,7 @@ import org.apache.hadoop.hdfs.server.protocol.*;
 import org.apache.hadoop.hdfs.server.protocol.BlockECReconstructionCommand.BlockECReconstructionInfo;
 import org.apache.hadoop.hdfs.server.protocol.BlockRecoveryCommand.RecoveringBlock;
 import org.apache.hadoop.hdfs.server.protocol.BlockRecoveryCommand.RecoveringStripedBlock;
+import org.apache.hadoop.hdfs.util.RwLockMode;
 import org.apache.hadoop.ipc.Server;
 import org.apache.hadoop.net.*;
 import org.apache.hadoop.net.NetworkTopology.InvalidTopologyException;
@@ -678,7 +679,15 @@ public class DatanodeManager {
     Consumer<List<DatanodeInfoWithStorage>> secondarySort = null;
     if (readConsiderStorageType) {
       Comparator<DatanodeInfoWithStorage> comp =
-          Comparator.comparing(DatanodeInfoWithStorage::getStorageType);
+          Comparator.comparing(DatanodeInfoWithStorage::getStorageType, (s1, s2) -> {
+            if (s1 == null) {
+              return (s2 == null) ? 0 : -1;
+            } else if (s2 == null) {
+              return 1;
+            } else {
+              return s1.compareTo(s2);
+            }
+          });
       secondarySort = list -> Collections.sort(list, comp);
     }
     if (readConsiderLoad) {
@@ -855,7 +864,7 @@ public class DatanodeManager {
    */
   private void removeDatanode(DatanodeDescriptor nodeInfo,
       boolean removeBlocksFromBlocksMap) {
-    assert namesystem.hasWriteLock();
+    assert namesystem.hasWriteLock(RwLockMode.BM);
     heartbeatManager.removeDatanode(nodeInfo);
     if (removeBlocksFromBlocksMap) {
       blockManager.removeBlocksAssociatedTo(nodeInfo);
@@ -874,7 +883,7 @@ public class DatanodeManager {
    */
   public void removeDatanode(final DatanodeID node)
       throws UnregisteredNodeException {
-    namesystem.writeLock();
+    namesystem.writeLock(RwLockMode.BM);
     try {
       final DatanodeDescriptor descriptor = getDatanode(node);
       if (descriptor != null) {
@@ -884,7 +893,7 @@ public class DatanodeManager {
                                      + node + " does not exist");
       }
     } finally {
-      namesystem.writeUnlock("removeDatanode");
+      namesystem.writeUnlock(RwLockMode.BM, "removeDatanode");
     }
   }
 
@@ -1334,12 +1343,13 @@ public class DatanodeManager {
    */
   public void refreshNodes(final Configuration conf) throws IOException {
     refreshHostsReader(conf);
-    namesystem.writeLock();
+    // processExtraRedundancyBlocksOnInService involves FS in stopMaintenance and stopDecommission.
+    namesystem.writeLock(RwLockMode.GLOBAL);
     try {
       refreshDatanodes();
       countSoftwareVersions();
     } finally {
-      namesystem.writeUnlock("refreshNodes");
+      namesystem.writeUnlock(RwLockMode.GLOBAL, "refreshNodes");
     }
   }
 
@@ -2055,10 +2065,13 @@ public class DatanodeManager {
     }
   }
   
-  public void markAllDatanodesStale() {
-    LOG.info("Marking all datanodes as stale");
+  public void markAllDatanodesStaleAndSetKeyUpdateIfNeed() {
+    LOG.info("Marking all datanodes as stale and schedule update block token if need.");
     synchronized (this) {
       for (DatanodeDescriptor dn : datanodeMap.values()) {
+        if (blockManager.isBlockTokenEnabled()) {
+          dn.setNeedKeyUpdate(true);
+        }
         for(DatanodeStorageInfo storage : dn.getStorageInfos()) {
           storage.markStaleAfterFailover();
         }

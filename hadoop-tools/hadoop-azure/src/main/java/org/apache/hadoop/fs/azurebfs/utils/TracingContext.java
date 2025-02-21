@@ -63,6 +63,10 @@ public class TracingContext {
   private Listener listener = null;  // null except when testing
   //final concatenated ID list set into x-ms-client-request-id header
   private String header = EMPTY_STRING;
+  private String ingressHandler = EMPTY_STRING;
+  private String position = EMPTY_STRING;
+  private String metricResults = EMPTY_STRING;
+  private String metricHeader = EMPTY_STRING;
 
   /**
    * If {@link #primaryRequestId} is null, this field shall be set equal
@@ -73,6 +77,8 @@ public class TracingContext {
    * this field shall not be set.
    */
   private String primaryRequestIdForRetry;
+
+  private Integer operatedBlobCount = null;
 
   private static final Logger LOG = LoggerFactory.getLogger(AbfsClient.class);
   public static final int MAX_CLIENT_CORRELATION_ID_LENGTH = 72;
@@ -112,6 +118,15 @@ public class TracingContext {
     }
   }
 
+  public TracingContext(String clientCorrelationID, String fileSystemID,
+      FSOperationType opType, boolean needsPrimaryReqId,
+      TracingHeaderFormat tracingHeaderFormat, Listener listener, String metricResults) {
+    this(clientCorrelationID, fileSystemID, opType, needsPrimaryReqId, tracingHeaderFormat,
+        listener);
+    this.metricResults = metricResults;
+  }
+
+
   public TracingContext(TracingContext originalTracingContext) {
     this.fileSystemID = originalTracingContext.fileSystemID;
     this.streamID = originalTracingContext.streamID;
@@ -120,11 +135,14 @@ public class TracingContext {
     this.retryCount = 0;
     this.primaryRequestId = originalTracingContext.primaryRequestId;
     this.format = originalTracingContext.format;
+    this.position = originalTracingContext.getPosition();
+    this.ingressHandler = originalTracingContext.getIngressHandler();
+    this.operatedBlobCount = originalTracingContext.operatedBlobCount;
     if (originalTracingContext.listener != null) {
       this.listener = originalTracingContext.listener.getClone();
     }
+    this.metricResults = originalTracingContext.metricResults;
   }
-
   public static String validateClientCorrelationID(String clientCorrelationID) {
     if ((clientCorrelationID.length() > MAX_CLIENT_CORRELATION_ID_LENGTH)
         || (!clientCorrelationID.matches(CLIENT_CORRELATION_ID_PATTERN))) {
@@ -181,17 +199,34 @@ public class TracingContext {
               + getPrimaryRequestIdForHeader(retryCount > 0) + ":" + streamID
               + ":" + opType + ":" + retryCount;
       header = addFailureReasons(header, previousFailure, retryPolicyAbbreviation);
+      if (!(ingressHandler.equals(EMPTY_STRING))) {
+        header += ":" + ingressHandler;
+      }
+      if (!(position.equals(EMPTY_STRING))) {
+        header += ":" + position;
+      }
+      if (operatedBlobCount != null) {
+        header += (":" + operatedBlobCount);
+      }
+      header += (":" + httpOperation.getTracingContextSuffix());
+      metricHeader += !(metricResults.trim().isEmpty()) ? metricResults  : "";
       break;
     case TWO_ID_FORMAT:
       header = clientCorrelationID + ":" + clientRequestId;
+      metricHeader += !(metricResults.trim().isEmpty()) ? metricResults  : "";
       break;
     default:
-      header = clientRequestId; //case SINGLE_ID_FORMAT
+      //case SINGLE_ID_FORMAT
+      header = clientRequestId;
+      metricHeader += !(metricResults.trim().isEmpty()) ? metricResults  : "";
     }
     if (listener != null) { //for testing
       listener.callTracingHeaderValidator(header, format);
     }
     httpOperation.setRequestProperty(HttpHeaderConfigurations.X_MS_CLIENT_REQUEST_ID, header);
+    if (!metricHeader.equals(EMPTY_STRING)) {
+      httpOperation.setRequestProperty(HttpHeaderConfigurations.X_MS_FECLIENT_METRICS, metricHeader);
+    }
     /*
     * In case the primaryRequestId is an empty-string and if it is the first try to
     * API call (previousFailure shall be null), maintain the last part of clientRequestId's
@@ -230,6 +265,14 @@ public class TracingContext {
     return String.format("%s_%s", header, previousFailure);
   }
 
+  public void setOperatedBlobCount(Integer count) {
+    operatedBlobCount = count;
+  }
+
+  public FSOperationType getOpType() {
+    return opType;
+  }
+
   /**
    * Return header representing the request associated with the tracingContext
    * @return Header string set into X_MS_CLIENT_REQUEST_ID
@@ -238,4 +281,45 @@ public class TracingContext {
     return header;
   }
 
+  /**
+   * Gets the ingress handler.
+   *
+   * @return the ingress handler as a String.
+   */
+  public String getIngressHandler() {
+    return ingressHandler;
+  }
+
+  /**
+   * Gets the position.
+   *
+   * @return the position as a String.
+   */
+  public String getPosition() {
+    return position;
+  }
+
+  /**
+   * Sets the ingress handler.
+   *
+   * @param ingressHandler the ingress handler to set, must not be null.
+   */
+  public void setIngressHandler(final String ingressHandler) {
+    this.ingressHandler = ingressHandler;
+    if (listener != null) {
+      listener.updateIngressHandler(ingressHandler);
+    }
+  }
+
+  /**
+   * Sets the position.
+   *
+   * @param position the position to set, must not be null.
+   */
+  public void setPosition(final String position) {
+    this.position = position;
+    if (listener != null) {
+      listener.updatePosition(position);
+    }
+  }
 }

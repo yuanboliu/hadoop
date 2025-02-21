@@ -25,6 +25,8 @@ import static org.junit.Assert.assertTrue;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
@@ -32,7 +34,6 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import org.apache.curator.test.TestingServer;
 import org.apache.hadoop.conf.Configuration;
-import org.apache.hadoop.fs.CommonConfigurationKeys;
 import org.apache.hadoop.hdfs.server.federation.FederationTestUtils;
 import org.apache.hadoop.hdfs.server.federation.MiniRouterDFSCluster;
 import org.apache.hadoop.hdfs.server.federation.MiniRouterDFSCluster.RouterContext;
@@ -54,23 +55,32 @@ import org.apache.hadoop.service.Service.STATE;
 import org.apache.hadoop.test.GenericTestUtils;
 import org.apache.hadoop.util.Time;
 import org.junit.After;
-import org.junit.AfterClass;
-import org.junit.BeforeClass;
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
 
 /**
  * This test class verifies that mount table cache is updated on all the routers
  * when MountTableRefreshService is enabled and there is a change in mount table
  * entries.
  */
+@RunWith(Parameterized.class)
 public class TestRouterMountTableCacheRefresh {
   private static TestingServer curatorTestingServer;
   private static MiniRouterDFSCluster cluster;
   private static RouterContext routerContext;
   private static MountTableManager mountTableManager;
 
-  @BeforeClass
-  public static void setUp() throws Exception {
+  @Parameterized.Parameters
+  public static Collection<Object> data() {
+    return Arrays.asList(new Object[] {true, false});
+  }
+
+  public TestRouterMountTableCacheRefresh(boolean useIpForHeartbeats) throws Exception {
+    // Initialize only once per parameter
+    if (curatorTestingServer != null) {
+      return;
+    }
     curatorTestingServer = new TestingServer();
     curatorTestingServer.start();
     final String connectString = curatorTestingServer.getConnectString();
@@ -81,8 +91,9 @@ public class TestRouterMountTableCacheRefresh {
     conf.setClass(RBFConfigKeys.FEDERATION_FILE_RESOLVER_CLIENT_CLASS,
         RBFConfigKeys.FEDERATION_FILE_RESOLVER_CLIENT_CLASS_DEFAULT,
         FileSubclusterResolver.class);
-    conf.set(CommonConfigurationKeys.ZK_ADDRESS, connectString);
+    conf.set(RBFConfigKeys.FEDERATION_STORE_ZK_ADDRESS, connectString);
     conf.setBoolean(RBFConfigKeys.DFS_ROUTER_STORE_ENABLE, true);
+    conf.setBoolean(RBFConfigKeys.DFS_ROUTER_HEARTBEAT_WITH_IP_ENABLE, useIpForHeartbeats);
     cluster.addRouterOverrides(conf);
     cluster.startCluster();
     cluster.startRouters();
@@ -96,11 +107,15 @@ public class TestRouterMountTableCacheRefresh {
         numNameservices, 60000);
   }
 
-  @AfterClass
-  public static void destory() {
+  @Parameterized.AfterParam
+  public static void destroy() {
     try {
-      curatorTestingServer.close();
-      cluster.shutdown();
+      if (curatorTestingServer != null) {
+        curatorTestingServer.close();
+      }
+      if (cluster != null) {
+        cluster.shutdown();
+      }
     } catch (IOException e) {
       // do nothing
     }
